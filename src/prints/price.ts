@@ -1,0 +1,66 @@
+/**
+ * SOL amounts as text, and as the integer the chain actually stores.
+ *
+ * The rule: a price is an unsigned integer of lamports, never floating point. A decimal string is
+ * parsed in the UI and preserved exactly through review, signing and recovery; unrepresentable
+ * precision and overflow are refused. Zero is a free offer, and there is no product minimum.
+ */
+
+/** 1 SOL = 1,000,000,000 lamports. https://solana.com/docs/references/terminology#lamport */
+const LAMPORTS_PER_SOL = 1_000_000_000n;
+/** SOL has nine decimal places; a tenth digit is a lamport fraction, which does not exist. */
+const SOL_DECIMALS = 9;
+/** `price_lamports` is a Borsh `u64`, so this is the largest price the program can hold. */
+export const MAX_PRICE_LAMPORTS = 0xffff_ffff_ffff_ffffn;
+
+const NOT_A_PRICE = "Enter a price in SOL, like 0.25.";
+const TOO_PRECISE = "A price in SOL can have at most 9 decimal places.";
+const TOO_LARGE = "That price is larger than this app can send.";
+
+/** Digits, optionally split by one point. Nothing else: no sign, no exponent, no separators. */
+const DECIMAL = /^(\d*)(?:\.(\d*))?$/;
+
+/**
+ * A typed SOL amount as lamports, exactly.
+ *
+ * Empty text and "0" both mean FREE and answer `0n` — an empty price field is how a creator says
+ * "no price", and zero is how the program stores that same intent (`price_lamports == 0` is what
+ * `collect` requires and what `buy` refuses with `NotForSale`). Everything else throws a sentence a
+ * screen can render: a sign, an exponent, a thousands separator, a bare ".", more than nine
+ * fraction digits, or a value past `u64`.
+ */
+export function parseSolPrice(text: string): bigint {
+  if (typeof text !== "string") throw new Error(NOT_A_PRICE);
+  const trimmed = text.trim();
+  if (!trimmed) return 0n;
+  const match = DECIMAL.exec(trimmed);
+  // The regex can match "" and "." because both halves are optional, so at least one digit is
+  // required separately. That also rejects "-1", "+1", "1e9", "0x10", "1,5" and "1.2.3".
+  if (!match || !(match[1] || match[2])) throw new Error(NOT_A_PRICE);
+  const whole = match[1] ?? "";
+  const fraction = match[2] ?? "";
+  if (fraction.length > SOL_DECIMALS) throw new Error(TOO_PRECISE);
+  // A very long integer part is refused by the u64 bound below, not here: BigInt handles it, and
+  // the honest refusal is "larger than this app can send", not "not a price".
+  const lamports =
+    BigInt(whole || "0") * LAMPORTS_PER_SOL + BigInt(fraction.padEnd(SOL_DECIMALS, "0") || "0");
+  if (lamports > MAX_PRICE_LAMPORTS) throw new Error(TOO_LARGE);
+  return lamports;
+}
+
+/**
+ * Lamports as a SOL string: the exact value, with trailing zeros trimmed and always at least one
+ * decimal place, so a price never renders as a bare integer that could be misread as lamports.
+ * `0n` is "0.0", `1n` is "0.000000001", `1_500_000_000n` is "1.5".
+ *
+ * `parseSolPrice(formatSol(x)) === x` for every representable `x`; this is the display half of the
+ * same exact conversion and allocates no float either.
+ */
+export function formatSol(lamports: bigint): string {
+  if (typeof lamports !== "bigint" || lamports < 0n || lamports > MAX_PRICE_LAMPORTS)
+    throw new Error(TOO_LARGE);
+  const whole = lamports / LAMPORTS_PER_SOL;
+  const fraction = (lamports % LAMPORTS_PER_SOL).toString().padStart(SOL_DECIMALS, "0");
+  const trimmed = fraction.replace(/0+$/, "");
+  return `${whole}.${trimmed || "0"}`;
+}

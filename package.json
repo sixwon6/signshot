@@ -1,0 +1,71 @@
+{
+  "name": "seedshot",
+  "version": "1.0.0",
+  "license": "MIT",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "devnet": "tsx publications/devnet/session.ts",
+    "devnet:check": "tsx scripts/check-devnet.mjs",
+    "start": "expo start",
+    "android": "expo run:android",
+    "build:android-bundle": "expo export:embed --platform android --dev false --entry-file index.js --bundle-output .expo/ci/index.android.bundle --assets-dest .expo/ci/assets",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
+    "test": "npm run typecheck && tsx scripts/check-version.ts && tsx scripts/check-prebuild.ts && tsx scripts/check-signing.ts && tsx scripts/check-runtime-behavior.mjs && tsx scripts/check-attestation.ts",
+    "verify:attestation": "tsx scripts/verify-attestation.ts",
+    "release:apk": "node scripts/release-apk.mjs",
+    "release:check": "tsx scripts/check-release-config.ts"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-navigation/bottom-tabs": "^7.4.0",
+    "@react-navigation/native": "^7.1.9",
+    "@solana-mobile/mobile-wallet-adapter-protocol": "^2.3.0",
+    "@solana-mobile/mobile-wallet-adapter-protocol-kit": "0.4.0",
+    "@solana-program/compute-budget": "^0.17.0",
+    "@solana-program/token-2022": "^0.15.0",
+    "@solana/kit": "^7.1.1",
+    "@wallet-ui/react-native-kit": "^4.3.0",
+    "babel-preset-expo": "^57.0.9",
+    "expo": "~57.0.23",
+    "expo-build-properties": "~57.0.19",
+    "expo-clipboard": "~57.0.2",
+    "expo-constants": "~57.0.18",
+    "expo-dev-client": "~57.0.19",
+    "expo-font": "~57.0.4",
+    "expo-secure-store": "~57.0.4",
+    "expo-sharing": "~57.0.20",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "qrcode": "1.5.4",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-nitro-modules": "^0.37.1",
+    "react-native-quick-base64": "^3.0.1",
+    "react-native-quick-crypto": "^1.1.7",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@solana-program/loader-v3": "^0.5.0",
+    "@solana-program/system": "^0.13.0",
+    "@types/node": "^26.4.0",
+    "@types/react": "~19.2.0",
+    "tsx": "^4.23.13",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "react-dom": "$react",
+    "xcode": {
+      "uuid": "11.1.1"
+    }
+  },
+  "private": true
+}

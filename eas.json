@@ -1,0 +1,15 @@
+{
+  "cli": {
+    "version": ">= 23.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "dapp-store": {
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a",
+        "credentialsSource": "local"
+      }
+    }
+  }
+}

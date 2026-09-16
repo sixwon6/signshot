@@ -1,0 +1,23 @@
+# Text is normalised to LF in the index and checked out as LF, matching `.editorconfig`'s
+# `end_of_line = lf`. Everything below either pins that for a file whose endings matter, or keeps
+# git from touching a file that is not text at all.
+* text=auto eol=lf
+
+# ShaderGen.kt raw strings contribute to published capture_pipeline_id hashes.
+# Preserve LF on every platform so a checkout cannot change those identifiers.
+*.kt text eol=lf
+
+# The Gradle wrapper's batch script: cmd.exe mis-parses a multi-line .bat with LF endings, and
+# `android/gradlew.bat` is Gradle's own file, shipped with CRLF.
+*.bat text eol=crlf
+
+# Not text. Left byte-for-byte: no eol conversion, no diff, no merge.
+*.png binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.tgz binary
+*.so binary

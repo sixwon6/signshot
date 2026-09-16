@@ -1,0 +1,6 @@
+{
+  "name": "@seedshot/publications",
+  "private": true,
+  "type": "module",
+  "license": "MIT"
+}

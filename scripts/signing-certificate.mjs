@@ -1,0 +1,7 @@
+/** Verify the upload certificate's identity, independent of the app's current display name. */
+export function matchesUploadCertificate(output, expectedSha256) {
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || /androiddebugkey/i.test(output)) return false;
+  const certificates = [...output.matchAll(/^Signer #(\d+) certificate SHA-256 digest:\s*([a-f0-9]{64})\s*$/gmi)];
+  return certificates.length === 1 && certificates[0][1] === "1" &&
+    certificates[0][2].toLowerCase() === expectedSha256.toLowerCase();
+}

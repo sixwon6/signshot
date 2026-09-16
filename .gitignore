@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Expo and Metro
+.expo/
+dist/
+.metro-health-check*
+expo-env.d.ts
+
+# Local environment. Only the example is public.
+.env
+.env.*
+!.env.example
+
+# Signing material never enters the repo. The committed debug keystore is the stock public
+# React Native one; it cannot sign a release.
+*.jks
+*.keystore
+!android/app/debug.keystore
+*.key
+*.pem
+# Google's public attestation roots are not a secret; the verifier and `npm test` read them.
+!scripts/attestation-roots.pem
+*.p12
+*.orig.*
+
+# Build output
+android/.kotlin/
+modules/*/android/build/
+modules/*/android/.gradle/
+modules/*/android/.cxx/
+programs/editions/target/
+*.apk
+*.aab
+*.tsbuildinfo
+
+# Editors and OS
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.*

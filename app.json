@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "Seedshot",
+    "slug": "seedshot",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#10140F"
+      },
+      "package": "app.seekershot",
+      "versionCode": 1,
+      "allowBackup": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "erashot.app",
+              "pathPrefix": "/collect"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "permissions": ["android.permission.CAMERA"],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#F2EFE6"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 34,
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "# Seedshot — the native module's two reflective entry points; library consumer rules cover the rest.\n-keep class expo.modules.seekercamera.SeekerCameraModule {\n    public <init>();\n    public expo.modules.kotlin.modules.ModuleDefinitionData definition();\n}\n-keep class expo.modules.seekercamera.SeekerCameraView {\n    public <init>(android.content.Context, expo.modules.kotlin.AppContext);\n}\n"
+          }
+        }
+      ],
+      [
+        "expo-dev-client",
+        {
+          "addGeneratedScheme": false,
+          "launchMode": "most-recent",
+          "android": {
+            "defaultLaunchURL": "http://localhost:8081"
+          }
+        }
+      ],
+      "expo-sharing",
+      "react-native-quick-crypto",
+      "expo-secure-store",
+      "./plugins/withSharingProviderPaths.js",
+      "./plugins/withProguardRules.js",
+      "./plugins/withDappStoreSigning.js"
+    ]
+  }
+}

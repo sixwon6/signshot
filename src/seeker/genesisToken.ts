@@ -36,11 +36,13 @@ const mintDecoder = getMintDecoder();
 
 /**
  * The mint address of an SGT currently held by `owner`, or null. Throws on RPC failure so a
- * network error is never mistaken for "does not hold one".
+ * network error is never mistaken for "does not hold one". `rpc` must be a mainnet client;
+ * `abortSignal` bounds every request made here.
  */
 export async function findSeekerGenesisToken(
   rpc: Rpc<SolanaRpcApi>,
   owner: Address,
+  abortSignal?: AbortSignal,
 ): Promise<Address | null> {
   const { value: tokenAccounts } = await rpc
     .getTokenAccountsByOwner(
@@ -48,7 +50,7 @@ export async function findSeekerGenesisToken(
       { programId: TOKEN_2022_PROGRAM_ADDRESS },
       { encoding: "jsonParsed" },
     )
-    .send();
+    .send({ abortSignal });
 
   const mints: Address[] = [];
   const seen = new Set<string>();
@@ -67,7 +69,7 @@ export async function findSeekerGenesisToken(
     const batch = mints.slice(i, i + MINT_BATCH);
     const { value: infos } = await rpc
       .getMultipleAccounts(batch, { encoding: "base64" })
-      .send();
+      .send({ abortSignal });
     for (let j = 0; j < batch.length; j++) {
       const raw = infos[j];
       if (!raw) continue;

@@ -676,6 +676,11 @@ export const settings = {
   networkRow: "Network",
   networkDevnet: "SOLANA DEVNET",
   networkMainnet: "SOLANA MAINNET",
+  /**
+   * Devnet builds only. The token and the name exist on mainnet alone, so those two rows are read
+   * there for the same wallet address while everything the app sends stays on devnet.
+   */
+  seekerSourceDevnet: "TOKEN AND SEEKER ID ARE READ FROM SOLANA MAINNET. PUBLISHING USES DEVNET.",
   /** No wallet, so there is no fact to report either way. */
   factUnknown: "—",
   factChecking: "CHECKING…",
@@ -684,7 +689,7 @@ export const settings = {
   checking: "Checking…",
   sharingSection: "Sharing",
   stampRow: "Add my .skr name",
-  /** The one line on this screen, and only while the toggle cannot be used. */
+  /** Shown only while the toggle cannot be used. */
   stampNeedsName: "Available once your wallet has a .skr name.",
   aboutSection: "About",
   privacyLink: "Privacy & publication",

@@ -48,10 +48,12 @@ function resolveRpcOverride(raw: string | undefined): string | null {
   return raw;
 }
 
+/** Solana's public mainnet endpoint: rate-limited per IP (https://solana.com/docs/references/clusters). */
+const PUBLIC_MAINNET_ENDPOINT = "https://api.mainnet-beta.solana.com";
+
 const RPC_OVERRIDE = resolveRpcOverride(process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
 export const RPC_ENDPOINT: string =
-  RPC_OVERRIDE ??
-  (IS_MAINNET ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com");
+  RPC_OVERRIDE ?? (IS_MAINNET ? PUBLIC_MAINNET_ENDPOINT : "https://api.devnet.solana.com");
 
 /** Wallet UI supplies the MWA chain id, which differs from the RPC cluster spelling. */
 export const CLUSTER: SolanaCluster = IS_MAINNET
@@ -67,6 +69,20 @@ let rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi> | null = null;
 export function getRpc(): Rpc<SolanaRpcApi> {
   if (rpc === null) rpc = createSolanaRpc(RPC_ENDPOINT);
   return rpc;
+}
+
+let mainnetReadRpc: Rpc<SolanaRpcApi> | null = null;
+
+/**
+ * Read-only mainnet client for the Seeker facts (SGT, `.skr`), which exist on mainnet only. A
+ * mainnet build reuses the app client, so its proxy still applies; any other build reads the public
+ * mainnet endpoint, never `EXPO_PUBLIC_SOLANA_RPC_URL`, which points at that build's own cluster.
+ * Display only: nothing signs, sends or confirms through this client, and `CHAIN` is unaffected.
+ */
+export function getMainnetReadRpc(): Rpc<SolanaRpcApi> {
+  if (IS_MAINNET) return getRpc();
+  if (mainnetReadRpc === null) mainnetReadRpc = createSolanaRpc(PUBLIC_MAINNET_ENDPOINT);
+  return mainnetReadRpc;
 }
 
 /** WebSocket subscriptions; created lazily and nothing opens a socket until it is used. */

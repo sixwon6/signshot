@@ -235,6 +235,10 @@ export function SettingsScreen() {
             value={devnet ? copy.networkDevnet : copy.networkMainnet}
             last
           />
+          {/* The two rows above are mainnet facts even on a devnet build (`getMainnetReadRpc`), so
+              the section says which network each half is about. They stay display only: a
+              client-side SGT check is cosmetic, never proof of ownership, and gates nothing. */}
+          {devnet && <Text style={s.note}>{copy.seekerSourceDevnet}</Text>}
           {!!identity.error && <Text style={s.error}>{identity.error}</Text>}
           <Pill
             label={identity.checking ? copy.checking : copy.refresh}
@@ -496,6 +500,7 @@ const s = StyleSheet.create({
   pressed: { opacity: 0.6 },
 
   help: { ...type.body, color: colors.muted },
+  note: { ...type.imprint, color: colors.muted, paddingTop: space.sm },
   error: { ...type.body, color: colors.danger },
   footer: {
     ...type.label,

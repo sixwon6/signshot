@@ -4,7 +4,8 @@ import { createSerialQueue } from "../serial";
 import type { Address } from "@solana/kit";
 import { useMobileWallet } from "@wallet-ui/react-native-kit";
 
-import { IS_MAINNET, getRpc } from "../solana/cluster";
+import { getMainnetReadRpc } from "../solana/cluster";
+import { rpcWithTimeout } from "../../publications/rpc";
 import { findSeekerGenesisToken } from "./genesisToken";
 import { resolveSkrName } from "./skrName";
 import { safeErrorText } from "../ui/errorText";
@@ -12,7 +13,12 @@ import { safeErrorText } from "../ui/errorText";
 /**
  * The connected wallet's Seeker facts (SGT, `.skr` name) in one app-wide store, cached for a day
  * because the public RPC throttles `getProgramAccounts`. A failed half keeps its last value and is
- * never recorded as "none" (`undefined` = unknown). Disconnect clears this cache. Mainnet only.
+ * never recorded as "none" (`undefined` = unknown). Disconnect clears this cache.
+ *
+ * Both facts exist on mainnet only, so they are always read from mainnet (`getMainnetReadRpc`),
+ * whatever cluster this build publishes on: the wallet address is the same keypair on every
+ * cluster, so no wallet interaction is involved. Display only. A failure here is a line in
+ * Settings and never reaches the camera, publishing or collecting.
  */
 
 interface SeekerIdentity {
@@ -39,7 +45,7 @@ interface CacheEntry {
 
 const CACHE_KEY = "seeker.identity.v2";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const MAINNET_ONLY = "SEEKER LOOKUPS ARE MAINNET ONLY";
+const UNAVAILABLE = "SEEKER DETAILS UNAVAILABLE — TRY AGAIN";
 
 // ---- store ---------------------------------------------------------------------------------
 
@@ -111,6 +117,9 @@ function messageOf(e: unknown): string {
   // endpoint URL, which on a keyed provider carries the key.
   const t = safeErrorText(e, "LOOKUP FAILED");
   if (/429|Too Many Requests|rate/i.test(t)) return "RPC RATE LIMITED — TRY AGAIN IN A MINUTE";
+  // Offline, DNS, TLS, a blocked IP (403) or the 20 s deadline: mainnet could not be asked.
+  if (/network request failed|fetch failed|did not answer in time|abort|HTTP error|403/i.test(t))
+    return UNAVAILABLE;
   return t.toUpperCase().slice(0, 96);
 }
 
@@ -123,10 +132,6 @@ function lookup(target: string, force: boolean): Promise<void> {
   const running = inFlight.get(target);
   if (running) return running;
   const task = (async () => {
-    if (!IS_MAINNET) {
-      if (state.wallet === target) setState({ error: MAINNET_ONLY });
-      return;
-    }
     const now = Date.now();
     const previous = (await readCache()) ?? null;
     const base: CacheEntry = previous?.wallet === target ? previous : { wallet: target };
@@ -136,12 +141,16 @@ function lookup(target: string, force: boolean): Promise<void> {
       if (state.wallet === target) setState({ entry: base, error: null });
       return;
     }
-    const rpc = getRpc();
+    const rpc = getMainnetReadRpc();
     // `target` is already a kit `Address`; it only lost the brand in this store's `string` state.
     const owner = target as Address;
     const [sgt, skr] = await Promise.allSettled([
-      needSgt ? findSeekerGenesisToken(rpc, owner) : Promise.resolve(undefined),
-      needSkr ? resolveSkrName(rpc, owner) : Promise.resolve(undefined),
+      needSgt
+        ? rpcWithTimeout((signal) => findSeekerGenesisToken(rpc, owner, signal))
+        : Promise.resolve(undefined),
+      needSkr
+        ? rpcWithTimeout((signal) => resolveSkrName(rpc, owner, signal))
+        : Promise.resolve(undefined),
     ]);
     const next: CacheEntry = { ...base };
     let error: string | null = null;

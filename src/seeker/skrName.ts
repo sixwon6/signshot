@@ -23,7 +23,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
  *
  * RPC failures throw, so "no name" and "could not look" stay different answers. A wrong derivation
  * would also look like "no name", so the ANS root is checked against its known address once.
- * Mainnet only; the caller gates on the cluster.
+ * Mainnet only; the caller passes a mainnet client, whatever cluster the build publishes on.
  */
 
 const ANS_PROGRAM = address("ALTNSZ46uaAUU7XUV6awvdorLGqAsPwa9shm7h4uP2FK");
@@ -68,8 +68,11 @@ const deriveReverseAccount = (nameAccount: Address, tldHouse: Address) =>
 async function fetchAccountData(
   rpc: Rpc<SolanaRpcApi>,
   account: Address,
+  abortSignal?: AbortSignal,
 ): Promise<Uint8Array | null> {
-  const { value } = await rpc.getAccountInfo(account, { encoding: "base64" }).send();
+  const { value } = await rpc
+    .getAccountInfo(account, { encoding: "base64" })
+    .send({ abortSignal });
   return value ? new Uint8Array(base64Encoder.encode(value.data[0])) : null;
 }
 
@@ -102,6 +105,7 @@ function checkDerivationOnce(): Promise<void> {
 async function resolveSkrNames(
   rpc: Rpc<SolanaRpcApi>,
   owner: Address,
+  abortSignal?: AbortSignal,
 ): Promise<string[]> {
   await checkDerivationOnce();
 
@@ -130,7 +134,7 @@ async function resolveSkrNames(
         },
       ],
     })
-    .send();
+    .send({ abortSignal });
 
   // The human-readable label lives in a separate reverse-lookup account, seeded with the name
   // account's own base58 string — which is why this costs one extra read per name.
@@ -145,7 +149,11 @@ async function resolveSkrNames(
 
   const names = await Promise.all(
     live.map(async ({ pubkey }) => {
-      const data = await fetchAccountData(rpc, await deriveReverseAccount(pubkey, tldHouse));
+      const data = await fetchAccountData(
+        rpc,
+        await deriveReverseAccount(pubkey, tldHouse),
+        abortSignal,
+      );
       if (!data || data.length <= HEADER_SIZE) return null;
       const label = utf8Decoder.decode(data.subarray(HEADER_SIZE)).replace(/\0.*$/, "");
       if (!label) return null;
@@ -160,12 +168,14 @@ async function resolveSkrNames(
 
 /**
  * The one `.skr` name to display for `owner`, or null when it holds none. Throws on RPC
- * failure, so "no name" and "could not look" stay different answers.
+ * failure, so "no name" and "could not look" stay different answers. `rpc` must be a mainnet
+ * client; `abortSignal` bounds every request made here.
  */
 export async function resolveSkrName(
   rpc: Rpc<SolanaRpcApi>,
   owner: Address,
+  abortSignal?: AbortSignal,
 ): Promise<string | null> {
-  const names = await resolveSkrNames(rpc, owner);
+  const names = await resolveSkrNames(rpc, owner, abortSignal);
   return names[0] ?? null;
 }

@@ -259,8 +259,8 @@ function qrSvg(url: string, size: number): SVGSVGElement {
 }
 
 /**
- * "Open in Seedshot". The page URL itself is the app's verified App Link, so a tap on the link
- * from another app already opens Seedshot; a viewer who is ALREADY in a browser on the phone
+ * "Open in Signshot". The page URL itself is the app's verified App Link, so a tap on the link
+ * from another app already opens Signshot; a viewer who is ALREADY in a browser on the phone
  * needs an explicit hand-off, which is what an Android `intent://` URL is for
  * (https://developer.chrome.com/docs/android/intents): Chrome opens the named package when it is
  * installed and otherwise follows `S.browser_fallback_url`, here the site's own home page rather
@@ -449,7 +449,7 @@ export function run(adapter: Adapter) {
       el<HTMLImageElement>("full-photo").alt = loaded.title;
       el("full-photo-title").textContent = loaded.title;
       el("title").textContent = loaded.title;
-      document.title = `${loaded.title} · Seedshot`;
+      document.title = `${loaded.title} · Signshot`;
       el("creator").textContent = loaded.creator;
       showMoment(loaded.description);
       showAvailability();
@@ -486,7 +486,7 @@ export function run(adapter: Adapter) {
     }
   }
   async function connectMobile(): Promise<Connection> {
-    const identity = { name: "Seedshot", uri: location.origin, icon: "/icon.png" };
+    const identity = { name: "Signshot", uri: location.origin, icon: "/icon.png" };
     const auth = await transact((wallet) => wallet.authorize({ chain, identity }));
     const selected = auth.accounts[0];
     if (!selected) throw new Error("No wallet account was selected.");
@@ -716,7 +716,7 @@ export function run(adapter: Adapter) {
     ctx.fillRect(0, 0, 1080, 1920);
     ctx.fillStyle = "#20271F";
     ctx.font = "32px monospace";
-    ctx.fillText("SEEDSHOT / PHOTO & RECORD", 70, 105);
+    ctx.fillText("SIGNSHOT / PHOTO & RECORD", 70, 105);
     const img = el<HTMLImageElement>("photo");
     await img.decode();
     const scale = Math.min(940 / img.naturalWidth, 1090 / img.naturalHeight),
@@ -741,7 +741,7 @@ export function run(adapter: Adapter) {
     const blob = await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Unable to create share image."))), "image/png"),
     );
-    const file = new File([blob], "seedshot-print.png", { type: "image/png" });
+    const file = new File([blob], "signshot-print.png", { type: "image/png" });
     if (navigator.canShare?.({ files: [file] }))
       await navigator.share({ files: [file], title: loaded.title, text: url });
     else {

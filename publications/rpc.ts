@@ -547,7 +547,7 @@ export const EDITION_ACCOUNT_BYTES = 301;
 const RECEIPT_ACCOUNT_BYTES = 106;
 /** 8 + `Offer::INIT_SPACE` (32 + 32 + 8 + 4 + 1). `core/protocol.ts` pins the same number. */
 export const OFFER_ACCOUNT_BYTES = 85;
-/** The smallest Core accounts a Seedshot publication can write. */
+/** The smallest Core accounts a Signshot publication can write. */
 const CORE_COLLECTION_MIN_BYTES = 457;
 const CORE_PRINT_MIN_BYTES = 186;
 const CORE_GROUP_MIN_BYTES = 58;

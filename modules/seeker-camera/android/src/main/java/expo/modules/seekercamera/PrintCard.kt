@@ -17,7 +17,7 @@ internal object PrintCard {
       val canvas = Canvas(card)
       canvas.drawColor(Color.rgb(239, 237, 225))
       val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(25, 25, 20); textSize = 36f; typeface = Typeface.MONOSPACE }
-      canvas.drawText("SEEDSHOT / COLLECT A MOMENT", 70f, 106f, p)
+      canvas.drawText("SIGNSHOT / COLLECT A MOMENT", 70f, 106f, p)
       val scale = minOf(940f / photo.width, 1090f / photo.height)
       val w = photo.width * scale; val h = photo.height * scale
       canvas.drawBitmap(photo, null, RectF((1080-w)/2, 170+(1090-h)/2, (1080+w)/2, 170+(1090+h)/2), Paint(Paint.FILTER_BITMAP_FLAG))

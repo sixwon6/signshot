@@ -1,5 +1,5 @@
 /**
- * Albums: a Metaplex Core `GroupV1` listing several Seedshot photo editions. The group's name and
+ * Albums: a Metaplex Core `GroupV1` listing several Signshot photo editions. The group's name and
  * URI are mutable, and membership grants no trust.
  */
 
@@ -110,7 +110,7 @@ export function albumUrl(group: string, cluster: Cluster, origin = "https://eras
 // ---------------------------------------------------------------------------
 
 const ALBUM_NOT_FOUND = "Album not found on this network";
-const NOT_AN_ALBUM = "This Solana account is not a Seedshot album.";
+const NOT_AN_ALBUM = "This Solana account is not a Signshot album.";
 
 export interface Album {
   group: Address;

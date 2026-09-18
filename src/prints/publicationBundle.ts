@@ -39,7 +39,7 @@ interface PublicationBundleDocument {
 }
 
 const NOTE =
-  "Seedshot publication bundle. The edition is on Solana; its metadata document and public " +
+  "Signshot publication bundle. The edition is on Solana; its metadata document and public " +
   "image have not finished uploading to Arweave. This file is the only copy of both: the app " +
   "does not back them up and cannot read this file back in. Keep it until the upload completes.";
 

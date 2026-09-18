@@ -77,7 +77,7 @@ const certs = `${v.stdout ?? ""}${v.stderr ?? ""}`;
 process.stdout.write(certs);
 const uploadCertificate = JSON.parse(readFileSync(resolve(root, "dapp-store/signing-certificate.json"), "utf8"));
 if ((v.status ?? 1) !== 0 || !matchesUploadCertificate(certs, uploadCertificate.sha256)) {
-  console.error("\nrelease:apk refused — the APK is not signed by the Seedshot upload key. Deleted.");
+  console.error("\nrelease:apk refused — the APK is not signed by the Signshot upload key. Deleted.");
   rmSync(APK, { force: true });
   process.exit(1);
 }

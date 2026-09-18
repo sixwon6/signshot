@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Seedshot",
+    "name": "Signshot",
     "slug": "seedshot",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -50,7 +50,7 @@
             "minSdkVersion": 34,
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "extraProguardRules": "# Seedshot — the native module's two reflective entry points; library consumer rules cover the rest.\n-keep class expo.modules.seekercamera.SeekerCameraModule {\n    public <init>();\n    public expo.modules.kotlin.modules.ModuleDefinitionData definition();\n}\n-keep class expo.modules.seekercamera.SeekerCameraView {\n    public <init>(android.content.Context, expo.modules.kotlin.AppContext);\n}\n"
+            "extraProguardRules": "# Signshot — the native module's two reflective entry points; library consumer rules cover the rest.\n-keep class expo.modules.seekercamera.SeekerCameraModule {\n    public <init>();\n    public expo.modules.kotlin.modules.ModuleDefinitionData definition();\n}\n-keep class expo.modules.seekercamera.SeekerCameraView {\n    public <init>(android.content.Context, expo.modules.kotlin.AppContext);\n}\n"
           }
         }
       ],

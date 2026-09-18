@@ -49,7 +49,7 @@ export function PhotoFrame({
   children,
   title,
   byline,
-  mark = "SEEDSHOT",
+  mark = "SIGNSHOT",
   variant = "full",
   imageHeight,
   aspectRatio,

@@ -279,7 +279,7 @@ export function SettingsScreen() {
         </Section>
 
         <Text style={s.footer}>
-          {`Seedshot · v${version} · ${devnet ? "Devnet" : "Mainnet"}`}
+          {`Signshot · v${version} · ${devnet ? "Devnet" : "Mainnet"}`}
         </Text>
 
         {__DEV__ && (

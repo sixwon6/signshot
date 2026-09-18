@@ -63,7 +63,7 @@ tasks.matching { it.name == 'packageRelease' || it.name == 'packageReleaseBundle
     doFirst {
         if (!seedshotUploadKeyMissing.isEmpty()) {
             throw new GradleException("""
-Seedshot release build REFUSED: the dApp Store upload key is not configured.
+Signshot release build REFUSED: the dApp Store upload key is not configured.
 
   Missing Gradle propert\${seedshotUploadKeyMissing.size() == 1 ? 'y' : 'ies'}: \${seedshotUploadKeyMissing.join(', ')}
 

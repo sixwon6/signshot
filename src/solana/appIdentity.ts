@@ -6,7 +6,7 @@ import type { AppIdentity } from "@wallet-ui/react-native-kit";
  * by reference; an inline literal would rebuild the client on every render.
  */
 export const APP_IDENTITY = {
-  name: "Seedshot",
+  name: "Signshot",
   uri: "https://erashot.app",
   // Relative to `uri` per the MWA spec, with no leading slash so naive joining can't yield `//`.
   icon: "icon.png",

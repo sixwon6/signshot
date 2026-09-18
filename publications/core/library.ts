@@ -1,4 +1,4 @@
-/** Read-only discovery. RPC results are candidates, never evidence of Seedshot issuance. */
+/** Read-only discovery. RPC results are candidates, never evidence of Signshot issuance. */
 import {
   address, getAddressDecoder, getAddressEncoder, getBase64Encoder, getBase64Decoder,
 } from "@solana/kit";

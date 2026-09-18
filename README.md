@@ -1,6 +1,10 @@
-# Seedshot
+# Signshot
 
-Seedshot is a photographer's toolkit for the Solana Seeker phone. It has its own Camera2/OpenGL
+Formerly Seedshot. The repository, the Android package `app.seekershot`, the `erashot.app` domain and
+the on-chain and metadata identifiers (`seedshot-attestation/1`, `properties.seedshot`, `erashot-core/1`)
+keep their old names, because published editions and verified App Links depend on them.
+
+Signshot is a photographer's toolkit for the Solana Seeker phone. It has its own Camera2/OpenGL
 still camera with manual exposure, white balance and focus; recipes that shape the look at capture
 time and again in Develop; and a photo library with sharing, export, print cards and albums. It
 works with the Seeker's built-in wallet (Seed Vault, through Mobile Wallet Adapter): a finished
@@ -25,7 +29,7 @@ device-tested status and the devnet-to-mainnet work remaining.
   `description`, `image`) to Arweave. An optional price goes into the same approval.
 - **Share.** A published photograph shares a print card carrying its collect link,
   `https://erashot.app/collect/?core=<edition>`, as a QR code. Tapping that link on a Seeker with
-  Seedshot installed opens the Collect sheet directly (Android App Links); the Collection tab also
+  Signshot installed opens the Collect sheet directly (Android App Links); the Collection tab also
   takes a pasted link or address, or scans a QR code with the phone's camera.
 - **Collect or buy.** A free edition is collected: the collector pays the network fee, account
   rent and Metaplex Core's create fee, nothing reaches the publisher. A priced edition is bought:

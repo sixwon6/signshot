@@ -460,7 +460,7 @@ export const collect = {
   entryHeading: "Collect a copy",
   linkLabel: "Collect link",
   linkPlaceholder: "Paste a collect link",
-  linkInvalid: "That is not a Seedshot collect link.",
+  linkInvalid: "That is not a Signshot collect link.",
   scanUnavailable: "Scanning needs a newer version of this app.",
   scanFailed: "Couldn’t scan that code.",
   pasteFailed: "Couldn’t read the clipboard.",

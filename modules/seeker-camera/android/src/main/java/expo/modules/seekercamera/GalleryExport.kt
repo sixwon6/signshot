@@ -14,17 +14,17 @@ import java.io.FileInputStream
 import java.io.IOException
 
 /**
- * Copies a JPEG into `Pictures/Seedshot` via scoped MediaStore (pending row, stream, clear
+ * Copies a JPEG into `Pictures/Signshot` via scoped MediaStore (pending row, stream, clear
  * IS_PENDING) and returns its `content://` URI. Not safe to run concurrently for the same display
  * name, so it is only called from SeekerCameraModule's single export thread.
  */
 internal object GalleryExport {
   private const val TAG = "SeekerCamera"
-  private const val ALBUM = "Seedshot"
+  private const val ALBUM = "Signshot"
   private const val MIME = "image/jpeg"
   private const val HASH_BUFFER_BYTES = 64 * 1024
 
-  /** `Pictures/Seedshot/`. MediaStore stores RELATIVE_PATH with a trailing slash. */
+  /** `Pictures/Signshot/`. MediaStore stores RELATIVE_PATH with a trailing slash. */
   private val RELATIVE_PATH = "${Environment.DIRECTORY_PICTURES}/$ALBUM/"
 
   fun export(ctx: Context, source: File, displayName: String): Uri {

@@ -1,5 +1,5 @@
 /**
- * Sending a Seedshot print (a Metaplex Core asset) with one `TransferV1`. Ownership is the asset's
+ * Sending a Signshot print (a Metaplex Core asset) with one `TransferV1`. Ownership is the asset's
  * own `owner` field, so no account is created. Sending is not a sale.
  */
 
@@ -34,7 +34,7 @@ function validateRecipient(input: string, owner: string): string {
 }
 
 /**
- * Everything checked before the wallet opens: the exact asset, current ownership, the Seedshot
+ * Everything checked before the wallet opens: the exact asset, current ownership, the Signshot
  * shape, the published `metadataId`, and a plain-wallet recipient.
  */
 export async function inspectTransfer(

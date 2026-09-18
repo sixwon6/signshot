@@ -12,7 +12,7 @@
 # Add any project specific keep options here:
 
 # @generated begin expo-build-properties - expo prebuild (DO NOT MODIFY)
-# Seedshot — the native module's two reflective entry points; library consumer rules cover the rest.
+# Signshot — the native module's two reflective entry points; library consumer rules cover the rest.
 -keep class expo.modules.seekercamera.SeekerCameraModule {
     public <init>();
     public expo.modules.kotlin.modules.ModuleDefinitionData definition();

@@ -318,7 +318,7 @@ footer {
 .device-none .device-text { color: #66715f; }
 .device-fine { margin: 8px 0 0; }
 .price { margin: -14px 0 18px; font-size: 14px; color: #3b4838; }
-/* Open in Seedshot: an intent link on Android, a QR of this page elsewhere. */
+/* Open in Signshot: an intent link on Android, a QR of this page elsewhere. */
 .open-app { margin: 0 0 18px; }
 .open-app-link { display: block; text-align: center; border-radius: 10px; border: 1px solid #263b2b; background: transparent; color: #263b2b; padding: 16px; font-weight: 650; text-decoration: none; min-height: 54px; }
 .open-app-link:hover { background: #e8ebdf; }

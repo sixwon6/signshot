@@ -72,11 +72,11 @@ reason recorded evidence was set aside, or "No device attestation was recorded f
 publication." The row names the device, the key and the boot state. It never says
 "camera-verified" or "authentic", and the fine print under it says it does not describe the scene.
 
-**Open in Seedshot**: on Android the control is an `intent://erashot.app/collect/...#Intent;
+**Open in Signshot**: on Android the control is an `intent://erashot.app/collect/...#Intent;
 scheme=https;package=app.seekershot;S.browser_fallback_url=...;end` link, which Chrome resolves to
 the installed app and otherwise sends to the site home; elsewhere it is a QR of the page's link
 for a phone to scan. The page URL itself is the app's verified App Link, so a tap from another app
-already opens Seedshot.
+already opens Signshot.
 
 **Collect / buy** in a browser wallet (Wallet Standard on desktop, Mobile Wallet Adapter in Chrome
 on Android): the adapter re-reads the `Offer` account immediately before quoting and builds
@@ -129,7 +129,7 @@ curl -sI https://erashot.app/ | head -1   # 200, no WWW-Authenticate
 ```
 
 Then open the devnet link above in desktop Chrome (photograph, price line, QR, device row "No
-device attestation…"), and on the Seeker in Chrome (the "Open in Seedshot" control must hand off
+device attestation…"), and on the Seeker in Chrome (the "Open in Signshot" control must hand off
 to the app). When a device-attested edition exists, open its link and confirm the Device row, and
 run `npm run verify:attestation -- --edition <address> --cluster devnet` beside it.
 

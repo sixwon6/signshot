@@ -18,7 +18,7 @@ interface AlbumConformance {
 const utf8Length = (value: string) => new TextEncoder().encode(value).length;
 
 /**
- * Is this group's content what a Seedshot album looks like?
+ * Is this group's content what a Signshot album looks like?
  *
  * Accepts a bare `{ name, uri }` as well as a decoded group, so the creation path can check a
  * name the user is still typing against the same rule the chain will apply.
@@ -45,16 +45,16 @@ export function albumConformance(group: {
     );
   if (group.uri && !ARWEAVE.test(group.uri))
     return fail("An album reference must be empty or an Arweave document.");
-  // A Seedshot album is a flat list of photo editions. A nested group, a parent group or a
+  // A Signshot album is a flat list of photo editions. A nested group, a parent group or a
   // directly attached asset is somebody's other Core object; the page can list the member
   // photographs it does understand and say so, rather than pretending to model the rest.
   if (group.groups?.length || group.parentGroups?.length)
     return fail("This Core group is nested inside or above other groups.");
   if (group.assets?.length)
-    return fail("This Core group holds assets directly, which a Seedshot album never does.");
+    return fail("This Core group holds assets directly, which a Signshot album never does.");
   // An undecodable plugin area is reported like a decodable one: either way this is not the
   // flat, plugin-free list `create_album` writes.
   if (group.plugins?.length || group.unknownPlugins)
-    return fail("This Core group carries a plugin, which a Seedshot album never does.");
+    return fail("This Core group carries a plugin, which a Signshot album never does.");
   return { conforming: true };
 }

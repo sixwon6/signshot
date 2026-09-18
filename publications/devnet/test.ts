@@ -177,7 +177,7 @@ export async function lifecycle(c: TestContext) {
         data: bytes,
         tags: [
           { name: "Content-Type", value: mime },
-          { name: "App-Name", value: "Seedshot-Devnet-Test" },
+          { name: "App-Name", value: "Signshot-Devnet-Test" },
         ],
         signer,
       });

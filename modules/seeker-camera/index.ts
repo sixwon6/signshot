@@ -155,7 +155,7 @@ interface SeekerCameraModuleType {
   deletePrintImage(baseName: string, sha256: string): Promise<boolean>;
   sharePrintCard(baseName: string, sourceHash: string, title: string, count: number, modules: string, size: number): Promise<string>;
   /**
-   * Copies the styled frame into `Pictures/Seedshot` as `<base>.jpg` and resolves its `content://`
+   * Copies the styled frame into `Pictures/Signshot` as `<base>.jpg` and resolves its `content://`
    * URI. Idempotent by content. Call through {@link saveToGallery}.
    */
   exportToGallery(baseName: string): Promise<string>;

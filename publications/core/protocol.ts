@@ -841,7 +841,7 @@ function readBool(r: ReturnType<typeof reader>): boolean {
 }
 
 /**
- * One plugin's data at its registry offset. Only Seedshot's types and the owner-managed ones
+ * One plugin's data at its registry offset. Only Signshot's types and the owner-managed ones
  * decode; anything else throws. The blob's own discriminator must match the `declared` type.
  */
 function readPlugin(
@@ -896,7 +896,7 @@ function readPlugin(
     }
     default:
       throw new Error(
-        "This Core asset carries a plugin Seedshot editions never use. It is not a Seedshot print.",
+        "This Core asset carries a plugin Signshot editions never use. It is not a Signshot print.",
       );
   }
 }
@@ -934,10 +934,10 @@ function readPlugins(bytes: Uint8Array, base: number): readonly CorePlugin[] {
     records.push({ type, authority, offset: Number(offset) });
   }
   // External plugin adapters — oracles, lifecycle hooks, app data — can gate or observe a
-  // transfer. A Seedshot edition has none, and a Core account that has one is not one of ours.
+  // transfer. A Signshot edition has none, and a Core account that has one is not one of ours.
   if (r.u32() !== 0)
     throw new Error(
-      "This Core asset carries an external plugin adapter. It is not a Seedshot print.",
+      "This Core asset carries an external plugin adapter. It is not a Signshot print.",
     );
   if (r.offset !== bytes.length) throw new Error(NOT_CORE);
   return records.map((record) =>
@@ -1059,7 +1059,7 @@ function pluginOfType<T extends CorePlugin["type"]>(
   return found;
 }
 
-const PRINT_MESSAGE = "This NFT does not match the immutable Seedshot edition format.";
+const PRINT_MESSAGE = "This NFT does not match the immutable Signshot edition format.";
 
 /**
  * Accept only the print `era_editions` creates: `Edition{number}` and `ImmutableMetadata` with
@@ -1118,7 +1118,7 @@ interface AlbumMembership {
  * The album a collection names, or `null`.
  *
  * Throws when the plugin is present but names anything other than exactly one group: an
- * edition belongs to at most one Seedshot album, and a list of zero or several has no answer.
+ * edition belongs to at most one Signshot album, and a list of zero or several has no answer.
  * The plugin authority is returned so callers can record it; membership is never decided by it.
  */
 function collectionAlbum(
@@ -1344,7 +1344,7 @@ async function loadPublication(
   const imageBytes = await arweaveBytes(image.split("/").pop()!, state.imageHash);
   const { width, height } = jpegDimensions(imageBytes);
   if (width > MAX_PRINT_EDGE || height > MAX_PRINT_EDGE)
-    throw new Error("Published photo is larger than Seedshot accepts");
+    throw new Error("Published photo is larger than Signshot accepts");
   if (dimensions && (dimensions.width !== width || dimensions.height !== height))
     throw new Error("Photo dimensions do not match the published image");
   const e: CoreMetadata = {

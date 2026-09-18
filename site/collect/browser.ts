@@ -31,7 +31,7 @@ import { coreAdapter } from "./core";
 /** Names that must never appear: retired routes, and anything shaped like a redirect. */
 const REFUSED = ["print", "album", "rpc", "endpoint", "program", "url", "api"];
 const LINK_ERROR =
-  "This is not a Seedshot edition link. Open the link from the publisher’s share card, or from the page they shared.";
+  "This is not a Signshot edition link. Open the link from the publisher’s share card, or from the page they shared.";
 
 function route(): (() => void) | null {
   if (REFUSED.some((name) => params.has(name))) return null;

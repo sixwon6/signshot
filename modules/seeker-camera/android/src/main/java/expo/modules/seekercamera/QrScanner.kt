@@ -198,7 +198,7 @@ class QrScannerActivity : AppCompatActivity() {
     if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
       startCamera()
     } else {
-      finishUnavailable("Seedshot needs camera access to scan a QR code.")
+      finishUnavailable("Signshot needs camera access to scan a QR code.")
     }
   }
 

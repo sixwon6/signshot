@@ -85,10 +85,10 @@ The public collect page at erashot.app now lives in this repository (`site/`, se
 `site/README.md`) and is bundled from the same reader the app uses, so it accepts the attested
 document, shows the Device row, and offers `collect` or `buy` by the live `Offer` account.
 `npm run build:site` produces `site/dist`; `npm test` checks the page's wording, its CSP copies,
-the App Link association and the build guards. **The rebuilt page is not deployed yet:** the live
-site is still the predecessor repository's bundle behind a private-preview gate (HTTP 401), and
-the switch to deploying from here is a one-time owner action described in `site/README.md`. Until
-then a collect link opens the edition in the app (it is an Android App Link) but not on the web.
+the App Link association and the build guards. It was deployed to erashot.app on 2026-09-18 by Wrangler direct upload from `site/`
+(`site/README.md`, "Deploying"); the predecessor repository's Git builds are disabled and the
+preview gate is gone. A collect link opens the edition in the app on a phone that has it (an
+Android App Link) and on the web page everywhere else.
 
 The current devnet deployment is `7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU`. Its bytes
 match the reviewed build, and publishing, free collection, transfers, albums, prices and paid

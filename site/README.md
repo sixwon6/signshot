@@ -189,6 +189,6 @@ neither is configured).
 | Rate limiting rule | applied by API: ruleset `f90462456c6749d196bd419346b02e93`, rule `0caace9a4c4f4abab833dc629dd39aff`; probe passed (100 parallel, 30 × 429) | 12 Sep 2026 |
 | `SOLANA_RPC_URL` | Production only, encrypted `secret_text`; Preview holds no variables, preview deployments disabled | 12 Sep 2026 |
 | Pages project | `erashot` (`erashot.pages.dev`); custom domain `erashot.app` via proxied apex CNAME | 12 Sep 2026 |
-| Deployment source | **still** Git integration from `sixwon6/seeker-cam` `main`, root `site` — switch to Wrangler direct upload from this repository per "Deploying" | pending, 17 Sep 2026 |
-| Site password gate | **still on** in production (`SITE_PASSWORD`, 401 on every path but `/.well-known/*` and `/icon.png`); removed by the first deploy from this repository | pending, 17 Sep 2026 |
+| Deployment source | Wrangler direct upload from this repository's `site/`; the Git integration to `sixwon6/seeker-cam` remains attached but automatic production and preview deployments are disabled | 18 Sep 2026 |
+| Site password gate | removed: the middleware is not in this repository, the first direct upload (deployment `8e5dfc63`) replaced it, and the `SITE_PASSWORD` secret is deleted | 18 Sep 2026 | |
 | Bot Fight Mode / Turnstile | not configured | — |

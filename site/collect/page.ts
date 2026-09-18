@@ -135,14 +135,12 @@ function showMoment(description: string) {
 export interface Copy {
   /** `#availability` when the edition holds a single copy. */
   solo: string;
-  /** Inserted into the estimated-total line after "network fees", e.g. ", the X protocol fee". */
-  fee: string;
   /** `#cost` before a wallet is connected and a real estimate exists. */
   cost: string;
   /** "About this photo NFT". */
   details(loaded: Loaded): string;
-  /** The cost sentence inside that panel, for a free or a priced edition. */
-  fees(price: Price | null): string;
+  /** The protocol fee inside that panel, as a labelled value. */
+  fees(): string;
   /** The share card's edition line, in the card's upper-case voice. */
   card(supply: number): string;
   /** The status message after a confirmed, receipt-proven claim. */
@@ -214,7 +212,7 @@ function oneSignature(signatures: readonly Uint8Array[]): string {
 /** The wallet refused to sign; the caller removes the attempt that was written for it. */
 class SigningRefusedError extends Error {
   constructor(readonly cause: unknown) {
-    super("The wallet did not sign. Nothing was sent; you can try again.");
+    super("The wallet did not sign.");
   }
 }
 
@@ -333,7 +331,7 @@ export function run(adapter: Adapter) {
       return p;
     } catch (e) {
       throw new BrokenAttemptError(
-        `A saved collection record in this browser could not be read (${e instanceof Error ? e.message : String(e)}). Collecting from this browser is paused; clear this site's data to reset it.`,
+        `Saved collection record unreadable (${e instanceof Error ? e.message : String(e)}). Clear this site's data to reset.`,
       );
     }
   }
@@ -405,9 +403,9 @@ export function run(adapter: Adapter) {
     const price = el("price");
     price.hidden = loaded.supply === 1 || !loaded.remaining;
     price.textContent = loaded.price
-      ? `${sol(loaded.price.priceLamports)} SOL per copy, paid to the creator`
-      : "Free to collect · you pay network costs only";
-    el("fees").textContent = adapter.copy.fees(loaded.price);
+      ? `${sol(loaded.price.priceLamports)} SOL per copy`
+      : "Free to collect";
+    el("fees").textContent = adapter.copy.fees();
     el("about").textContent = adapter.copy.details(loaded);
   }
   /**
@@ -605,12 +603,12 @@ export function run(adapter: Adapter) {
     alreadyCollected = await adapter.hasCollected(connection.address);
     if (alreadyCollected) {
       message(
-        "This wallet already holds a copy from this edition. Each wallet can collect once, including after a transfer or burn.",
+        "Already collected by this wallet.",
       );
       return;
     }
     if (!loaded.remaining) {
-      message("The last copy has been collected.");
+      message("Sold out.");
       return;
     }
     const p = pending(); // throws BrokenAttemptError: collecting stays paused, the photo stays up
@@ -634,10 +632,10 @@ export function run(adapter: Adapter) {
           throw new Error("A previous collection may still land. Wait a moment and check again.");
         if (previous === "confirmed")
           throw new Error(
-            "Your earlier transaction confirmed but the collection receipt is not visible yet. Check again in a moment before paying again.",
+            "Earlier transaction confirmed, but its receipt is not visible yet. Check again before paying.",
           );
         if (previous === "terminal")
-          throw new Error("An earlier attempt from this wallet failed in a way that cannot be repeated.");
+          throw new Error("An earlier attempt failed and cannot be repeated.");
       } else if (previous === "pending")
         throw new Error("A previous collection may still land. Wait a moment and check again.");
     }
@@ -647,13 +645,9 @@ export function run(adapter: Adapter) {
     quote = { prepared, asset: claim.asset, number, price: claim.price };
     const total = sol(prepared.estimatedLamports);
     el("cost").textContent = claim.price
-      ? `Buying creates copy ${number} in your wallet. Price ${sol(claim.price.priceLamports)} SOL, paid to the creator. Estimated total: ${total} SOL, paid by ${connection.address}. Includes the price, account rent, network fees${adapter.copy.fee} and 0.00005 SOL wallet fee headroom. Your wallet displays the final transaction.`
-      : `Collecting creates copy ${number} in your wallet. No purchase price. Estimated total: ${total} SOL, paid by ${connection.address}. Includes account rent, network fees${adapter.copy.fee} and 0.00005 SOL wallet fee headroom. Your wallet displays the final transaction.`;
-    message(
-      claim.price
-        ? "Ready. The price above is pinned to this estimate; if the creator changes it, the purchase is refused and a fresh estimate is shown."
-        : "Ready. Collecting creates your numbered copy directly in this wallet.",
-    );
+      ? `Copy ${number} · Price ${sol(claim.price.priceLamports)} SOL · Estimated total ${total} SOL`
+      : `Copy ${number} · Estimated total ${total} SOL`;
+    message("Ready.");
   }
   async function collect() {
     if (busy || !loaded) return;
@@ -757,7 +751,7 @@ export function run(adapter: Adapter) {
       a.download = file.name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(href), 30000);
-      message("Invitation downloaded. Share it or copy this page’s link.");
+      message("Invitation downloaded.");
     }
   }
   el("collect").onclick = () => void collect();

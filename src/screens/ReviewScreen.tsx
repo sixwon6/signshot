@@ -668,7 +668,7 @@ export function ReviewScreen() {
                 {d && (
                   <Text style={s.body}>
                     {knownPublished ? "" : "Publication draft · "}
-                    {editionLine(d.edition.supply, knownPublished)}
+                    {editionLine(d.edition.supply)}
                     {d.edition.cluster === "devnet" ? " · Devnet" : ""}
                   </Text>
                 )}

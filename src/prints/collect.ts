@@ -70,7 +70,7 @@ import {
 /** The one chain this build talks to. A link for any other is refused, never silently retargeted. */
 
 const UNREVIEWED =
-  "This edition names a publication program this build has not reviewed. It cannot be collected here.";
+  "This edition uses a program this app has not reviewed.";
 
 /**
  * One collection at a time per EDITION, in the style of `publicationLockKey` (`coordinator.ts`).
@@ -99,7 +99,7 @@ const URL_TOKEN = /https?:\/\/[^\s"'<>()[\]{}]+/gi;
 /** Base58 as Solana writes it (no 0, O, I or l). Length is re-checked by `address()`. */
 const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-const ALBUM_LINK = "This is an album link. Open a photograph's own link to collect a copy.";
+const ALBUM_LINK = "That is an album link. Open a photograph's link.";
 const NOT_AN_ADDRESS = "This link does not name a Solana address.";
 const networkName = (c: Cluster) => (c === "devnet" ? "devnet" : "mainnet");
 
@@ -331,14 +331,14 @@ export interface CollectState {
   reason?: string;
 }
 
-const SOLD_OUT = "All prints have been collected.";
+const SOLD_OUT = "Sold out.";
 const ALREADY =
-  "This wallet already collected a copy from this edition. Each wallet can collect once, including after a transfer or burn.";
+  "Already collected by this wallet.";
 const MAY_LAND = "A collection may still land. Wait a moment, then check again.";
 const CONFIRMED_UNSEEN =
-  "A collection confirmed, but its receipt is not visible on this connection yet. Check again.";
+  "Collection confirmed, but its receipt is not visible yet. Check again.";
 const CANNOT_REPEAT =
-  "The previous collection failed in a way that trying again cannot fix. Reopen the link to check this edition.";
+  "The previous collection failed. Reopen the link.";
 
 /**
  * May this wallet collect, and what is standing in the way? Never throws: every failure is an
@@ -460,7 +460,7 @@ async function balanceLamports(wallet: string): Promise<bigint> {
 }
 
 const PUBLISHER =
-  "You published this edition and already hold copy 1. Each wallet can claim one copy, so this one cannot collect.";
+  "You published this edition and hold copy 1.";
 const EXPIRED = "The estimate expired. Review the collection again.";
 
 /** The fee payer of a compiled v0 message: its first static account. */

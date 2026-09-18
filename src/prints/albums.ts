@@ -315,7 +315,3 @@ export async function createAlbum(
 export function albumPublicUrl(group: string): string {
   return albumUrl(group, cluster);
 }
-
-/** Said wherever an album is chosen or shown. */
-export const ALBUM_MEMBERSHIP_NOTE =
-  "Photographs can be added to an album later, but never removed.";

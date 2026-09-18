@@ -7,9 +7,9 @@ import type { PhotoProof } from "./photoProof";
 import { colors, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
 import { NetworkLabel, Pill } from "../ui/primitives";
-import { actions, onChain, proof as copy } from "../ui/copy";
+import { actions, proof as copy } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import { ALBUM_MEMBERSHIP_NOTE, albumPublicUrl } from "./albums";
+import { albumPublicUrl } from "./albums";
 import {
   deviceName,
   securityLevelName,
@@ -71,22 +71,17 @@ export function ProofSheet({
                         ? "Photo file details"
                         : "Publication not confirmed"}
               </Text>
-              <Text style={sheetStyles.body}>
-                {published || cached
-                  ? "A wallet committed to a particular image file and its details. A matching file fingerprint lets someone check that they have the version named in that record."
-                  : proof.confirmation === "unavailable"
-                    ? "The app could not verify this publication. Any details shown below are saved on this phone; check the status again before relying on them."
-                    : "These file fingerprints and details are saved on this phone. Publication has not been confirmed; a local record alone does not show that a wallet committed to this file on Solana."}
-              </Text>
-              <Text style={sheetStyles.help}>{onChain.signature}</Text>
-              {(published || cached) && (
-                <Text style={sheetStyles.help}>{onChain.permanence}</Text>
+              {!published && !cached && proof.kind !== "local" && (
+                <Text style={sheetStyles.body}>
+                  {proof.confirmation === "unavailable"
+                    ? "Couldn’t verify this publication. Details below are from this phone."
+                    : "Not confirmed on Solana. Details below are from this phone."}
+                </Text>
               )}
-              <Text style={sheetStyles.help}>{copy.limits}</Text>
               {proof.reason && <Text style={sheetStyles.help}>{proof.reason}</Text>}
             </View>
             <Row label="Publishing wallet" mono>
-              {proof.publisher ?? "Not available in this record."}
+              {proof.publisher ?? "Not available."}
             </Row>
             {proof.cluster && (
               <Row label="Network">
@@ -104,8 +99,8 @@ export function ProofSheet({
                 </Row>
                 <Text style={sheetStyles.help}>
                   {draft.storage === "available"
-                    ? "Image and metadata upload confirmed."
-                    : "The image upload has not been confirmed as available. Return to the photo to check or finish publication."}
+                    ? "Upload confirmed."
+                    : "Upload not confirmed. Check it from the photo."}
                 </Text>
                 <Row label="Public image fingerprint · SHA-256" mono>
                   {draft.edition.imageHash}
@@ -125,7 +120,6 @@ export function ProofSheet({
                     <Text style={s.value} selectable>
                       {draft.album}
                     </Text>
-                    <Text style={sheetStyles.help}>{ALBUM_MEMBERSHIP_NOTE}</Text>
                   </>
                 )}
                 <Text style={sheetStyles.help}>{copy.standard}</Text>
@@ -137,24 +131,16 @@ export function ProofSheet({
                       : copy.attestationNone}
                 </Row>
                 {draft.edition.attestation && (
-                  <>
-                    <Text style={sheetStyles.help}>{copy.attestationBody}</Text>
-                    <Text style={sheetStyles.help}>{copy.attestationVerify}</Text>
-                  </>
+                  <Text style={sheetStyles.help}>{copy.attestationBody}</Text>
                 )}
               </>
             )}
             <Row label="Captured photo fingerprint · SHA-256" mono>
-              {proof.capturedHash ?? "Not available in this record."}
+              {proof.capturedHash ?? "Not available."}
             </Row>
-            <Text style={sheetStyles.help}>
-              {proof.kind === "core"
-                ? "A re-developed or compressed public copy has its own fingerprint. The public record links the source and published versions."
-                : "Saved file details can be copied below. They do not establish publication on Solana."}
-            </Text>
             <Row label="Capture time reported by the phone">
               {proof.capturedAtMs === undefined
-                ? "Not available in this record."
+                ? "Not available."
                 : new Date(proof.capturedAtMs).toLocaleString()}
             </Row>
             {!!draft?.album && (
@@ -198,7 +184,6 @@ export function ProofSheet({
             )}
             {proof.publicUrl ? (
               <>
-                <Text style={sheetStyles.help}>{onChain.collect}</Text>
                 <Pill
                   label={actions.openPublicPage}
                   onPress={() => open(proof.publicUrl!)}

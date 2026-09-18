@@ -249,12 +249,12 @@ export function ChainScreen() {
       ListEmptyComponent={<View style={s.empty}>
         {/* Each state: one true sentence and the one action that changes it. */}
         {loading && !result ? <><ActivityIndicator color={colors.teal} /><Text style={s.emptyBody}>{collection.loading}</Text></> :
-          !wallet ? <><BlankPrint /><Text style={s.emptyTitle}>{collection.disconnectedTitle}</Text><Text style={s.emptyBody}>{collection.disconnectedBody}</Text><Pill label={collection.disconnectedAction} onPress={() => navigation.navigate("Settings")} style={s.emptyAction} /></> :
+          !wallet ? <><BlankPrint /><Text style={s.emptyTitle}>{collection.disconnectedTitle}</Text><Pill label={collection.disconnectedAction} onPress={() => navigation.navigate("Settings")} style={s.emptyAction} /></> :
           current?.error && !result ? <><Text style={s.emptyTitle}>{collection.failedTitle}</Text><Text style={s.emptyBody}>{current.error}</Text><Pill label={collection.tryAgain} onPress={retry} style={s.emptyAction} /></> :
-          items.length > 0 ? <><Text style={s.emptyTitle}>{collection.noMatchTitle}</Text><Text style={s.emptyBody}>{collection.noMatchBody}</Text><Pill label={collection.clearFilters} variant="secondary" onPress={() => setAlbum(null)} style={s.emptyAction} /></> :
-          result && result.unavailable > 0 ? <><Text style={s.emptyTitle}>{collection.partialTitle}</Text><Text style={s.emptyBody}>{collection.partialBody}</Text><Pill label={collection.partialAction} onPress={retry} style={s.emptyAction} /></> :
-          result && result.hiddenCount > 0 ? <><Text style={s.emptyTitle}>{collection.limitedTitle}</Text><Text style={s.emptyBody}>{collection.limitedBody(result.hiddenCount)}</Text><Pill label={collection.limitedAction} onPress={retry} style={s.emptyAction} /></> :
-          <><BlankPrint /><Text style={s.emptyTitle}>{collection.emptyTitle(mode)}</Text><Text style={s.emptyBody}>{collection.emptyBody(mode)}</Text><Pill label={collection.emptyAction} onPress={toCamera} style={s.emptyAction} /></>}
+          items.length > 0 ? <><Text style={s.emptyTitle}>{collection.noMatchTitle}</Text><Pill label={collection.clearFilters} variant="secondary" onPress={() => setAlbum(null)} style={s.emptyAction} /></> :
+          result && result.unavailable > 0 ? <><Text style={s.emptyTitle}>{collection.partialTitle}</Text><Pill label={collection.partialAction} onPress={retry} style={s.emptyAction} /></> :
+          result && result.hiddenCount > 0 ? <><Text style={s.emptyTitle}>{collection.limitedTitle(result.hiddenCount)}</Text><Pill label={collection.limitedAction} onPress={retry} style={s.emptyAction} /></> :
+          <><BlankPrint /><Text style={s.emptyTitle}>{collection.emptyTitle(mode)}</Text><Pill label={collection.emptyAction} onPress={toCamera} style={s.emptyAction} /></>}
       </View>}
       renderItem={({ item }) => <Pressable accessibilityRole="button" accessibilityLabel={collection.openPhoto(item.photo.edition.title, item.number)} onPress={() => open(item)} style={({ pressed }) => [s.item, s.gridItem, { maxWidth: gridWidth }, pressed && s.pressed]}>
         <Print item={item} wallet={wallet} compact />
@@ -339,8 +339,6 @@ export function ChainScreen() {
             {scanQrAvailable() && <Pill label={actions.scan} variant="secondary" onPress={() => void scan()} />}
           </View>
           {!!collectError && <Text accessibilityLiveRegion="polite" style={s.collectError}>{collectError}</Text>}
-          <Text style={s.note}>{collectCopy.entryHint}</Text>
-          <Text style={s.note}>{onChain.collect}</Text>
         </ScrollView>
       </Screen>
     </Modal>

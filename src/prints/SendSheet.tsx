@@ -128,7 +128,7 @@ export function SendSheet({
     running.current = true;
     setBusy(true);
     setError("");
-    setStatus("Checking ownership, recipient and network cost…");
+    setStatus("Checking…");
     try {
       const owner = await session.connectAnd((wallet) =>
         session.authorizeSession(wallet),
@@ -141,9 +141,7 @@ export function SendSheet({
       );
       currentQuote.current = next;
       setQuote(next);
-      setStatus(
-        "Review the full recipient address. Nothing was sent by this review.",
-      );
+      setStatus("Check the full recipient address.");
     } catch (e) {
       clearQuote();
       // A review opens the wallet only to learn which account holds the copy, so a wallet that
@@ -162,7 +160,7 @@ export function SendSheet({
         timedOut
           ? walletTimeout.transferReview
           : isUserCancellation(e)
-            ? "Wallet closed. Nothing was sent by this transfer review."
+            ? "Wallet closed."
             : "",
       );
     } finally {
@@ -232,7 +230,7 @@ export function SendSheet({
             ? changedEstimate.transfer
             : expired
               ? expiredEstimate.transfer
-              : `${isUserCancellation(e) ? "Wallet closed. Your progress is saved. " : ""}Check the transfer status before trying again.`,
+              : `${isUserCancellation(e) ? "Wallet closed. " : ""}Check the transfer status before retrying.`,
       );
     } finally {
       running.current = false;
@@ -290,7 +288,6 @@ export function SendSheet({
             <NetworkLabel label={devnet ? copy.networkTest : copy.network} />
             <Text style={sheetStyles.title}>{heading}</Text>
             <Text style={sheetStyles.readout}>{copy.copyLine(draft.edition.supply)}</Text>
-            <Text style={sheetStyles.help}>{copy.attribution}</Text>
             {showRecipient && (
               <View style={sheetStyles.field}>
                 <Text style={sheetStyles.label}>{copy.recipientLabel}</Text>
@@ -310,7 +307,6 @@ export function SendSheet({
                   placeholder={copy.recipientPlaceholder}
                   placeholderTextColor={colors.muted}
                 />
-                <Text style={sheetStyles.help}>{copy.recipientFine}</Text>
               </View>
             )}
             {quote && (
@@ -325,7 +321,6 @@ export function SendSheet({
                 </Text>
                 <CostEstimate prepared={quote.prepared} expanded={showCost}
                   onToggle={() => setShowCost((v) => !v)} label={copy.costLabel} includeAccountCost={false} />
-                <Text style={sheetStyles.help}>{copy.costFine}</Text>
                 <Text style={sheetStyles.body}>{copy.consequence}</Text>
               </View>
             )}
@@ -337,9 +332,7 @@ export function SendSheet({
                 <Text style={s.address} selectable>
                   {state.attempt.recipient}
                 </Text>
-                <Text style={sheetStyles.body}>
-                  {sent ? copy.confirmedBody : copy.unresolvedBody}
-                </Text>
+                {!sent && <Text style={sheetStyles.body}>{copy.unresolvedBody}</Text>}
                 {state.eligibility === "review" && (
                   <Text style={sheetStyles.help}>{copy.stillHeld}</Text>
                 )}

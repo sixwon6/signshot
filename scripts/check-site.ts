@@ -67,10 +67,10 @@ const attested = readPhotoMetadata(JSON.parse(serialized), e, serialized);
 ok("a five-key document loads through the page's reader (the old page refused it)", attested.image === e.image);
 ok("evidence the reader set aside renders as set aside, with the reason",
   attested.attestation === undefined && !!attested.attestationProblem
-    && deviceProblem(attested.attestationProblem) === "The recorded device attestation was set aside: the chain does not end at a Google attestation root");
+    && deviceProblem(attested.attestationProblem) === "Device attestation not accepted: the chain does not end at a Google attestation root");
 const plain = readPhotoMetadata(JSON.parse(canonicalize(metadata(e) as unknown as JcsValue)), e);
 ok("a plain three-key document renders the no-attestation line",
-  plain.attestation === undefined && plain.attestationProblem === undefined && NO_DEVICE === "No device attestation was recorded for this publication.");
+  plain.attestation === undefined && plain.attestationProblem === undefined && NO_DEVICE === "No device attestation.");
 ok("no page wording overclaims", !/authentic|camera-verified|proves? the (scene|photo)/i.test(
   [deviceLine(summary), NO_DEVICE, deviceProblem("x"), readFileSync(resolve(site, "public", "collect", "index.html"), "utf8"), readFileSync(resolve(site, "collect", "page.ts"), "utf8"), readFileSync(resolve(site, "collect", "core.ts"), "utf8")].join("\n")));
 

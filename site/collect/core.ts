@@ -28,8 +28,8 @@ import {
 } from "../../publications/core/protocol";
 import type { CoreMetadata } from "../../publications/types";
 
-import { cluster, endpoint, type Adapter, type Loaded, type Price } from "./page";
-import { deviceLine, sol } from "./summary";
+import { cluster, endpoint, type Adapter, type Loaded } from "./page";
+import { deviceLine } from "./summary";
 
 /** Metaplex Core's flat `CREATE_FEE`, quoted in the fine print only; the estimate is measured. */
 const CORE_CREATE_FEE_SOL = "0.0015";
@@ -46,17 +46,13 @@ export function coreAdapter(edition: string): Adapter {
     copy: {
       // The edition size, in the vocabulary the standards research settled on.
       solo: "Edition of 1",
-      fee: ", the Metaplex Core protocol fee",
       cost: "",
       details: (loaded: Loaded) =>
-        `A ${loaded.width} × ${loaded.height} pixel digital print: a Metaplex Core asset in this edition’s collection. One copy per wallet. Each copy is transferable. Other wallets may display its image differently; this page remains its public photo and publication record.`,
-      fees: (price: Price | null) =>
-        price
-          ? `The remaining copies are priced at ${sol(price.priceLamports)} SOL, paid to the creator. Your wallet also pays Solana network and account-creation costs plus the Metaplex Core protocol fee for creating the copy, currently ${CORE_CREATE_FEE_SOL} SOL. The estimate above is measured by simulating your own transaction, so it already includes them.`
-          : `Collecting has no purchase price. Your wallet pays Solana network and account-creation costs plus the Metaplex Core protocol fee for creating the copy, currently ${CORE_CREATE_FEE_SOL} SOL. The estimate above is measured by simulating your own transaction, so it already includes them.`,
+        `${loaded.width} × ${loaded.height} px · One copy per wallet`,
+      fees: () => `Metaplex Core fee · ${CORE_CREATE_FEE_SOL} SOL`,
       card: (supply: number) => `EDITION OF ${supply} NUMBERED COP${supply === 1 ? "Y" : "IES"}`,
       collected: (number: number, supply: number) =>
-        `This wallet holds copy ${number} of ${supply}. Keep this page as the photo and collection record.`,
+        `Copy ${number} of ${supply} collected.`,
     },
     async load() {
       const result = await loadTrustedEdition(endpoint, edition, cluster);

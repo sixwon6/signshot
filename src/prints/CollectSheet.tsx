@@ -403,7 +403,6 @@ export function CollectSheet({
                 )}
               </View>
             )}
-            {finished && <Text style={sheetStyles.body}>{copy.collectedBody}</Text>}
             {!!blocker && <Text style={sheetStyles.body}>{blocker}</Text>}
             {/* The transaction that collected this copy, when one was recorded. */}
             {!!state?.attempt?.signature && (
@@ -453,9 +452,6 @@ export function CollectSheet({
                   <Row label={priceCopy.totalLabel}
                     value={priceCopy.value(formatSol(quote.priceLamports + quote.prepared.estimatedLamports))} />
                 )}
-                <Text style={sheetStyles.help}>
-                  {quote.kind === "buy" ? priceCopy.buyFine : copy.costFine}
-                </Text>
               </>
             )}
             {!!status && (

@@ -293,7 +293,6 @@ export function OfferSheet({
                   placeholderTextColor={colors.muted}
                   maxLength={24}
                 />
-                <Text style={sheetStyles.help}>{copy.freeFine}</Text>
               </View>
             )}
             {quote && (
@@ -306,14 +305,10 @@ export function OfferSheet({
                       : copy.free
                   }
                 />
-                {/* One cost line, with its parts a tap away. It is what YOU pay to record the
-                    price, and never part of the price itself. */}
                 <CostEstimate prepared={quote.prepared} expanded={showCost}
                   onToggle={() => setShowCost((v) => !v)} />
-                <Text style={sheetStyles.body}>{copy.setBody}</Text>
               </View>
             )}
-            {finished && <Text style={sheetStyles.body}>{copy.setDone}</Text>}
           </ScrollView>
           <View style={[sheetStyles.dock, { paddingBottom: insets.bottom + space.lg }]}>
             {!!status && (

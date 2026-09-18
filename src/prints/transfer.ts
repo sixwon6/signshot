@@ -123,12 +123,12 @@ async function eligibility(d: PublicationDraft, attempt: TransferAttempt): Promi
     if (!publication) throw new Error("The photo's publication could not be verified.");
     const current = await readPrintState(RPC_ENDPOINT, publication);
     if (current.status === "unavailable") return { eligibility: "unavailable", reason: current.reason };
-    if (current.status === "burned") return { eligibility: "burned", reason: "This digital print has been burned and cannot be sent." };
+    if (current.status === "burned") return { eligibility: "burned", reason: "This copy has been burned." };
     if (current.asset.owner !== attempt.owner)
       return { eligibility: "moved", delivered: current.asset.owner === attempt.recipient,
-        reason: "The sending wallet no longer owns this digital print." };
+        reason: "This wallet no longer holds this copy." };
     if (isFrozen(current.asset))
-      return { eligibility: "frozen", reason: "This digital print is frozen and cannot be sent until the freeze is removed." };
+      return { eligibility: "frozen", reason: "This copy is frozen." };
     return { eligibility: "review" };
   } catch (error) {
     return { eligibility: "unavailable", reason: safeErrorText(error) };
@@ -158,8 +158,8 @@ export async function getTransferState(
         // `confirmedAt` stays unset so a later matched receipt can still record itself.
         result = { status: "sent", attempt, eligibility: outcome.eligibility,
           reason: attempt.signature
-            ? "This copy is now held by the wallet it was sent to. The transaction the wallet reported could not be matched on this connection."
-            : "This copy is now held by the wallet it was sent to. The transaction that moved it could not be found on this connection." };
+            ? "Held by the recipient. The reported transaction could not be matched."
+            : "Held by the recipient. The transaction was not found." };
       } else if (attempt.confirmedAt) {
         result = { status: "unavailable", attempt, eligibility: "unavailable",
           reason: "The previously confirmed transfer is not visible on this connection." };

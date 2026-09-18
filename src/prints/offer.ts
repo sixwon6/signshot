@@ -49,9 +49,9 @@ import { CORE_PROTOCOL, type CoreMetadata, type PublicationAttempt } from "../..
 /** The one chain this build talks to. An edition on any other is refused, never retargeted. */
 
 const UNREVIEWED =
-  "This edition names a publication program this build has not reviewed. Its price cannot be changed here.";
-const NO_OFFERS = "Prices are not available on this network's program yet.";
-const NOT_THE_PUBLISHER = "Only the wallet that published this edition can change its price.";
+  "This edition uses a program this app has not reviewed.";
+const NO_OFFERS = "Prices are not available on this network yet.";
+const NOT_THE_PUBLISHER = "Only the publisher can change the price.";
 const CHANGED = "This edition changed since it was read. Open it again before setting a price.";
 const EXPIRED = "The estimate expired. Review the price again.";
 
@@ -163,10 +163,10 @@ async function assertNoStandingAttempt(e: CoreMetadata): Promise<OfferAttempt | 
     throw new Error("The previous price change may still land. Wait a moment, then check again.");
   if (standing === "confirmed")
     throw new Error(
-      "A price change confirmed, but the new price is not visible on this connection yet. Check again.",
+      "Price change confirmed, but not visible yet. Check again.",
     );
   throw new Error(
-    "The previous price change failed in a way that sending it again cannot fix. Open this edition again to check its price.",
+    "The previous price change failed. Open this edition again.",
   );
 }
 

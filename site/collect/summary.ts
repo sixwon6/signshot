@@ -27,6 +27,6 @@ export function deviceLine(a: AttestationSummary): string {
 }
 
 /** What the device row says for a plain document that carries no attestation. */
-export const NO_DEVICE = "No device attestation was recorded for this publication.";
+export const NO_DEVICE = "No device attestation.";
 /** The device row when the document carries evidence the reader set aside. */
-export const deviceProblem = (problem: string) => `The recorded device attestation was set aside: ${problem}`;
+export const deviceProblem = (problem: string) => `Device attestation not accepted: ${problem}`;

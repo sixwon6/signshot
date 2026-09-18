@@ -709,12 +709,6 @@ export function PrintSheet({
                       style={s.flex}
                     />
                   </View>
-                  {/* Until there is a title the dock asks for one, so the copies line waits. */}
-                  {!!title.trim() && (
-                    <Text style={sheetStyles.help}>
-                      {solo ? copy.soloBody : copy.multiBody}
-                    </Text>
-                  )}
                   {!solo && (
                     <>
                       <View style={s.countRow}>
@@ -731,7 +725,6 @@ export function PrintSheet({
                           maxLength={4}
                         />
                       </View>
-                      <Text style={sheetStyles.help}>{copy.totalFine}</Text>
                     </>
                   )}
                 </View>
@@ -752,7 +745,6 @@ export function PrintSheet({
                       maxLength={24}
                     />
                     {!!priceError && <Text style={sheetStyles.error}>{priceError}</Text>}
-                    <Text style={sheetStyles.help}>{priceCopy.publishFine}</Text>
                   </View>
                 )}
                 <View style={s.group}>

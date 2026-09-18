@@ -393,24 +393,15 @@ export const publish = {
   titleLabel: "Name this moment",
   momentLabel: "Moment (optional)",
   copiesLabel: "Copies",
-  /** An edition of 1 offers no public claim at all; say so before the wallet opens. */
-  soloBody:
-    "One copy for you to keep or send.",
-  multiBody:
-    "You keep #1. Anyone can collect the rest, one per wallet.",
+  /** The form carries labels, not explanations; `needCount` names the range when it is wrong. */
   totalLabel: "Total copies, including yours",
-  /** Says only what is true of every edition: the range, and who pays Solana's own costs. */
-  totalFine:
-    "2–1000 copies. Collectors pay network, account and Core fees.",
   albumLabel: "Album (optional)",
-  albumEmpty: "This wallet has no confirmed album yet. Create one below.",
-  albumNeedsWallet:
-    "Choose a wallet first. An album can only be used by the wallet that made it.",
+  albumEmpty: "No albums yet.",
+  albumNeedsWallet: "Connect a wallet to use albums.",
   albumNameLabel: "New album name",
-  albumBody:
-    "Once published, a photograph stays in its album for good.",
-  albumCostSuffix:
-    "for album creation. Separate wallet approval.",
+  /** The one thing here a person cannot undo, so it keeps a line. */
+  albumBody: "The album can’t be changed after publishing.",
+  albumCostSuffix: "for the album. Separate approval.",
   /** The receipt rows, once a draft exists. Labels only; the values are the draft's. */
   rowCopies: "Copies",
   rowMoment: "Moment",
@@ -610,11 +601,8 @@ export const price = {
   networkTest: "SOLANA DEVNET",
 
   /** The publish sheet's optional field. An edition of 1 has nothing to sell, so it has no field. */
-  publishLabel: "Price (optional)",
-  publishPlaceholder: "0",
-  /** The one help line under it: whose money this is, and whose it is not. */
-  publishFine:
-    "Buyers pay this for a copy, and it reaches you. It is not part of the cost of publishing, which you pay below.",
+  publishLabel: "Price per copy in SOL (optional)",
+  publishPlaceholder: "Free",
 
   /** The label of a price wherever it is read back: a receipt row, a readout, a cost line. */
   label: "Price",

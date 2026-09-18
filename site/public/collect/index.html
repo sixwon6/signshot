@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The same policy `site/public/_headers` serves for `/collect/*`, minus `frame-ancestors`,
+      which CSP3 says is ignored in a <meta> element (https://www.w3.org/TR/CSP3/). The header
+      supplies that directive, together with `X-Frame-Options: DENY`.
+
+      It is here as well as in `_headers` so the policy travels with the document: a hosting
+      change, a typo in a `_headers` pattern or a move off Cloudflare Pages cannot silently leave
+      this page with no policy at all, and opening the file from disk still runs it under one.
+      `scripts/check-site.ts` asserts these two copies say the same thing.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self' ws://localhost:* https://api.devnet.solana.com https://turbo-gateway.com https://arweave.net; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f2efe6" />
+    <meta
+      name="description"
+      content="A photograph published from a Seeker as a numbered edition on Solana. Open it in Seedshot, or review the costs and collect a copy here."
+    />
+    <title>Collect a photograph · Seedshot</title>
+    <link rel="icon" href="/icon.png" />
+    <link rel="stylesheet" href="./collect.css" />
+  </head>
+  <body>
+    <header>
+      <a href="/" class="wordmark">Seedshot<span>PHOTO EDITIONS FROM A SEEKER</span></a
+      ><span id="network" hidden>DEVNET · TEST EDITION</span>
+    </header>
+    <main>
+      <div id="loading" role="status">Opening the photograph…</div>
+      <section id="error-panel" hidden>
+        <h1>We couldn’t open this edition.</h1>
+        <p id="load-error" role="alert"></p>
+        <button id="retry-load">Try again</button>
+      </section>
+      <article id="edition" hidden>
+        <div class="photo-stage">
+          <button class="photograph" id="view-photo" aria-label="View full photograph">
+            <img id="photo" alt="Photograph offered by the publisher" decoding="async" />
+            <span class="photo-open">View full photo ↗</span>
+          </button>
+        </div>
+        <div class="details">
+          <p class="eyebrow">A PHOTOGRAPH TO KEEP</p>
+          <h1 id="title"></h1>
+          <p class="byline">Published by <span id="creator"></span></p>
+          <div id="moment" hidden><p id="moment-text" class="byline"></p></div>
+          <!--
+            The device row. Its text is derived from the certificate chain inside the publication
+            document after the reader verified it to Google's attestation roots. It names the
+            device, the key and the boot state — never the scene, and no stronger claim.
+          -->
+          <div id="device" class="device" hidden>
+            <p class="eyebrow">DEVICE</p>
+            <p id="device-text" class="device-text"></p>
+            <p class="fine device-fine">
+              Hardware key attestation names the phone that signed this publication, its key
+              storage and its boot state. It does not say what was in front of the lens.
+            </p>
+          </div>
+          <p id="availability" class="availability" aria-live="polite"></p>
+          <progress id="supply-progress" aria-label="Copies collected"></progress>
+          <p id="price" class="price" hidden></p>
+          <div class="open-app">
+            <a id="open-app" class="open-app-link" hidden>Open in Seedshot</a>
+            <div id="open-qr" class="open-qr" hidden></div>
+            <p class="fine">
+              Collect links open in the Seedshot app on a Seeker. On another device, scan the code
+              with the phone.
+            </p>
+          </div>
+          <button id="collect" disabled>Collect a copy</button>
+          <div id="wallets" hidden aria-label="Choose a wallet"></div>
+          <p id="cost" class="fine"></p>
+          <p id="status" role="status" aria-live="polite"></p>
+          <a id="receipt" hidden target="_blank" rel="noopener noreferrer"
+            >View your collection transaction ↗</a
+          >
+          <div class="secondary">
+            <button id="share" aria-label="Share QR code" title="Share QR code">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <rect x="3" y="3" width="6" height="6" rx="1" />
+                <rect x="15" y="3" width="6" height="6" rx="1" />
+                <rect x="3" y="15" width="6" height="6" rx="1" />
+                <path d="M12 3v3m0 3v3H3m9 3v6m3-9h6m-6 3h3v3h3m-6 3h3m3-6v-3" />
+              </svg>
+            </button>
+          </div>
+          <details>
+            <summary>Publication &amp; details</summary>
+            <p id="about" class="fine"></p>
+            <p id="fees" class="fine"></p>
+            <a id="source" target="_blank" rel="noopener noreferrer">View the Solana publication ↗</a
+            ><a id="container" hidden target="_blank" rel="noopener noreferrer"></a>
+          </details>
+        </div>
+      </article>
+      <dialog id="photo-viewer" aria-label="Full photograph">
+        <button id="close-photo" aria-label="Close full photograph">Close ×</button>
+        <img id="full-photo" alt="" />
+        <p id="full-photo-title"></p>
+      </dialog>
+    </main>
+    <footer>
+      <a href="/">Seedshot · Photo editions from a Seeker</a><a href="/privacy">Privacy</a>
+    </footer>
+    <script type="module" src="./collect.js"></script>
+  </body>
+</html>

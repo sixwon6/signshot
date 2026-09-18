@@ -81,11 +81,14 @@ publishes the plain three-field document, exactly as before; the Proof sheet say
 native path was exercised on a Seeker on 2026-09-16
 (`dapp-store/attestation-device-check-2026-09-16.json`).
 
-The public collect page at erashot.app is built separately, from the predecessor repository's
-copy of the document reader. Its deployed bundle accepts only the three-field document, and the
-page itself is currently behind a private-preview gate that answers HTTP 401. Until the reader is
-rebuilt against this one, redeployed and the gate lifted, a collect link opens the edition in the
-app (it is an Android App Link) but not on that web page.
+The public collect page at erashot.app now lives in this repository (`site/`, see
+`site/README.md`) and is bundled from the same reader the app uses, so it accepts the attested
+document, shows the Device row, and offers `collect` or `buy` by the live `Offer` account.
+`npm run build:site` produces `site/dist`; `npm test` checks the page's wording, its CSP copies,
+the App Link association and the build guards. **The rebuilt page is not deployed yet:** the live
+site is still the predecessor repository's bundle behind a private-preview gate (HTTP 401), and
+the switch to deploying from here is a one-time owner action described in `site/README.md`. Until
+then a collect link opens the edition in the app (it is an Android App Link) but not on the web.
 
 The current devnet deployment is `7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU`. Its bytes
 match the reviewed build, and publishing, free collection, transfers, albums, prices and paid

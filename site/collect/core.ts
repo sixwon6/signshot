@@ -1,0 +1,109 @@
+/**
+ * The Metaplex Core collector route: `/collect/?core=<edition>`.
+ *
+ * Everything protocol-specific the page needs lives here — the trusted program, the reader, the
+ * claim instruction, the public link, the explorer links and the wording that names Core's own
+ * costs — so `page.ts` stays a page: DOM, wallets, quoting, durable attempts and confirmation.
+ *
+ * The reader is the app's own (`publications/core/protocol.ts`): the edition account's actual
+ * owner is checked against the reviewed deployments for this network, the metadata document is
+ * hash-checked against the edition, and a `seedshot-attestation/1` certificate chain inside the
+ * document is verified down to Google's pinned roots before the page may say which device signed
+ * it. Neither the link nor the metadata grants trust.
+ *
+ * Costs are named honestly. A claim creates a Core asset and a receipt account, so the collector
+ * pays rent, the network fee AND Metaplex Core's flat protocol fee for creating an asset; a
+ * priced edition adds the creator's price on top, and only that part reaches the creator.
+ */
+import {
+  addresses,
+  buyInstruction,
+  collectInstruction,
+  collectUrl,
+  explorerUrl,
+  hasCollected,
+  loadTrustedEdition,
+  pricedOffer,
+  readOfferAccount,
+} from "../../publications/core/protocol";
+import type { CoreMetadata } from "../../publications/types";
+
+import { cluster, endpoint, type Adapter, type Loaded, type Price } from "./page";
+import { deviceLine, sol } from "./summary";
+
+/** Metaplex Core's flat `CREATE_FEE`, quoted in the fine print only; the estimate is measured. */
+const CORE_CREATE_FEE_SOL = "0.0015";
+
+export function coreAdapter(edition: string): Adapter {
+  let meta: CoreMetadata | null = null;
+  const current = () => {
+    if (!meta) throw new Error("This edition has not been read yet.");
+    return meta;
+  };
+  return {
+    edition,
+    pendingKey: `seedshot.core-collect.v2:${cluster}:${edition}`,
+    copy: {
+      // The edition size, in the vocabulary the standards research settled on.
+      solo: "Edition of 1",
+      fee: ", the Metaplex Core protocol fee",
+      cost: "",
+      details: (loaded: Loaded) =>
+        `A ${loaded.width} × ${loaded.height} pixel digital print: a Metaplex Core asset in this edition’s collection. One copy per wallet. Each copy is transferable. Other wallets may display its image differently; this page remains its public photo and publication record.`,
+      fees: (price: Price | null) =>
+        price
+          ? `The remaining copies are priced at ${sol(price.priceLamports)} SOL, paid to the creator. Your wallet also pays Solana network and account-creation costs plus the Metaplex Core protocol fee for creating the copy, currently ${CORE_CREATE_FEE_SOL} SOL. The estimate above is measured by simulating your own transaction, so it already includes them.`
+          : `Collecting has no purchase price. Your wallet pays Solana network and account-creation costs plus the Metaplex Core protocol fee for creating the copy, currently ${CORE_CREATE_FEE_SOL} SOL. The estimate above is measured by simulating your own transaction, so it already includes them.`,
+      card: (supply: number) => `EDITION OF ${supply} NUMBERED COP${supply === 1 ? "Y" : "IES"}`,
+      collected: (number: number, supply: number) =>
+        `This wallet holds copy ${number} of ${supply}. Keep this page as the photo and collection record.`,
+    },
+    async load() {
+      const result = await loadTrustedEdition(endpoint, edition, cluster);
+      meta = result.edition;
+      return {
+        title: result.edition.title,
+        creator: result.edition.creator,
+        supply: result.edition.supply,
+        minted: result.minted,
+        remaining: result.remaining,
+        width: result.edition.width,
+        height: result.edition.height,
+        imageBytes: result.imageBytes,
+        // `""` when the publisher wrote no caption. `loadTrustedEdition` has already refused
+        // a document whose description is not publishable text.
+        description: result.edition.description,
+        // What a screen renders. A quote never uses this copy: `claim()` re-reads the offer.
+        price: result.offer,
+        device: result.edition.attestation
+          ? { line: deviceLine(result.edition.attestation) }
+          : result.edition.attestationProblem
+            ? { problem: result.edition.attestationProblem }
+            : null,
+      };
+    },
+    hasCollected: (wallet) => hasCollected(endpoint, current(), wallet),
+    async claim(wallet, number) {
+      const e = current();
+      // The print PDA this claim creates, recorded in the durable attempt before the wallet opens.
+      const keys = await addresses(e.program, e.creator, e.nonce, number, wallet);
+      // The live offer, read immediately before quoting, never the one loaded with the edition:
+      // a price can change at any moment. `pricedOffer` collapses "no offer account", "no offers
+      // on this program" and "priced at zero" into the one answer they all mean: free. The
+      // program applies the same rule — `collect` succeeds only at price 0, `buy` refuses it.
+      const offer = pricedOffer(await readOfferAccount(endpoint, e.program, e.edition));
+      const instruction = offer
+        ? await buyInstruction(e, wallet, number, offer.priceLamports, offer.revision)
+        : await collectInstruction(e, wallet, number);
+      return { instruction, asset: keys.print, price: offer };
+    },
+    collectUrl: () => collectUrl(edition, cluster),
+    links: () => ({
+      source: explorerUrl(edition, cluster),
+      container: {
+        href: explorerUrl(current().collection, cluster),
+        label: "View the Metaplex Core collection ↗",
+      },
+    }),
+  };
+}

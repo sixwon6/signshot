@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#10140f" />
+    <!--
+      Cloudflare Pages serves index.html with a 200 for every unknown path when a project has no
+      top-level 404.html (its single-page-application fallback). This file exists so a missing
+      path answers 404 instead: a wallet fetching /.well-known/assetlinks.json before that file
+      is published must see "not found", not the home page labelled as JSON.
+
+      No script, no inline style. The policy below is the static-page policy in site/_headers
+      minus frame-ancestors, which CSP3 ignores in a <meta> element; it is repeated here because
+      this body is served for arbitrary paths, and _headers matches the request path, not this
+      file's.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="robots" content="noindex" />
+    <title>Not found — Era Shot</title>
+    <link rel="icon" href="/icon.png" />
+    <link rel="stylesheet" href="/brand/era-shot.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Era Shot home"
+        ><img src="/brand/era-shot-mark.svg" width="36" height="36" alt="" />Era
+        Shot</a
+      >
+    </header>
+    <main class="document">
+      <h1>Not found</h1>
+      <p>There is nothing at this address.</p>
+      <p><a href="/">Back to Era Shot</a></p>
+    </main>
+  </body>
+</html>

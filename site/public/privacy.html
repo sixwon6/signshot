@@ -4,30 +4,29 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#f2efe6" />
-    <title>Privacy & publication — Era Shot</title>
+    <title>Privacy & publication — Seedshot</title>
     <link rel="icon" href="/icon.png" />
     <link rel="stylesheet" href="/brand/era-shot.css" />
   </head>
   <body>
     <header class="site-header">
       <a href="/" class="wordmark"
-        ><img src="/brand/era-shot-mark.svg" width="36" height="36" alt="" />Era
-        Shot</a
-      ><a href="/">Back to Era Shot ↗</a>
+        ><img src="/brand/era-shot-mark.svg" width="36" height="36" alt="" />Seedshot</a
+      ><a href="/">Back to Seedshot ↗</a>
     </header>
     <main class="document">
       <p class="eyebrow">YOUR PHOTOGRAPHS. YOUR CHOICES.</p>
       <h1>Privacy & publication</h1>
       <p class="date">
-        Updated 10 September 2026 · Era Shot for Android, app.seekershot
+        Updated 18 September 2026 · Seedshot for Android, app.seekershot
       </p>
       <p>
-        Era Shot is a camera app that can publish a photograph with a Solana
+        Seedshot is a camera app that can publish a photograph with a Solana
         wallet and create a photo NFT. Taking a photo does not publish it.
         Publication is optional, public and intended to be permanent.
       </p>
       <p>
-        The app has no Era Shot account, advertising SDK, analytics SDK or
+        The app has no Seedshot account, advertising SDK, analytics SDK or
         automatic crash-reporting service. It connects to your wallet, Solana
         services and Arweave storage as described below. The website host and
         those service providers receive normal connection information, including
@@ -46,7 +45,7 @@
         <li>
           Your wallet authorization cache in app storage and a separate
           upload-signing key in secure storage. The upload key is not your
-          wallet's private key. Era Shot does not receive your wallet's private
+          wallet's private key. Seedshot does not receive your wallet's private
           key or recovery phrase.
         </li>
       </ul>
@@ -76,7 +75,7 @@
             <td>Connect a wallet</td>
             <td>
               Mobile Wallet Adapter sends an authorization request to the wallet
-              app. Era Shot receives the public account address and an
+              app. Seedshot receives the public account address and an
               authorization token.
             </td>
           </tr>
@@ -106,10 +105,26 @@
             <td>
               Your wallet submits a Solana transaction. It identifies your
               wallet, the edition, supply, image fingerprint and metadata
-              fingerprint. After confirmation, Era Shot uploads the smaller
+              fingerprint. After confirmation, Seedshot uploads the smaller
               publication image and its metadata to Arweave through ar.io Turbo.
               If interrupted, the app retains the pending operation for
               recovery.
+            </td>
+          </tr>
+          <tr>
+            <td>Device attestation</td>
+            <td>
+              When you publish, the phone's secure hardware creates a key for
+              that one publication and Android attests it. The public metadata
+              then permanently carries the certificate chain and a signed
+              summary: the phone's brand and model, that it booted verified
+              software with a locked bootloader, its Android version and patch
+              level, this app's package and signing certificate, the
+              photograph's fingerprints and size, and the capture time. It
+              never includes a serial number, IMEI or MEID. Publications made
+              from one phone within a few weeks can share a certificate, so
+              they can be recognised as coming from the same device. If the
+              hardware does not answer, the photograph publishes without this.
             </td>
           </tr>
           <tr>
@@ -181,15 +196,10 @@
         <li>
           <strong>This website:</strong> static pages and a read-only Solana
           proxy hosted with Cloudflare Pages. The proxy sends permitted RPC
-          requests to its configured Solana provider. Two paths do not use the
-          proxy and connect your browser straight to a public Solana service,
-          which then sees your IP address alongside what you are looking at: a
-          collection link that carries <code>&amp;cluster=devnet</code> reads the
-          test network directly from <code>api.devnet.solana.com</code>, and the
-          <a href="/verify/">photo records page</a> sends whatever wallet address
-          or transaction you enter to <code>solana-rpc.publicnode.com</code>,
-          <code>api.mainnet-beta.solana.com</code> or
-          <code>api.devnet.solana.com</code>. The host and providers may process
+          requests to its configured Solana provider. A collection link that carries <code>&amp;cluster=devnet</code> does not
+          use the proxy: your browser reads the test network directly from
+          <code>api.devnet.solana.com</code>, which then sees your IP address
+          alongside the edition you are looking at. The host and providers may process
           IP addresses and request logs for delivery and abuse prevention.
         </li>
       </ul>
@@ -203,7 +213,7 @@
       </p>
       <p>
         Once uploaded, the public image and metadata cannot be withdrawn through
-        Era Shot. Confirmed blockchain records also cannot be removed through
+        Seedshot. Confirmed blockchain records also cannot be removed through
         the app. A failed or unavailable gateway does not mean the publication
         has been deleted. Only publish photographs and details you intend to
         make public.
@@ -218,7 +228,7 @@
         files and can interrupt recovery; gallery copies and public data remain.
       </p>
       <p>
-        Clearing Era Shot's storage from your phone's app settings removes more
+        Clearing Seedshot's storage from your phone's app settings removes more
         than photographs: it deletes the app's Arweave upload key and every
         publication draft. Neither is included in an Android backup or a device
         transfer, and a publication that is already recorded on Solana but whose
@@ -229,7 +239,7 @@
       <p>
         Disconnect in Settings revokes the current wallet authorization when the
         wallet can be reached and clears the app's local authorization. You can
-        also revoke Era Shot inside your wallet. Disconnecting does not remove
+        also revoke Seedshot inside your wallet. Disconnecting does not remove
         public transactions or change token ownership.
       </p>
       <h2>Checking a photograph on this website</h2>
@@ -244,7 +254,7 @@
       </p>
       <h2>Children and contact</h2>
       <p>
-        Era Shot is not directed at children under 13. Contact
+        Seedshot is not directed at children under 13. Contact
         <a href="mailto:support@erashot.app">support@erashot.app</a> with
         privacy questions or requests. We can address data under our control; we
         cannot remove a public blockchain record or withdraw an Arweave upload.
@@ -256,8 +266,8 @@
       </p>
     </main>
     <footer class="site-footer">
-      <a class="wordmark" href="/">Era Shot</a
-      ><a href="/verify/">Earlier photo records</a>
+      <a class="wordmark" href="/">Seedshot</a
+      >
     </footer>
   </body>
 </html>

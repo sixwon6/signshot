@@ -12,13 +12,22 @@ photograph can be published as a numbered Metaplex Core edition with its image a
 Arweave, offered free or at a SOL price, collected or bought by other wallets from inside the app,
 and sent on to another wallet.
 
-The camera starts with Simple controls: tap the picture to focus and meter there, and a readout
-strip over the picture whose cells open a tray of plain choices with visible effect. Brightness
-in whole stops, the light you are standing in (Sunny, Cloudy, Shade, Indoor, Fluorescent), and
-Auto, Near or Far focus. Pro turns the same tray into camera dials: rulers with detents for ISO in
-third stops, shutter in full stops, brightness in the device's own steps, Kelvin by the hundred
-and fine focus, with AE and AWB locks and the histogram beside the control they belong to. The
-readout shows what the camera is doing in auto and, in the accent colour, what you are holding.
+The camera has one layout under a mode dial, AUTO, P and M, and one grammar in every mode: the
+bottom row chooses, the row above it adjusts, the shutter shoots. All of it is in the sheet under
+the thumb, and the picture carries nothing at rest. AUTO is the point-and-shoot: tap the picture
+to focus and meter there, choose a look, set its strength, and set brightness in whole stops;
+nothing else can be left set. P puts the readout up as a row of cells, ISO, shutter, brightness,
+colour, focus and the look, in one fixed order, and the row above is the live cell's dial: rulers
+with detents for ISO in third stops, shutter in full stops, brightness in the device's own steps,
+Kelvin by the hundred and fine focus, each ending in a key that hands the control back to the
+camera. A cell shows what the camera is doing in auto and, in the accent colour, what you are
+holding. M holds the exposure: Camera2 holds ISO and shutter together, so tapping M holds the pair
+the camera just metered, moving either ruler in P turns the dial to M by itself, and P hands both
+back. AUTO remembers what P and M were holding and returns it with the dial, the dial shows which
+position is keeping it, and AUTO held down lets everything go. The looks are cameras you could
+have owned: Clean, Digicam, Disposable and Camcorder. Off AUTO the look in force opens its
+strength, and from there its stages for editing. DISP cycles a plain picture, a grid of thirds and
+the histogram.
 Camera resolutions are selected from the device's supported 4:3 YUV sizes. See [APP_READINESS.md](APP_READINESS.md) for the current
 device-tested status and the devnet-to-mainnet work remaining.
 

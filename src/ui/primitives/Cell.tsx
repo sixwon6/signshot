@@ -15,6 +15,8 @@ interface CellProps {
   held?: boolean;
   forbidden?: boolean;
   disabled?: boolean;
+  /** The value as written, not upper-cased: an address is case-sensitive. */
+  verbatim?: boolean;
   onPress?: () => void;
   accessibilityLabel: string;
   style?: StyleProp<ViewStyle>;
@@ -29,6 +31,7 @@ export function Cell({
   held = false,
   forbidden = false,
   disabled = false,
+  verbatim = false,
   onPress,
   accessibilityLabel,
   style,
@@ -60,7 +63,12 @@ export function Cell({
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.7}
-        style={[typeScale.readout, styles.value, { color: held ? colors.tealText : colors.ink }]}
+        style={[
+          typeScale.readout,
+          styles.value,
+          verbatim && styles.verbatim,
+          { color: held ? colors.tealText : colors.ink },
+        ]}
       >
         {value}
       </Text>
@@ -80,4 +88,5 @@ const styles = StyleSheet.create({
   tag: { color: colors.muted },
   /** The tracking belongs between letters, not after the last one: centre the glyphs. */
   value: { textAlign: "center", alignSelf: "stretch" },
+  verbatim: { textTransform: "none" },
 });

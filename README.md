@@ -35,7 +35,8 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
 - **On the Seeker:** send a copy; buy a priced copy from a second wallet; cancel, time out and
   background the wallet mid-publish and mid-upload, and recover. Judge the looks in daylight with a
   face and something red in frame; check Camcorder's smear in both landscapes; save one photograph
-  per look and compare it with the preview.
+  per look and compare it with the preview. Open the wallet screen's grid and a print with a wallet
+  that holds copies, and connect a wallet from that screen.
 - **Site:** redeploy `site/`; its copy changed after the 2026-09-18 deploy.
 - **Mainnet:** `programs/editions/MAINNET.md`, then the program address and digest in
   `publications/deployments.ts`, production RPC and storage.

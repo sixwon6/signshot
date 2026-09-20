@@ -6,7 +6,7 @@ export const colors = {
   // --- Chrome -------------------------------------------------------------
   /** The app's ground. Every screen sits on this. */
   ground: "#0B0C0E",
-  /** Step 1 — sheets, cards, the Tabs track. */
+  /** Step 1 — sheets and cards. */
   sheet: "#111317",
   /** Step 2 — input fields and inset rows. */
   field: "#191C21",
@@ -54,7 +54,7 @@ export const space = {
 export const radius = {
   small: 10,
   card: 20,
-  /** Pills, chips and the Tabs track. */
+  /** Pills and chips. */
   pill: 999,
   /** Paper prints. No corner radius. */
   print: 0,

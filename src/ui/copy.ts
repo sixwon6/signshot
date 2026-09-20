@@ -217,9 +217,9 @@ export const camera = {
   restart: "Restart camera",
   /** Spoken for the invisible target over the picture. */
   tapToFocus: "Picture. Tap to focus and meter there.",
-  /** The camera's button into the Collection; the spoken hint names the screen it opens. */
-  collection: "On chain",
-  collectionHint: "Open your collection",
+  /** The camera's button into the wallet; the spoken hint names the screen it opens. */
+  collection: "Wallet",
+  collectionHint: "Open your wallet",
   photos: "Photos",
   /** The header button's spoken name. */
   settings: "Settings",
@@ -451,12 +451,11 @@ export const collect = {
   headingCollected: "Copy collected",
   headingUnavailable: "Edition unavailable",
 
-  /** The entry stage on the Collection tab: a link to paste, or a code to scan. */
-  entryHeading: "Collect a copy",
+  /** The entry stage on the wallet screen: a link to paste, or a code to scan. */
+  entryHeading: "Collect",
+  /** Spoken only. */
   linkLabel: "Collect link",
   linkPlaceholder: "Paste a collect link",
-  linkInvalid: "That is not a Signshot collect link.",
-  scanUnavailable: "Scanning needs a newer version of this app.",
   scanFailed: "Couldn’t scan that code.",
   pasteFailed: "Couldn’t read the clipboard.",
 
@@ -581,9 +580,15 @@ export const settings = {
   developerTools: "Developer tools",
 } as const;
 
+/** Copy numbers are printed to three figures, the way they are imprinted on the paper. */
+const figures = (value: number): string => String(value).padStart(3, "0");
+
 /**
- * The Collection: the wallet library, in Collected and Published views. The route stays `Chain`
- * so saved navigation state and deep links keep working.
+ * The Wallet screen: the address, what it holds, and what it published, in Collected and Published
+ * views. The route stays `Chain` so saved navigation state and deep links keep working.
+ *
+ * Readouts are set in the mono step, so their words are short enough to stay on one line at the
+ * phone's largest text size. Sentences are kept for the things retrying cannot fix.
  */
 export const collection = {
   collected: "Collected",
@@ -591,98 +596,78 @@ export const collection = {
   /** The album filter row's first chip. */
   allAlbums: "All",
 
-  loading: "Finding your photographs…",
-  /** Partial reads, shown above a list that still has rows. */
-  noticeStale: "Showing the last checked collection.",
-  noticeHidden: (count: number): string => `${count} more not shown.`,
-  noticeUnavailable: "Some copies couldn’t be checked.",
-  tryAgain: "Try again",
+  /** The wallet line: a tag over the address, and what the wallet holds. */
+  wallet: "Wallet",
+  sol: "SOL",
+  /** A balance that has not been read. Never a zero: a balance is reported, never guessed. */
+  noBalance: "—",
+  noWallet: "No wallet",
+  connect: "Connect",
+  opening: "Opening wallet",
+  notConnected: "Not connected",
+  copyWalletAddress: "Copy wallet address",
 
-  /** Disconnected: what the Collection shows once a wallet is connected, and one action. */
-  disconnectedTitle: "No wallet connected.",
-  disconnectedAction: "Connect in Settings",
-
-  /** Empty, per view: what would appear here, and the action that gets there. */
-  emptyTitle: (mode: "collected" | "published"): string =>
-    mode === "collected" ? "No copies yet." : "Nothing published yet.",
-  emptyAction: "Take a photograph",
-
-  /** Nothing matched the search or the album filter. */
-  noMatchTitle: "Nothing in this album.",
-  clearFilters: "Show all",
-
-  /** Partial: some rows could not be read, so say what is known and offer the refresh. */
-  partialTitle: "Some copies couldn’t be checked.",
-  partialAction: "Refresh collection",
-
-  limitedTitle: (count: number): string =>
-    `${count} ${count === 1 ? "copy" : "copies"} not read.`,
-  limitedAction: "Refresh collection",
-
-  /** Failed: the library could not be read at all. The reason is the error's own sentence. */
-  failedTitle: "Collection unavailable",
-  refreshFailed: "Couldn’t refresh. Try again.",
+  /** Where the prints would be, while there are none to show. */
+  loading: "Loading",
+  loadFailed: "Load failed",
+  empty: (mode: "collected" | "published"): string =>
+    mode === "collected" ? "No copies" : "Nothing published",
+  noMatch: "No match",
+  retry: "Retry",
+  /** Partial reads, over a list that still has rows. */
+  notRefreshed: "Not refreshed",
+  unread: (count: number): string => `${count} unread`,
+  notShown: (count: number): string => `+${count} not shown`,
+  /** Retrying cannot fix the network a build talks to, so this one keeps its sentence. */
   notOnNetwork: "Not available on this network.",
+  /** The collect entry's own two refusals; a link's other refusals carry their own reason. */
+  notOurLink: "Not a Signshot link",
+  noScanner: "No scanner",
 
-  /** The `NetworkLabel` in the header. Says which chain these copies were read from. */
-  networkFlag: (mainnet: boolean): string =>
-    mainnet ? "SOLANA MAINNET" : "SOLANA DEVNET",
+  /** The chain these copies were read from, as the header says it. */
+  networkFlag: (mainnet: boolean): string => (mainnet ? "MAINNET" : "DEVNET"),
 
-  /** The right-hand imprint on a Collection print: empty, so none is drawn. */
+  /** The right-hand imprint on a print: empty, so none is drawn. */
   imprint: "",
-  /** The blank print of the no-wallet state. */
-  noCopy: "No copy",
   openPhoto: (title: string, number?: number): string =>
     `Open ${title}${number ? `, copy ${number}` : ""}`,
   byYou: "By you",
   by: (address: string): string => `By ${address}`,
 
   /**
-   * The numbering line, in teal below the paper. Collected rows show this wallet's copy number;
-   * Published rows show how many copies have been issued.
+   * The one line under a print: this wallet's copy number under Collected, how many copies have
+   * been issued under Published. The dial above says which of the two is being read.
    */
-  copyLine: (number: number, supply: number): string =>
-    `${String(number).padStart(3, "0")} / ${String(supply).padStart(3, "0")} · YOUR COPY`,
-  issuedLine: (minted: number, supply: number): string =>
-    `${String(minted).padStart(3, "0")} / ${String(supply).padStart(3, "0")} · ISSUED`,
+  tally: (count: number, supply: number): string =>
+    `${figures(count)} / ${figures(supply)}`,
 
   /** The photograph's own screen. */
-  detailEyebrow: "EDITION",
-  immersiveEyebrow: "THE PHOTOGRAPH",
-  backToCollection: "Back to Collection",
+  edition: "Edition",
+  backToWallet: "Back to wallet",
   exitFullScreen: "Exit full screen",
   openFullScreen: "View photograph full screen",
-  viewPhotograph: "VIEW FULL SCREEN",
   previousPhoto: "Previous photograph",
   nextPhoto: "Next photograph",
   copyOf: (number: number, supply: number): string =>
-    `COPY ${number} OF ${supply}`,
-  editionOf: (supply: number): string => `EDITION OF ${supply}`,
-  publishedBy: "PUBLISHED BY",
+    `COPY ${figures(number)} / ${figures(supply)}`,
+  editionOf: (supply: number): string => `EDITION ${figures(supply)}`,
+  byLabel: "By",
   you: "You",
   copyPublisher: "Copy publisher address",
-  publisherAddress: "Publisher address",
-  inAlbum: (mode: "collected" | "published"): string =>
-    mode === "collected" ? "IN YOUR COLLECTION" : "IN YOUR PUBLISHED WORK",
+  album: "Album",
   browseAlbum: (label: string): string => `Browse album ${label}`,
-  editionSizeLabel: "Edition size",
-  editionSizeValue: (supply: number): string => `${supply} numbered copies`,
-  issuedLabel: "Issued so far",
-  networkLabel: "Network",
-  networkValue: (mainnet: boolean): string =>
-    mainnet ? "Solana" : "Solana devnet",
-  proofToggle: "Publication details",
-  proofBody: "Verifies the published file, not the scene or device.",
-  copyEdition: "Copy edition address",
+  issuedLabel: "Issued",
   editionAddress: "Edition address",
+  copyEdition: "Copy",
+  copyEditionAddress: "Copy edition address",
+  explorer: "Explorer",
   viewOnExplorer: "View on Solana Explorer",
-  explorerFailed: "Couldn’t open the explorer.",
-  ownershipChecked: "Ownership as of the last refresh.",
-  ownershipPublished: "Copies may belong to other wallets.",
+  couldNotOpen: "Couldn’t open",
   shareMoment: "Share moment",
-  shareFailed: "Couldn’t open sharing.",
-  copyLink: "Copy moment link",
-  momentLink: "Moment link",
-  copied: (label: string): string => `${label} copied`,
-  copyFailed: "Couldn’t copy.",
+  shareFailed: "Share failed",
+  copyLink: "Copy link",
+  copyMomentLink: "Copy moment link",
+  /** Said in place, on the key that was tapped, for a moment. */
+  copied: "Copied",
+  copyFailed: "Copy failed",
 } as const;

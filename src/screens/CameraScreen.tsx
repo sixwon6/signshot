@@ -1,6 +1,14 @@
 /**
- * The camera, and the app's home screen. State lives in `useRecipes` (the look) and
- * `useCaptureControls` (the camera); the components they feed stay hook-free.
+ * The camera, and the app's home screen. One layout under a mode dial, and one grammar in every
+ * mode: the bottom row chooses, the row above it adjusts, the shutter shoots. All of it is in the
+ * sheet, under the thumb, and the picture carries nothing at rest.
+ *
+ * AUTO is the point-and-shoot: the row chooses a look, with brightness pinned beside them, and
+ * the row above is the look's strength. P and M are the same camera with its readout up: the row
+ * is the readout's cells, the look among them as it is in a camera's quick menu, and the row
+ * above is the live cell's dial. Nothing moves between modes; the dial only decides how much
+ * there is. State lives in `useRecipes` (the look) and `useCaptureControls` (the camera and its
+ * dial); the components they feed keep none of their own.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -20,34 +28,39 @@ import { useIsFocused, useNavigation } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { HomeTabs } from "../navigators/HomeNavigator";
 import { SeekerCamera, SeekerCameraView } from "../../modules/seeker-camera";
-import type { Recipe, StageType } from "../recipes/model";
+import { STAGES, type Recipe, type StageType } from "../recipes/model";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
-import { Chip, Pill, Screen } from "../ui/primitives";
+import { Chip, CHROME_FONT_SCALE, Pill, Screen, TextKey } from "../ui/primitives";
 import { actions, camera as cameraCopy, recipes as recipeCopy, captureControls as controlsCopy } from "../ui/copy";
-import { needsProControls, simpleCaptureSettings } from "../capture/model";
+import type { CaptureMode } from "../capture/mode";
 import { RecipePicker } from "./RecipePicker";
-import { RecipeOptions, RecipeSheet, type SheetMode } from "./RecipeSheet";
-import { StageBar, StagePanel } from "./RecipeBar";
-import { CaptureReadout, controlsOf, type ControlKey } from "./CaptureControls";
-import { CaptureTray } from "./CaptureTray";
+import { RecipeOptions, RecipeSheet, Track, type SheetMode } from "./RecipeSheet";
+import { StagePanel } from "./RecipeBar";
+import {
+  Histogram,
+  LightCell,
+  ReadoutCells,
+  controlsOf,
+  firstLive,
+  forbiddenIn,
+  type LiveKey,
+} from "./CaptureControls";
+import { ADJUST_HEIGHT, CaptureAdjust } from "./CaptureAdjust";
 import { useRecipes } from "./useRecipes";
 import { useCaptureControls } from "./useCaptureControls";
 import { useAppActive } from "../useAppActive";
 
-/** The shutter's rest-state halo: a handful of fading rings in the working accent. */
-const HALO = Array.from({ length: 6 }, (_, i) => ({
-  size: 82 + 7 * (i + 1),
-  opacity: 0.3 * Math.exp(-(i * i) / 10),
-}));
 /**
  * The preview stream is a supported 4:3 size on its side (CameraController.kt), so the upright picture is
- * 3:4. GlRenderer fits it inside the view and centres it; the corner marks sit on that picture.
+ * 3:4. GlRenderer fits it inside the view and centres it; what is drawn on the picture is placed on that rect.
  */
 const PICTURE_ASPECT = 3 / 4;
-const CORNER = 17;
-const CORNER_INSET = 12;
 const FOCUS_RING = 72;
+/** The dial's positions, in the order a camera prints them. */
+const MODES: readonly CaptureMode[] = ["auto", "program", "manual"];
+/** DISP's grid: the picture in thirds. */
+const THIRDS = [1 / 3, 2 / 3];
 
 function pictureRect(frame: { width: number; height: number }) {
   const width = Math.min(frame.width, frame.height * PICTURE_ASPECT);
@@ -58,42 +71,6 @@ function pictureRect(frame: { width: number; height: number }) {
     width,
     height,
   };
-}
-
-/**
- * A door beside the shutter: a round icon on the controls sheet with its name under it. Photos
- * and On chain are the same control, so the shutter sits centred between two equals.
- */
-function SideButton({
-  icon,
-  label,
-  accessibilityLabel,
-  onPress,
-  disabled,
-  testID,
-}: {
-  icon: React.ComponentProps<typeof MaterialCommunityIcon>["name"];
-  label: string;
-  accessibilityLabel: string;
-  onPress: () => void;
-  disabled: boolean;
-  testID: string;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      disabled={disabled}
-      testID={testID}
-      style={({ pressed }) => [s.sideControl, pressed && { opacity: 0.7 }]}
-    >
-      <View style={s.sideIcon}>
-        <MaterialCommunityIcon name={icon} size={20} color={colors.ink} />
-      </View>
-      <Text style={[type.imprint, s.controlLabel]}>{label}</Text>
-    </Pressable>
-  );
 }
 
 export function CameraScreen() {
@@ -111,15 +88,19 @@ export function CameraScreen() {
   const [frame, setFrame] = useState<{ width: number; height: number } | null>(
     null,
   );
-  /** The one stage whose sliders are open over the foot of the picture, or none. */
+  /** The recipe editor: the one stage open over the foot of the picture, or null when it is shut. */
   const [openStage, setOpenStage] = useState<StageType | null>(null);
   const [sheetMode, setSheetMode] = useState<SheetMode | "closed">("closed");
   const [optionsFor, setOptionsFor] = useState<Recipe | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   const [confirming, setConfirming] = useState(false);
-  /** The control whose tray is open under the readout strip, or null. */
-  const [controlsFor, setControlsFor] = useState<ControlKey | null>(null);
-  const [proSelected, setProSelected] = useState(false);
+  /**
+   * The cell the photographer made live, or null for the mode's own: brightness in P, the shutter
+   * in M, nothing in AUTO (its adjust row is the look's strength until LIGHT is tapped).
+   */
+  const [chosenCell, setChosenCell] = useState<LiveKey | null>(null);
+  /** With the look live: its row of looks, or, after a second tap on the one in force, its strength. */
+  const [lookDepth, setLookDepth] = useState<"pick" | "strength">("pick");
   /** Where the picture was last tapped to focus, in picture coordinates; the ring drawn there. */
   const [focusRing, setFocusRing] = useState<{ x: number; y: number; at: number } | null>(null);
   const ring = useRef(new Animated.Value(0)).current;
@@ -135,18 +116,49 @@ export function CameraScreen() {
     });
   }, [focusRing, ring]);
   const captureInFlight = useRef(false);
-  /** Measured track widths, so `RecipeSheet` and its rows stay hook-free. */
+  /** Measured track widths, so `Track` stays hook-free. */
   const widths = useRef<Record<string, number>>({});
 
   const live = focused && active && hasPermission === true;
   const recipes = useRecipes({ live, generation: cameraGeneration, busy });
   const capture = useCaptureControls({ live, generation: cameraGeneration });
-  const pro = proSelected || needsProControls(capture.settings);
-  const chooseSimple = () => {
-    setProSelected(false);
-    setOpenStage(null);
-    setControlsFor(null);
-    capture.change(simpleCaptureSettings(capture.settings));
+  /** Off AUTO: the readout is up. */
+  const readout = capture.mode !== "auto";
+  /**
+   * The live cell, read off the mode rather than kept in step with it: when the dial turns to M by
+   * itself (a ruler moved in P) a live LIGHT is forbidden, and the shutter is live in its place.
+   */
+  const liveCell: LiveKey | null =
+    capture.caps === null
+      ? null
+      : !readout
+        ? chosenCell === "ev" && controlsOf(capture.caps, capture.mode).includes("ev") ? "ev" : null
+        : chosenCell === "look" ||
+            (chosenCell !== null &&
+              controlsOf(capture.caps, capture.mode).includes(chosenCell) &&
+              !forbiddenIn(chosenCell, capture.mode))
+          ? chosenCell
+          : firstLive(capture.caps, capture.mode);
+  /** Only a dial that turned changes anything here: each mode arrives on its own live cell. */
+  const chooseMode = (next: CaptureMode) => {
+    if (!capture.chooseMode(next)) return;
+    setChosenCell(null);
+    setLookDepth("pick");
+    if (next === "auto") {
+      setOpenStage(null);
+      // AUTO is the camera choosing: a tapped subject is released with everything else held.
+      void SeekerCamera.releaseFocusPoint().catch(() => {});
+    }
+  };
+  /**
+   * AUTO held down: everything back to the camera and nothing set aside, where a tap on AUTO keeps
+   * what P and M held for their return. The two-button reset a camera body has.
+   */
+  const resetAll = () => {
+    setChosenCell(null);
+    setLookDepth("pick");
+    void SeekerCamera.releaseFocusPoint().catch(() => {});
+    capture.auto();
   };
   const { recipe, origin } = recipes;
 
@@ -186,11 +198,22 @@ export function CameraScreen() {
     setConfirming(false);
     recipes.clearError();
   };
+  /**
+   * Another look is chosen and the editor shuts. The look in force, tapped again off AUTO, turns
+   * its row to its strength; AUTO has that row up already.
+   */
   const chooseRecipe = (next: Recipe) => {
     if (captureInFlight.current) return;
-    const stage = recipes.choose(next);
-    setOpenStage(stage);
-    if (stage !== null) setProSelected(true);
+    const again = recipes.choose(next) !== null;
+    setOpenStage(null);
+    if (again && readout) setLookDepth("strength");
+    if (!readout) setChosenCell(null);
+  };
+  /** The look's stages, opened on the first one it moves. */
+  const openEditor = () => {
+    if (captureInFlight.current || origin === null) return;
+    const stage = recipes.choose(origin);
+    if (stage !== null) setOpenStage(stage);
   };
   /** `+` asks for a name first; the recipe exists under that name before any slider moves. */
   const chooseCustom = () => {
@@ -201,8 +224,10 @@ export function CameraScreen() {
   };
   const createNew = async () => {
     if (await recipes.create(nameDraft)) {
-      setProSelected(true);
-      setOpenStage(null);
+      // Every stage is at neutral, so the editor opens on the first for the sliders to start.
+      setChosenCell("look");
+      setLookDepth("strength");
+      setOpenStage(STAGES[0].type);
       setSheetMode("closed");
     }
   };
@@ -313,32 +338,99 @@ export function CameraScreen() {
   const strengthDimmed = busy || recipes.slowApply || recipes.isClean;
   const picture = frame ? pictureRect(frame) : null;
   const points = Math.round(recipes.strength * 100);
+  const dialDisabled = busy || !live || capture.caps === null;
+
+  /** The look's strength: its name and number as a cell would say them, then the dial itself. */
+  const strengthRow = (trailing?: React.ReactNode) => (
+    <View style={[s.adjustRow, strengthDimmed && s.strengthDisabled]}>
+      {/* No − and + buttons: screen readers step the track through its increment/decrement actions. */}
+      <View style={s.strengthCell} importantForAccessibility="no-hide-descendants">
+        <Text maxFontSizeMultiplier={CHROME_FONT_SCALE} style={[type.imprint, s.muted]}>{recipeCopy.strength}</Text>
+        <Text maxFontSizeMultiplier={CHROME_FONT_SCALE} style={[type.readout, s.strengthValue]}>{points}</Text>
+      </View>
+      <View style={s.strengthTrack}>
+        <Track
+          testID="camera-strength"
+          widths={widths}
+          widthKey="strength"
+          fraction={recipes.strength}
+          disabled={strengthDisabled}
+          accessibilityLabel={recipeCopy.strength}
+          accessibilityValue={{ min: 0, max: 100, now: points }}
+          onAt={(fraction) => recipes.changeStrength(fraction)}
+          onStep={(direction) => recipes.changeStrength(recipes.strength + direction * 0.05)}
+        />
+      </View>
+      {trailing}
+    </View>
+  );
+  const lookRow = (bleed?: { left: number; right: number }) => (
+    <RecipePicker
+      choices={recipes.choices}
+      selected={origin}
+      disabled={busy}
+      againHint={readout ? recipeCopy.strengthHint : undefined}
+      onChoose={chooseRecipe}
+      onCustom={readout ? chooseCustom : undefined}
+      onOptions={(one) => {
+        setConfirming(false);
+        recipes.clearError();
+        setOptionsFor(one);
+      }}
+      bleed={bleed}
+    />
+  );
+
   return (
     <Screen padded={false}>
       {focused && <StatusBar style="light" />}
       <View style={s.stage}>
         <View style={s.header}>
-          <View style={s.modePicker} accessibilityRole="radiogroup" accessibilityLabel="Camera controls">
-            <Chip label={controlsCopy.simple} selected={!pro} accessibilityRole="radio"
-              accessibilityLabel={controlsCopy.simpleHint} disabled={busy || !live || capture.caps === null}
-              onPress={chooseSimple} testID="camera-mode-simple" />
-            <Chip label={controlsCopy.pro} selected={pro} accessibilityRole="radio"
-              accessibilityLabel={controlsCopy.proHint} disabled={busy || !live || capture.caps === null}
-              onPress={() => setProSelected(true)} testID="camera-mode-pro" />
+          {/* The dial: three positions set in type, an index mark under the one it is turned to. */}
+          <View style={s.dial} accessibilityRole="radiogroup" accessibilityLabel={controlsCopy.modeDial}>
+            {MODES.filter((one) => one !== "manual" || capture.canHoldExposure).map((one) => (
+              <TextKey
+                key={one}
+                size="readout"
+                label={controlsCopy.modes[one]}
+                on={capture.mode === one}
+                index
+                // On AUTO, the position that kept the photographer's settings reads in the accent.
+                held={capture.remembered === one}
+                accessibilityRole="radio"
+                accessibilityLabel={capture.remembered === one
+                  ? controlsCopy.modeHeld(controlsCopy.modeNames[one])
+                  : controlsCopy.modeNames[one]}
+                // M holds what this camera metered, so it waits for a first reading.
+                disabled={dialDisabled || (one === "manual" && capture.mode !== "manual" && capture.meter === null)}
+                onPress={() => chooseMode(one)}
+                onLongPress={one === "auto" ? resetAll : undefined}
+                testID={`camera-mode-${one}`}
+              />
+            ))}
           </View>
+          <View style={s.grow} />
+          <TextKey
+            label={controlsCopy.disp}
+            on={capture.display !== "plain"}
+            accessibilityLabel={controlsCopy.readingOf(controlsCopy.display, controlsCopy.displays[capture.display])}
+            onPress={capture.cycleDisplay}
+            disabled={busy}
+            testID="camera-disp"
+          />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={cameraCopy.settings}
             onPress={() => navigation.navigate("Settings")}
             disabled={busy}
             testID="camera-settings"
-            style={({ pressed }) => [s.settingsButton, (pressed || busy) && { opacity: 0.7 }]}
+            style={({ pressed }) => [s.gear, (pressed || busy) && { opacity: 0.7 }]}
           >
-            <MaterialCommunityIcon name="cog-outline" size={20} color={colors.ink} />
+            <MaterialCommunityIcon name="cog-outline" size={20} color={colors.muted} />
           </Pressable>
         </View>
 
-        {/* The picture has the whole space between the header and the controls, and the native
+        {/* The picture has the whole space between the header and the sheet, and the native
             view fits the 3:4 frame inside it, so none of the shot hides under the sheet. */}
         <View
           style={s.viewfinderLayer}
@@ -362,52 +454,20 @@ export function CameraScreen() {
               }}
             />
           )}
-          {picture && (
-            <>
-              <View
-                pointerEvents="none"
-                style={[
-                  s.corner,
-                  s.cornerTL,
-                  { left: picture.left + CORNER_INSET, top: picture.top + CORNER_INSET },
-                ]}
-              />
-              <View
-                pointerEvents="none"
-                style={[
-                  s.corner,
-                  s.cornerTR,
-                  {
-                    left: picture.left + picture.width - CORNER_INSET - CORNER,
-                    top: picture.top + CORNER_INSET,
-                  },
-                ]}
-              />
-              <View
-                pointerEvents="none"
-                style={[
-                  s.corner,
-                  s.cornerBL,
-                  {
-                    left: picture.left + CORNER_INSET,
-                    top: picture.top + picture.height - CORNER_INSET - CORNER,
-                  },
-                ]}
-              />
-              <View
-                pointerEvents="none"
-                style={[
-                  s.corner,
-                  s.cornerBR,
-                  {
-                    left: picture.left + picture.width - CORNER_INSET - CORNER,
-                    top: picture.top + picture.height - CORNER_INSET - CORNER,
-                  },
-                ]}
-              />
-            </>
-          )}
-          {/* Tap to focus: the whole picture is the target, under every control drawn over it. */}
+          {picture && capture.display === "grid" &&
+            THIRDS.map((at) => (
+              <React.Fragment key={at}>
+                <View
+                  pointerEvents="none"
+                  style={[s.gridLine, { left: picture.left + picture.width * at, top: picture.top, width: 1, height: picture.height }]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[s.gridLine, { left: picture.left, top: picture.top + picture.height * at, width: picture.width, height: 1 }]}
+                />
+              </React.Fragment>
+            ))}
+          {/* Tap to focus: the whole picture is the target, under whatever is drawn over it. */}
           {picture && live && (
             <Pressable
               accessibilityRole="button"
@@ -422,8 +482,9 @@ export function CameraScreen() {
               }}
               onPress={(event) => {
                 const { locationX: x, locationY: y } = event.nativeEvent;
-                setControlsFor(null);
                 setOpenStage(null);
+                // AUTO's adjust row goes back to the look's strength; P and M always have a dial up.
+                if (!readout) setChosenCell(null);
                 // A held lens cannot follow a tap; the tap hands focus back to the camera first.
                 if (capture.settings.focus !== "auto")
                   capture.change({ ...capture.settings, focus: "auto" });
@@ -448,7 +509,8 @@ export function CameraScreen() {
               ]}
             />
           )}
-          {pro && recipe !== null && openStage !== null && (
+          {capture.display === "histogram" && <Histogram meter={capture.meter} />}
+          {readout && recipe !== null && openStage !== null && (
             <StagePanel
               recipe={recipe}
               strength={recipes.strength}
@@ -457,47 +519,13 @@ export function CameraScreen() {
               busy={busy}
               error={recipes.error}
               onParam={recipes.changeParam}
+              onStage={(stage) => {
+                recipes.clearError();
+                setOpenStage(stage);
+              }}
               onReset={() => void recipes.reset()}
               onClose={() => setOpenStage(null)}
             />
-          )}
-          {/* The camera's own readout, ON the picture: the column below is untouched. */}
-          {capture.caps !== null && (
-            <CaptureReadout
-              pro={pro}
-              caps={capture.caps}
-              settings={capture.settings}
-              meter={capture.meter}
-              histogram={capture.histogram}
-              disabled={busy}
-              open={controlsFor}
-              onOpen={(key) => {
-                setSheetMode("closed");
-                setOptionsFor(null);
-                setOpenStage(null);
-                // The same cell again closes its tray.
-                setControlsFor((now) => (now === key ? null : key));
-              }}
-            >
-              {/* A control Simple lacks (ISO after exposure is released) closes with its mode. */}
-              {controlsFor !== null && controlsOf(capture.caps, pro).includes(controlsFor) && (
-                <CaptureTray
-                  pro={pro}
-                  control={controlsFor}
-                  caps={capture.caps}
-                  settings={capture.settings}
-                  manualExposure={capture.manualExposure}
-                  meter={capture.meter}
-                  histogram={capture.histogram}
-                  busy={busy || !live}
-                  onChange={capture.change}
-                  onAuto={capture.auto}
-                  onHistogram={capture.toggleHistogram}
-                  onReleaseFocus={() => void SeekerCamera.releaseFocusPoint().catch(() => {})}
-                  onClose={() => setControlsFor(null)}
-                />
-              )}
-            </CaptureReadout>
           )}
 
           {recipes.slowApply && !notice && (
@@ -526,88 +554,78 @@ export function CameraScreen() {
         </View>
 
         <View style={s.sheet}>
-          {pro && recipe !== null && (
-            <StageBar
-              recipe={recipe}
-              open={openStage}
-              disabled={busy}
-              onOpen={(stage) => {
-                recipes.clearError();
-                setOpenStage(stage);
-              }}
+          {/* ADJUST: the live cell's dial; with no cell live, the look's strength. */}
+          {capture.caps !== null && liveCell !== null && liveCell !== "look" ? (
+            <CaptureAdjust
+              key={liveCell}
+              mode={capture.mode}
+              control={liveCell}
+              caps={capture.caps}
+              settings={capture.settings}
+              meter={capture.meter}
+              busy={busy || !live}
+              onChange={capture.change}
+              onReleaseFocus={() => void SeekerCamera.releaseFocusPoint().catch(() => {})}
             />
+          ) : liveCell === "look" && lookDepth === "pick" ? (
+            <View style={s.adjustSlot}>{lookRow()}</View>
+          ) : (
+            strengthRow(
+              readout ? (
+                <Chip size="small" label={recipeCopy.edit} selected={openStage !== null} disabled={busy || recipe === null}
+                  onPress={() => (openStage === null ? openEditor() : setOpenStage(null))}
+                  hitSlop={{ top: 6, bottom: 6 }} testID="camera-look-edit" />
+              ) : undefined,
+            )
           )}
-          <RecipePicker
-            choices={recipes.choices}
-            selected={origin}
-            disabled={busy}
-            onChoose={chooseRecipe}
-            onCustom={chooseCustom}
-            onOptions={(one) => {
-              setConfirming(false);
-              recipes.clearError();
-              setOptionsFor(one);
-            }}
-          />
 
-          {/* No − and + buttons: screen readers step the track through its increment/decrement actions. */}
-          <View style={[s.strengthRow, strengthDimmed && s.strengthDisabled]}>
-            <MaterialCommunityIcon
-              name="circle-half-full"
-              size={18}
-              color={colors.muted}
-              importantForAccessibility="no"
-            />
-            <View
-              style={s.strengthTrack}
-              testID="camera-strength"
-              onLayout={(event) => {
-                widths.current.strength = event.nativeEvent.layout.width;
+          {/* CHOOSE: AUTO chooses a look, with brightness pinned beside them; P and M choose a cell. */}
+          {readout && capture.caps !== null ? (
+            <View style={s.chooseCells}>
+            <ReadoutCells
+              mode={capture.mode}
+              caps={capture.caps}
+              settings={capture.settings}
+              meter={capture.meter}
+              live={liveCell}
+              look={origin?.name ?? ""}
+              disabled={busy}
+              onLive={(key) => {
+                setChosenCell(key);
+                // The look cell again turns its row between the looks and the strength of the one in force.
+                setLookDepth(key === "look" && liveCell === "look" && lookDepth === "pick" ? "strength" : "pick");
               }}
-              onStartShouldSetResponder={() => !strengthDisabled}
-              onMoveShouldSetResponder={() => !strengthDisabled}
-              onResponderGrant={(event) =>
-                recipes.changeStrength(
-                  event.nativeEvent.locationX / (widths.current.strength || 1),
-                )
-              }
-              onResponderMove={(event) =>
-                recipes.changeStrength(
-                  event.nativeEvent.locationX / (widths.current.strength || 1),
-                )
-              }
-              accessible
-              accessibilityRole="adjustable"
-              accessibilityLabel={recipeCopy.strength}
-              accessibilityValue={{ min: 0, max: 100, now: points }}
-              accessibilityState={{ disabled: strengthDisabled }}
-              accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
-              onAccessibilityAction={(event) =>
-                recipes.changeStrength(
-                  recipes.strength +
-                    (event.nativeEvent.actionName === "increment" ? 0.05 : -0.05),
-                )
-              }
-            >
-              <View style={s.strengthRail} />
-              <View
-                style={[s.strengthFill, { width: `${points}%` as `${number}%` }]}
-              />
-              <View style={[s.strengthThumb, { left: `${points}%` }]} />
+            />
             </View>
-            <Text style={[type.readout, s.strengthValue]}>{points}</Text>
-          </View>
+          ) : (
+            <View style={s.chooseRow}>
+              <View style={s.grow}>{lookRow({ left: space.gutter, right: 0 })}</View>
+              {capture.caps !== null && (
+                <>
+                  <View style={s.divider} />
+                  <LightCell
+                    caps={capture.caps}
+                    settings={capture.settings}
+                    meter={capture.meter}
+                    live={liveCell === "ev"}
+                    disabled={busy}
+                    onPress={() => setChosenCell(liveCell === "ev" ? null : "ev")}
+                  />
+                </>
+              )}
+            </View>
+          )}
 
-          <View style={s.actionsRow}>
-            <SideButton
-              icon="image-multiple-outline"
+          {/* SHOOT: the shutter, and the two doors out of the camera set as words on its axis. */}
+          <View style={s.shootRow}>
+            <TextKey
               label={cameraCopy.photos}
               accessibilityLabel={actions.viewPhotos}
               onPress={() => navigation.navigate("Review")}
               disabled={busy}
+              style={s.door}
               testID="camera-photos"
             />
-
             <Pressable
               onPress={onShutter}
               accessibilityRole="button"
@@ -621,35 +639,14 @@ export function CameraScreen() {
                 dimmed && { opacity: 0.4 },
               ]}
             >
-              {HALO.map((band) => (
-                <View
-                  key={band.size}
-                  style={[
-                    s.halo,
-                    {
-                      width: band.size,
-                      height: band.size,
-                      borderRadius: band.size / 2,
-                      opacity: band.opacity,
-                    },
-                  ]}
-                />
-              ))}
-              <View style={s.shutterRing}>
-                {busy ? (
-                  <ActivityIndicator color={colors.ink} />
-                ) : (
-                  <View style={s.shutterCore} />
-                )}
-              </View>
+              {busy ? <ActivityIndicator color={colors.ink} /> : <View style={s.shutterCore} />}
             </Pressable>
-
-            <SideButton
-              icon="link-variant"
+            <TextKey
               label={cameraCopy.collection}
               accessibilityLabel={cameraCopy.collectionHint}
               onPress={() => navigation.navigate("Chain")}
               disabled={busy}
+              style={s.door}
               testID="camera-chain"
             />
           </View>
@@ -690,7 +687,7 @@ export function CameraScreen() {
 }
 
 const s = StyleSheet.create({
-  /** Header, picture, controls: a column, so the picture is never under either of the others. */
+  /** Header, picture, sheet: a column, so the picture is never under either of the others. */
   stage: { flex: 1 },
   viewfinderLayer: {
     flex: 1,
@@ -698,34 +695,16 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   viewfinder: { flex: 1 },
-  /** Placed on the picture's own corners at render time (`pictureRect`). */
-  corner: {
-    position: "absolute",
-    width: CORNER,
-    height: CORNER,
-    borderColor: colors.ink,
-    opacity: 0.3,
-  },
-  cornerTL: { borderTopWidth: 1, borderLeftWidth: 1 },
-  cornerTR: { borderTopWidth: 1, borderRightWidth: 1 },
-  cornerBL: { borderBottomWidth: 1, borderLeftWidth: 1 },
-  cornerBR: { borderBottomWidth: 1, borderRightWidth: 1 },
   header: {
-    paddingHorizontal: space.gutter,
-    paddingBottom: space.sm,
+    height: 52,
+    paddingHorizontal: space.gutter - 6,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
   },
-  modePicker: { flexDirection: "row", gap: space.sm },
-  settingsButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.sheet,
-  },
+  dial: { flexDirection: "row", gap: space.xs },
+  grow: { flex: 1 },
+  gear: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  gridLine: { position: "absolute", backgroundColor: colors.ink, opacity: 0.25 },
   loading: {
     position: "absolute",
     top: "45%",
@@ -756,90 +735,37 @@ const s = StyleSheet.create({
   noticeText: { color: colors.ink },
   noticeButton: { alignSelf: "flex-start", marginTop: space.sm, paddingVertical: space.xs },
   noticeButtonText: { color: colors.tealText },
+  /** The same height in every mode, so the picture never resizes as the dial turns. */
   sheet: {
     backgroundColor: colors.sheet,
     borderTopLeftRadius: radius.card,
     borderTopRightRadius: radius.card,
     paddingHorizontal: space.gutter,
-    paddingTop: space.lg,
-    paddingBottom: space.lg,
-    gap: space.lg,
+    paddingTop: 16,
+    paddingBottom: space.md,
   },
+  adjustRow: { height: ADJUST_HEIGHT, flexDirection: "row", alignItems: "center", gap: space.sm },
+  /** A scrolling row in the adjust position: a column, so it takes the width and can bleed past it. */
+  adjustSlot: { height: ADJUST_HEIGHT, justifyContent: "center" },
+  chooseRow: { height: 44, marginTop: space.sm, flexDirection: "row", alignItems: "center" },
+  chooseCells: { height: 44, marginTop: space.sm },
+  divider: { width: 1, height: 28, marginHorizontal: space.sm, backgroundColor: colors.line },
+  muted: { color: colors.muted },
   strengthDisabled: { opacity: 0.35 },
-  strengthRow: { flexDirection: "row", alignItems: "center", gap: space.md },
-  /** Three digits wide, flush against the track gap like the icon on the other side, so the
-      distance track→number equals icon→track and the track never shifts as digits change. */
-  strengthValue: { width: 40, textAlign: "left", color: colors.tealText },
-  strengthTrack: {
-    height: 32,
-    flexGrow: 1,
-    flexShrink: 1,
-    justifyContent: "center",
-  },
-  strengthRail: {
-    height: 3,
-    borderRadius: radius.pill,
-    backgroundColor: colors.line,
-  },
-  strengthFill: {
-    position: "absolute",
-    left: 0,
-    height: 3,
-    borderRadius: radius.pill,
-    backgroundColor: colors.teal,
-  },
-  strengthThumb: {
-    position: "absolute",
-    marginLeft: -10,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.ink,
-  },
-  actionsRow: {
+  strengthCell: { width: 64, alignItems: "flex-start", justifyContent: "center" },
+  strengthValue: { color: colors.tealText },
+  /** The thumb is 18 wide and centred on the value, so the rail starts half a thumb in. */
+  strengthTrack: { flex: 1, paddingHorizontal: 9 },
+  shootRow: {
+    height: 84,
+    marginTop: space.md,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  /**
-   * Half the row's spare width each, so the shutter stays centred between the two doors. The
-   * door is as tall as the shutter and its icon sits in the middle of that height, so the
-   * three circles share one axis; the name hangs under the icon and does not pull it down.
-   */
-  sideControl: {
-    flex: 1,
-    minWidth: 72,
-    height: 94,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  controlLabel: {
-    position: "absolute",
-    top: 94 / 2 + 44 / 2 + space.xs,
-    color: colors.muted,
-  },
-  /** The same round button as the Settings gear, one step lighter so it shows on the sheet. */
-  sideIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.field,
-  },
+  /** Half the row's spare width each, so the shutter stays centred between the two doors. */
+  door: { flex: 1, height: 84 },
   shutter: {
-    width: 94,
-    height: 94,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  halo: {
-    position: "absolute",
-    borderWidth: 1,
-    borderColor: colors.teal,
-    pointerEvents: "none",
-  },
-  shutterRing: {
     width: 76,
     height: 76,
     borderRadius: 38,

@@ -1,15 +1,18 @@
 /**
- * The recipe's stages as a bar of tabs above the recipe row, and ONE open stage's sliders in a
- * panel over the foot of the picture. Tapping a stage opens it and closes the one before; the
- * picture stays live above. Hook-free: every piece of state belongs to `useRecipes`.
+ * The recipe's stages as a bar of tabs, and the camera's editor: that bar over ONE open stage's
+ * sliders, in a panel over the foot of the picture. The editor is not part of the camera at rest;
+ * the recipe in force opens it. Tapping a stage opens it and closes the one before, tapping the
+ * open one closes the editor, and the picture stays live above. No state of its own: the recipe
+ * is `useRecipes`', the open stage its caller's, and the bar's refs only park it on the open tab.
  */
+import { useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { STAGES, type Recipe, type StageType } from "../recipes/model";
 import { StageParameters } from "../recipes/RecipeControls";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
 import { fonts } from "../ui/fonts";
-import { Pill } from "../ui/primitives";
+import { Pill, PILL_SMALL_HEIGHT } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
 
 /** How many of a stage's parameters the recipe moves, at any strength. */
@@ -31,9 +34,37 @@ interface StageBarProps {
 }
 
 export function StageBar({ recipe, open, disabled = false, onOpen }: StageBarProps) {
+  const scroll = useRef<ScrollView>(null);
+  /**
+   * A bar that mounts with a stage open parks on its tab, once: the open tab is the only thing
+   * naming the stage, and it may lie past the edge. A tab already in view is left where it is,
+   * and after that the bar is the thumb's.
+   */
+  const parked = useRef(open === null);
+  const sized = useRef(false);
+  const viewport = useRef<number | null>(null);
+  const openTab = useRef<{ x: number; width: number } | null>(null);
+  const park = () => {
+    if (parked.current || !sized.current || viewport.current === null || openTab.current === null) return;
+    parked.current = true;
+    const { x, width } = openTab.current;
+    if (x + width > viewport.current) {
+      scroll.current?.scrollTo({ x: Math.max(0, x - space.gutter), animated: false });
+    }
+  };
   return (
     <ScrollView
+      ref={scroll}
       horizontal
+      // The three measurements arrive in no promised order; the bar parks when it has them all.
+      onLayout={(event) => {
+        viewport.current = event.nativeEvent.layout.width;
+        park();
+      }}
+      onContentSizeChange={() => {
+        sized.current = true;
+        park();
+      }}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={s.bar}
       scrollEnabled={!disabled}
@@ -49,6 +80,14 @@ export function StageBar({ recipe, open, disabled = false, onOpen }: StageBarPro
             accessibilityState={{ selected: active, disabled }}
             accessibilityLabel={stage.label}
             disabled={disabled}
+            onLayout={
+              active
+                ? (event) => {
+                    openTab.current = { x: event.nativeEvent.layout.x, width: event.nativeEvent.layout.width };
+                    park();
+                  }
+                : undefined
+            }
             onPress={() => onOpen(active ? null : stage.type)}
             style={({ pressed }) => [s.tab, active && s.tabActive, { opacity: pressed ? 0.8 : 1 }]}
             testID={`recipe-stage-${stage.type}`}
@@ -73,6 +112,8 @@ interface StagePanelProps {
   busy?: boolean;
   error?: string;
   onParam: (stage: StageType, param: string, value: number) => void;
+  /** Another stage, or null when the open one is tapped again. */
+  onStage: (stage: StageType | null) => void;
   onReset: () => void;
   onClose: () => void;
 }
@@ -85,15 +126,17 @@ export function StagePanel({
   busy = false,
   error = "",
   onParam,
+  onStage,
   onReset,
   onClose,
 }: StagePanelProps) {
-  const spec = STAGES.find((s) => s.type === stage)!;
   return (
     <View style={s.panel} testID="recipe-panel">
+      {/* The open tab names the stage, so the head does not say it twice. */}
       <View style={s.panelHead}>
-        <Text style={[type.label, s.panelTitle]}>{spec.label}</Text>
-        <View style={s.grow} />
+        <View style={s.panelBar}>
+          <StageBar recipe={recipe} open={stage} disabled={busy} onOpen={onStage} />
+        </View>
         {canReset && (
           <Pill
             label={copy.reset}
@@ -113,19 +156,22 @@ export function StagePanel({
           <Text style={[type.label, s.closeMark]}>×</Text>
         </Pressable>
       </View>
-      <StageParameters key={stage} recipe={recipe} strength={strength}
-        stage={stage} disabled={busy} onParam={onParam} />
-      {!!error && (
-        <Text style={[type.body, s.error]} accessibilityLiveRegion="polite">
-          {error}
-        </Text>
-      )}
+      <View style={s.panelBody}>
+        <StageParameters key={stage} recipe={recipe} strength={strength}
+          stage={stage} disabled={busy} onParam={onParam} />
+        {!!error && (
+          <Text style={[type.body, s.error]} accessibilityLiveRegion="polite">
+            {error}
+          </Text>
+        )}
+      </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  bar: { gap: space.xs, paddingHorizontal: space.gutter },
+  /** Centred, for a bar given more height than its tabs: the camera's panel head is as tall as Reset. */
+  bar: { gap: space.xs, paddingHorizontal: space.gutter, alignItems: "center" },
   tab: {
     flexDirection: "row",
     alignItems: "center",
@@ -152,14 +198,20 @@ const s = StyleSheet.create({
     right: 0,
     bottom: 0,
     gap: space.sm,
-    paddingHorizontal: space.gutter,
     paddingTop: space.sm,
     paddingBottom: space.md,
     backgroundColor: "rgba(11, 12, 14, 0.78)",
   },
-  panelHead: { flexDirection: "row", alignItems: "center", gap: space.sm },
-  panelTitle: { color: colors.ink },
-  grow: { flexGrow: 1 },
+  /** The bar bleeds to the panel's left edge. As tall as Reset, so the tabs hold still when it appears. */
+  panelHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    minHeight: PILL_SMALL_HEIGHT,
+    paddingRight: space.gutter,
+  },
+  panelBar: { flex: 1 },
+  panelBody: { gap: space.sm, paddingHorizontal: space.gutter },
   closeHit: { paddingHorizontal: space.sm, paddingVertical: space.xs },
   closeMark: { color: colors.muted, fontSize: 16 },
   error: { color: colors.danger },

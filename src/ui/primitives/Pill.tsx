@@ -42,9 +42,12 @@ const SKIN: Record<PillVariant, { background: string; border: string; text: stri
   destructive: { background: "transparent", border: "rgba(255,145,126,0.5)", text: colors.danger },
 };
 
+/** The small pill's height, for a row that must not change height when one appears in it. */
+export const PILL_SMALL_HEIGHT = 46;
+
 const SIZES: Record<PillSize, { height: number; fontSize: number; paddingHorizontal: number }> = {
   large: { height: 54, fontSize: 16, paddingHorizontal: 24 },
-  small: { height: 46, fontSize: 13, paddingHorizontal: 16 },
+  small: { height: PILL_SMALL_HEIGHT, fontSize: 13, paddingHorizontal: 16 },
 };
 
 export function Pill({

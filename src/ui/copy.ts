@@ -182,8 +182,11 @@ export const recipes = {
   /** The chip at the end of the row: every stage at neutral, opened for editing. */
   custom: "+",
   customLabel: "Custom",
-  /** The strength dial's spoken name; the number beside it is the readout. */
+  /** The strength dial's name, on its cell and spoken. */
   strength: "Strength",
+  /** The key beside the strength dial that opens the look's stages. */
+  edit: "Edit",
+  strengthHint: (name: string) => `${name}. Strength.`,
   fineControls: "Fine controls",
   hideFineControls: "Hide fine controls",
   save: "Save",
@@ -236,22 +239,11 @@ export const camera = {
  * is a position, never a distance: the Seeker's lens is uncalibrated.
  */
 export const captureControls = {
-  simple: "Simple",
-  pro: "Pro",
-  simpleHint: "Brightness, colour and focus. Exposure stays automatic.",
-  proHint: "Manual exposure, camera controls and recipe adjustments.",
-  reset: "Reset to auto",
+  /** The mode dial, as a camera's dial prints it. The structure says the rest. */
+  modes: { auto: "Auto", program: "P", manual: "M" },
+  /** The key that cycles what is drawn over the picture, named as it is on a camera's back. */
+  disp: "Disp",
   applyError: "Camera controls did not apply. Restart the camera and try again.",
-  autoExposure: "Auto exposure",
-  manualHint: "ISO and shutter are held together. Auto exposure releases both.",
-  evManualHint: "Brightness needs Auto exposure. Adjust ISO or shutter while exposure is manual.",
-  help: {
-    iso: "Lower for less noise. Higher for brighter photos in low light.",
-    shutter: "Faster freezes movement. Slower adds blur and needs a steady phone.",
-    ev: "Make the photo darker or brighter while the camera handles exposure.",
-    whiteBalance: "Pick the light you are standing in. Auto guesses it.",
-    focus: "Auto follows your subject. Near for close-ups, Far for landscapes.",
-  },
   /** Tray names. */
   iso: "ISO",
   shutter: "Shutter",
@@ -259,20 +251,18 @@ export const captureControls = {
   whiteBalance: "White balance",
   kelvin: "Kelvin",
   focus: "Focus",
-  /** Strip tags, in the five cells over the picture. */
+  /** Cell tags, in the readout under the thumb. */
   tag: {
     iso: "ISO",
     shutter: "Shutter",
     ev: "Light",
     whiteBalance: "Colour",
     focus: "Focus",
+    look: "Look",
   },
-  aeLock: "AE lock",
+  look: "Look",
   awbLock: "AWB lock",
-  histogram: "Histogram",
-  /** Simple's three focus choices and the Pro ruler's reset. */
-  near: "Near",
-  far: "Far",
+  /** The brightness ruler's reset. */
   zero: "0",
   /** The lights people stand in, for the white-balance modes Camera2 names. */
   lights: {
@@ -284,14 +274,19 @@ export const captureControls = {
     warmFluorescent: "Warm fluorescent",
     twilight: "Twilight",
   },
-  /** The two clipping fractions under the bars. */
-  black: "Black",
-  white: "White",
+  /** The same lights, short enough for a cell. */
+  lightTags: { fluorescent: "Fluo", warmFluorescent: "Warm fl", twilight: "Dusk" },
+  /** The key that turns the colour row to its Kelvin ruler. */
+  kelvinKey: "K",
   auto: "Auto",
-  on: "On",
-  off: "Off",
   close: "Close",
   /** Spoken names. Short, and never shown. */
+  modeDial: "Mode",
+  modeNames: { auto: "Auto", program: "Program", manual: "Manual" },
+  modeHeld: (name: string) => `${name}, holding your settings`,
+  display: "Display",
+  displays: { plain: "Plain", grid: "Grid", histogram: "Histogram" },
+  histogramOf: (black: string, white: string) => `Histogram. Black clipped ${black}, white clipped ${white}`,
   readingOf: (name: string, value: string) => `${name}, ${value}`,
   openOf: (name: string, value: string) => `${name}, ${value}. Open.`,
 } as const;

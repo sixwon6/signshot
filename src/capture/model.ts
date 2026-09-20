@@ -31,16 +31,6 @@ export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {
   focus: "auto",
 };
 
-/** Simple controls keep brightness, white balance and focus, with automatic exposure. */
-export function simpleCaptureSettings(settings: CaptureSettings): CaptureSettings {
-  return { ...settings, iso: "auto", shutterNs: "auto", aeLock: false, awbLock: false };
-}
-
-/** Restored manual exposure and locks must stay visible, even on a fresh screen. */
-export function needsProControls(settings: CaptureSettings): boolean {
-  return settings.iso !== "auto" || settings.shutterNs !== "auto" || settings.aeLock || settings.awbLock;
-}
-
 /** Camera2 holds ISO and shutter together. Never label the companion value as automatic. */
 export function settingsFromEffective(effective: EffectiveCaptureSettings): CaptureSettings {
   const { manualExposure, ...settings } = effective;

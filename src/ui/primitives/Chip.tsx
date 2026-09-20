@@ -5,7 +5,7 @@
  * with the label at 72 %. A caller may pass its own `fill`, which must be a light theme accent
  * so the dark label still reads.
  */
-import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, Text, type Insets, type StyleProp, type ViewStyle } from "react-native";
 import { colors, radius } from "../theme";
 import { fonts } from "../fonts";
 
@@ -14,6 +14,11 @@ interface ChipProps {
   selected?: boolean;
   /** The selected fill. Teal unless given; a light theme accent, under the dark label. */
   fill?: string;
+  /**
+   * Unselected, but keeping something of the photographer's: the label reads in the accent, as a
+   * held value does on the camera's readout.
+   */
+  held?: boolean;
   onPress?: () => void;
   /** A long press on a chip the photographer owns: its Rename / Copy / Delete options. */
   onLongPress?: () => void;
@@ -23,12 +28,15 @@ interface ChipProps {
   style?: StyleProp<ViewStyle>;
   testID?: string;
   size?: "regular" | "small";
+  /** Touch beyond the outline: a small chip is 32 tall and a fingertip is 44. */
+  hitSlop?: Insets;
 }
 
 export function Chip({
   label,
   selected = false,
   fill,
+  held = false,
   onPress,
   onLongPress,
   disabled = false,
@@ -37,6 +45,7 @@ export function Chip({
   style,
   testID,
   size = "regular",
+  hitSlop,
 }: ChipProps) {
   return (
     <Pressable
@@ -49,6 +58,7 @@ export function Chip({
       }
       accessibilityLabel={accessibilityLabel ?? label}
       disabled={disabled}
+      hitSlop={hitSlop}
       onPress={onPress}
       onLongPress={onLongPress}
       style={({ pressed }) => [
@@ -60,7 +70,13 @@ export function Chip({
         style,
       ]}
     >
-      <Text style={[styles.label, selected ? styles.labelSelected : styles.labelUnselected]}>
+      <Text
+        style={[
+          styles.label,
+          selected ? styles.labelSelected : styles.labelUnselected,
+          held && !selected && styles.labelHeld,
+        ]}
+      >
         {label}
       </Text>
     </Pressable>
@@ -79,9 +95,11 @@ const styles = StyleSheet.create({
   unselected: {
     borderWidth: 1,
     borderColor: "rgba(245,244,240,0.22)",
-    paddingHorizontal: 13,
+    // With the hairline, as wide as selected: choosing a chip must not move its neighbours.
+    paddingHorizontal: 14,
   },
   label: { fontSize: 10, letterSpacing: 1, textTransform: "uppercase" },
   labelSelected: { color: colors.onTeal, fontFamily: fonts.monoStrong },
   labelUnselected: { color: "rgba(245,244,240,0.72)", fontFamily: fonts.mono },
+  labelHeld: { color: colors.tealText },
 });

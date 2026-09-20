@@ -204,8 +204,12 @@ if (!process.argv.includes("--worker")) {
   } finally {
     globalThis.fetch = originalFetch;
   }
-  const { DEFAULT_CAPTURE_SETTINGS, settingsFromEffective, simpleCaptureSettings, needsProControls, clampSettings } =
+  const { DEFAULT_CAPTURE_SETTINGS, settingsFromEffective, clampSettings } =
     await import("../src/capture/model.ts");
+  const { captureModeOf, heldBeyondAuto, autoModeSettings, programSettings, manualSettings, displayIn, nextDisplay,
+    settingsLeavingAuto, withBrightnessCarried, parseCaptureChrome, chromeHolding, DEFAULT_CAPTURE_CHROME,
+    turnDial, holdsExposure, rememberedMode, rememberedFor } =
+    await import("../src/capture/mode.ts");
   // Moving either exposure dial makes Camera2 hold BOTH values; restoring only the requested
   // dial made the companion read Auto and change unexpectedly after reopening the camera.
   const manualCapture = { ...DEFAULT_CAPTURE_SETTINGS, manualExposure: true,
@@ -213,19 +217,97 @@ if (!process.argv.includes("--worker")) {
   const heldCapture = settingsFromEffective(manualCapture);
   assert.equal(heldCapture.iso, 320);
   assert.equal(heldCapture.shutterNs, 8_000_000);
-  assert.equal(needsProControls(heldCapture), true);
   assert.equal("manualExposure" in heldCapture, false);
-  // Simple releases manual exposure/locks without losing the photographer's colour or focus.
-  const simpleCapture = simpleCaptureSettings({ ...heldCapture, aeLock: true, awbLock: true });
-  assert.equal(needsProControls(simpleCapture), false);
-  assert.equal(simpleCapture.iso, "auto");
-  assert.equal(simpleCapture.shutterNs, "auto");
-  assert.equal(simpleCapture.whiteBalance, "daylight");
-  assert.equal(simpleCapture.focus, 1.5);
+  // The mode dial follows what is held. A held value is never hidden, so restored manual
+  // exposure reads M, and anything AUTO has no cell for reads P, whatever the stored choice was.
+  assert.equal(captureModeOf(heldCapture, false), "manual");
+  assert.equal(captureModeOf(heldCapture, true), "manual");
+  assert.equal(captureModeOf(DEFAULT_CAPTURE_SETTINGS, false), "auto");
+  assert.equal(captureModeOf(DEFAULT_CAPTURE_SETTINGS, true), "program");
+  assert.equal(captureModeOf({ ...DEFAULT_CAPTURE_SETTINGS, ev: 3 }, false), "auto",
+    "brightness is the one control AUTO shows, so holding it does not leave AUTO");
+  for (const held of [{ awbLock: true }, { aeLock: true }, { whiteBalance: "daylight" },
+    { whiteBalance: { kelvin: 5200 } }, { focus: 1.5 }]) {
+    const settings = { ...DEFAULT_CAPTURE_SETTINGS, ...held };
+    assert.equal(heldBeyondAuto(settings), true);
+    assert.equal(captureModeOf(settings, false), "program", "AUTO must never hide a held value");
+  }
+  // P hands exposure back without losing the photographer's colour, focus or locks.
+  const programCapture = programSettings({ ...heldCapture, awbLock: true });
+  assert.equal(captureModeOf(programCapture, true), "program");
+  assert.equal(programCapture.iso, "auto");
+  assert.equal(programCapture.shutterNs, "auto");
+  assert.equal(programCapture.whiteBalance, "daylight");
+  assert.equal(programCapture.focus, 1.5);
+  assert.equal(programCapture.awbLock, true);
   assert.equal(heldCapture.iso, 320, "switching modes must not mutate the saved settings");
+  const unheld = { ...DEFAULT_CAPTURE_SETTINGS, whiteBalance: "daylight" };
+  assert.equal(programSettings(unheld), unheld, "P with nothing to release must not restart the camera request");
+  // AUTO releases everything it cannot show and keeps brightness.
+  const autoCapture = autoModeSettings({ ...heldCapture, ev: 2, aeLock: true, awbLock: true });
+  assert.deepEqual(autoCapture, { ...DEFAULT_CAPTURE_SETTINGS, ev: 2 });
+  assert.equal(captureModeOf(autoCapture, false), "auto");
+  // M holds the metered exposure, both values at once, and waits for a first reading.
+  const reading = { iso: 137, shutterNs: 13_698_630, ev: 0, focusDistance: null, awbMode: "auto",
+    aeState: "converged", afState: "inactive", manualExposure: false, histogram: [], sampled: 0,
+    clippedBlack: 0, clippedWhite: 0 };
+  const plainCaps = { manualSensor: true, iso: { min: 50, max: 6400 }, shutterNs: { min: 100_000, max: 30_000_000_000 } };
+  const manualCaptureFromMeter = manualSettings(unheld, reading, plainCaps);
+  assert.equal(manualCaptureFromMeter.iso, 137);
+  assert.equal(manualCaptureFromMeter.shutterNs, 13_698_630);
+  assert.equal(manualCaptureFromMeter.whiteBalance, "daylight");
+  assert.equal(captureModeOf(manualCaptureFromMeter, true), "manual");
+  assert.equal(manualSettings(unheld, null, plainCaps), null);
+  assert.equal(manualSettings(unheld, { ...reading, iso: null }, plainCaps), null);
+  assert.equal(manualSettings(heldCapture, null, plainCaps), heldCapture, "an exposure already held is kept, never re-metered");
+  // Seen on the Seeker with the lens covered: the meter read ISO 20000 over a manual range ending
+  // at 11470, and M held 11470 at the same shutter, most of a stop darker. The shutter takes it up.
+  const seekerCaps = { ...plainCaps, iso: { min: 100, max: 11470 }, shutterNs: { min: 100_000, max: 16_000_000_000 } };
+  const inTheDark = manualSettings(unheld, { ...reading, iso: 20000, shutterNs: 100_000_000 }, seekerCaps);
+  assert.equal(inTheDark.iso, 11470);
+  assert.equal(inTheDark.shutterNs, Math.round(100_000_000 * (20000 / 11470)));
+  assert.ok(Math.abs(inTheDark.iso * inTheDark.shutterNs - 20000 * 100_000_000) / (20000 * 100_000_000) < 1e-6,
+    "M must hold the exposure that was metered, not a darker one");
+  const inRange = manualSettings(unheld, { ...reading, iso: 800, shutterNs: 8_000_000 }, seekerCaps);
+  assert.deepEqual([inRange.iso, inRange.shutterNs], [800, 8_000_000], "a reading the sensor can hold is held as it is");
+  // Leaving AUTO brings back what P and M held, under the brightness AUTO has now.
+  const autoNow = { ...DEFAULT_CAPTURE_SETTINGS, ev: 3 };
+  assert.deepEqual(settingsLeavingAuto(autoNow, heldCapture), { ...heldCapture, ev: 3 });
+  assert.equal(programSettings(settingsLeavingAuto(autoNow, heldCapture)).iso, "auto", "P drops the parked exposure");
+  assert.equal(manualSettings(settingsLeavingAuto(autoNow, heldCapture), null, plainCaps).iso, 320, "M keeps the parked exposure");
+  assert.equal(settingsLeavingAuto(autoNow, null), autoNow);
+  assert.equal(settingsLeavingAuto(autoNow, { ...DEFAULT_CAPTURE_SETTINGS, ev: -3 }), autoNow,
+    "a parked AUTO-like state must not restart the camera request");
+  // Brightness is set aside while M has no meter to steer, and returns with the meter.
+  const plusOne = { ...DEFAULT_CAPTURE_SETTINGS, ev: 3 };
+  const intoManual = withBrightnessCarried(plusOne, { ...heldCapture, ev: 0 }, null);
+  assert.equal(intoManual.aside, 3);
+  assert.equal(intoManual.settings.ev, 0);
+  const withinManual = withBrightnessCarried(heldCapture, { ...heldCapture, iso: 640 }, intoManual.aside);
+  assert.equal(withinManual.aside, 3);
+  const backToProgram = withBrightnessCarried(heldCapture, programSettings({ ...heldCapture, ev: 0 }), withinManual.aside);
+  assert.equal(backToProgram.settings.ev, 3, "P after M must not drop the photograph a stop");
+  assert.equal(backToProgram.aside, null);
+  assert.equal(withBrightnessCarried(heldCapture, DEFAULT_CAPTURE_SETTINGS, null).settings.ev, 0);
+  assert.equal(withBrightnessCarried(plusOne, { ...plusOne, ev: 6 }, null).settings.ev, 6);
+  // The stored chrome: the record from before DISP, garbage, and a held value it would hide.
+  assert.deepEqual(parseCaptureChrome('{"v":1,"histogram":true}'), { readout: false, display: "histogram" });
+  assert.deepEqual(parseCaptureChrome('{"v":1,"readout":true,"display":"grid"}'), { readout: true, display: "grid" });
+  assert.deepEqual(parseCaptureChrome('{"v":1,"readout":"yes","display":"zebra"}'), DEFAULT_CAPTURE_CHROME);
+  for (const raw of [null, "", "null", "[]", "{", "7"]) assert.deepEqual(parseCaptureChrome(raw), DEFAULT_CAPTURE_CHROME);
+  assert.deepEqual(chromeHolding(DEFAULT_CAPTURE_CHROME, heldCapture), { readout: true, display: "plain" },
+    "releasing a restored held value must leave the dial on P, not drop it to AUTO");
+  assert.equal(chromeHolding(DEFAULT_CAPTURE_CHROME, plusOne), DEFAULT_CAPTURE_CHROME);
+  const upAlready = { readout: true, display: "grid" };
+  assert.equal(chromeHolding(upAlready, heldCapture), upAlready);
+  // DISP: plain, grid, histogram. The histogram belongs to the readout, so AUTO skips it.
+  assert.deepEqual(["plain", "grid", "histogram"].map((one) => nextDisplay(one, "program")), ["grid", "histogram", "plain"]);
+  assert.deepEqual(["plain", "grid", "histogram"].map((one) => nextDisplay(one, "auto")), ["grid", "plain", "grid"]);
+  assert.equal(displayIn("histogram", "auto"), "plain");
+  assert.equal(displayIn("histogram", "manual"), "histogram");
+  assert.equal(displayIn("grid", "auto"), "grid");
   assert.deepEqual(settingsFromEffective({ ...DEFAULT_CAPTURE_SETTINGS, manualExposure: false }),
     DEFAULT_CAPTURE_SETTINGS, "automatic exposure must never store a metered ISO or shutter");
-  assert.equal(needsProControls({ ...DEFAULT_CAPTURE_SETTINGS, awbLock: true }), true);
   const captureCaps = { manualSensor: true, iso: { min: 50, max: 6400 },
     shutterNs: { min: 100_000, max: 30_000_000_000 }, ev: { min: -6, max: 6, step: 1 / 3 },
     aeLock: true, awbLock: true, awbModes: ["auto", "daylight"], focus: "unavailable" };
@@ -234,6 +316,105 @@ if (!process.argv.includes("--worker")) {
   assert.equal(changedColour.iso, preciseExposure.iso,
     "changing white balance must not snap a metered companion ISO to the dial ladder");
   assert.equal(changedColour.shutterNs, preciseExposure.shutterNs);
+  // M from the meter survives the device clamp unsnapped, with brightness zeroed as native does.
+  const heldFromMeter = clampSettings(manualSettings({ ...unheld, ev: 3 }, reading, captureCaps), captureCaps);
+  assert.equal(heldFromMeter.iso, 137);
+  assert.equal(heldFromMeter.shutterNs, 13_698_630);
+  assert.equal(heldFromMeter.ev, 0);
+  assert.equal(captureModeOf(heldFromMeter, true), "manual");
+  // A camera with no manual sensor has no M: the clamp drops the pair and the dial reads P.
+  const noManualSensor = clampSettings(manualSettings(unheld, reading, captureCaps), { ...captureCaps, manualSensor: false });
+  assert.equal(noManualSensor.iso, "auto");
+  assert.equal(captureModeOf(noManualSensor, true), "program");
+  // ISO and shutter are one pair: the dial has an M only when the camera reports both ranges.
+  assert.equal(holdsExposure(captureCaps), true);
+  assert.equal(holdsExposure({ ...captureCaps, manualSensor: false }), false);
+  assert.equal(holdsExposure({ ...captureCaps, shutterNs: "unavailable" }), false);
+  assert.equal(holdsExposure({ ...captureCaps, iso: "unavailable" }), false);
+
+  {
+    // The dial as the photographer turns it. `turn` is the hook's own composition: the turn, then
+    // the device clamp, then brightness carried; `move` is one control moved the same way.
+    const startDial = { settings: DEFAULT_CAPTURE_SETTINGS, readout: false, parked: null, aside: null };
+    const settle = (dial, next) => {
+      const carried = withBrightnessCarried(dial.settings, clampSettings(next, captureCaps), dial.aside);
+      return { ...dial, settings: carried.settings, aside: carried.aside };
+    };
+    const turn = (dial, to, meter = reading) => {
+      const turned = turnDial(dial, to, meter, captureCaps);
+      if (turned === null) return null;
+      return settle({ ...dial, readout: turned.readout, parked: turned.parked }, turned.settings);
+    };
+    const move = (dial, patch) => settle(dial, { ...dial.settings, ...patch });
+    const at = (dial) => captureModeOf(dial.settings, dial.readout);
+
+    // P at +1, M, P: still +1. M holds what was metered; brightness waits and comes back.
+    let dial = move(turn(startDial, "program"), { ev: 3 });
+    assert.equal(at(dial), "program");
+    dial = turn(dial, "manual");
+    assert.equal(at(dial), "manual");
+    assert.deepEqual([dial.settings.iso, dial.settings.shutterNs, dial.settings.ev], [137, 13_698_630, 0]);
+    dial = turn(dial, "program");
+    assert.equal(at(dial), "program");
+    assert.deepEqual([dial.settings.iso, dial.settings.shutterNs, dial.settings.ev], ["auto", "auto", 3]);
+
+    // A ruler moved in P turns the dial to M by itself, and Auto exposure turns it back.
+    dial = move(dial, { iso: 800 });
+    assert.equal(at(dial), "manual");
+    dial = move(dial, { iso: "auto", shutterNs: "auto" });
+    assert.equal(at(dial), "program");
+    assert.equal(dial.settings.ev, 3);
+
+    // M with colour held, AUTO, then M: the held pair and the colour come back as they were left.
+    dial = move(turn(dial, "manual"), { iso: 800, whiteBalance: "daylight" });
+    const leftInManual = dial.settings;
+    dial = turn(dial, "auto");
+    assert.equal(at(dial), "auto");
+    assert.deepEqual(dial.settings, { ...DEFAULT_CAPTURE_SETTINGS, ev: 3 }, "AUTO keeps brightness and nothing else");
+    assert.equal(heldBeyondAuto(dial.settings), false, "AUTO must never hold what it cannot show");
+    dial = turn(move(dial, { ev: -3 }), "manual", null);
+    assert.equal(at(dial), "manual");
+    assert.deepEqual({ ...dial.settings, ev: 0 }, { ...leftInManual, ev: 0 }, "M needs no reading to bring back a held pair");
+    assert.equal(dial.parked, null, "what AUTO set aside is spent once the dial leaves AUTO");
+    // ...and P from there is under the brightness AUTO was given, not the one M set aside before it.
+    assert.equal(turn(dial, "program").settings.ev, -3);
+
+    // AUTO, then P instead: the colour comes back, the exposure does not, and the brightness is
+    // the one AUTO was left on, because that is the control the two share.
+    dial = turn(move(turn(dial, "auto"), { ev: 6 }), "program");
+    assert.equal(at(dial), "program");
+    assert.deepEqual([dial.settings.iso, dial.settings.whiteBalance, dial.settings.ev], ["auto", "daylight", 6]);
+
+    // Refused turns change nothing: the dial already there, and M with nothing to hold.
+    assert.equal(turnDial(dial, "program", reading, captureCaps), null);
+    assert.equal(turnDial(startDial, "auto", reading, captureCaps), null);
+    assert.equal(turnDial(startDial, "manual", null, captureCaps), null);
+    assert.equal(turnDial(startDial, "manual", { ...reading, shutterNs: null }, captureCaps), null);
+    // AUTO to P with nothing set aside tells the camera nothing new: the settings are the same object.
+    assert.equal(turnDial(startDial, "program", reading, captureCaps).settings, startDial.settings);
+    const parkedNothing = { ...startDial, parked: { ...DEFAULT_CAPTURE_SETTINGS, ev: -3 } };
+    assert.equal(turnDial(parkedNothing, "program", reading, captureCaps).settings, parkedNothing.settings);
+    // A restored held value reads P whatever was stored, and releasing it from AUTO's side of the
+    // store (readout false) is still a turn the dial accepts.
+    const latched = { ...startDial, settings: { ...DEFAULT_CAPTURE_SETTINGS, focus: 1.5 } };
+    assert.equal(at(latched), "program");
+    assert.equal(at(turn(latched, "auto")), "auto");
+    assert.equal(turn(latched, "auto").parked.focus, 1.5);
+
+    // What AUTO set aside is shown on the dial: M for an exposure, P for anything else it cannot show.
+    assert.equal(rememberedMode(null), null);
+    assert.equal(rememberedMode({ ...DEFAULT_CAPTURE_SETTINGS, ev: 3 }), null);
+    assert.equal(rememberedMode({ ...DEFAULT_CAPTURE_SETTINGS, whiteBalance: "daylight" }), "program");
+    assert.equal(rememberedMode(leftInManual), "manual");
+    // What was stored beside the settings is believed only where it means something: the parked
+    // settings while the dial is on AUTO, the set-aside brightness while an exposure is held.
+    assert.deepEqual(rememberedFor(DEFAULT_CAPTURE_SETTINGS, false, leftInManual, 3), { parked: leftInManual, aside: null });
+    assert.deepEqual(rememberedFor(DEFAULT_CAPTURE_SETTINGS, true, leftInManual, 3), { parked: null, aside: null },
+      "off AUTO nothing is parked, whatever the store says");
+    assert.deepEqual(rememberedFor(leftInManual, true, leftInManual, 3), { parked: null, aside: 3 });
+    assert.deepEqual(rememberedFor(DEFAULT_CAPTURE_SETTINGS, false, { ...DEFAULT_CAPTURE_SETTINGS, ev: 3 }, null),
+      { parked: null, aside: null }, "parked settings that hold nothing are nothing");
+  }
 
   const { createSerialQueue } = await import("../src/serial.ts");
   const serial = createSerialQueue(), independent = createSerialQueue();

@@ -48,7 +48,7 @@ export interface RecipeManifest {
 }
 
 export interface Recipe {
-  /** Always equal to `manifest.profileId`. Starters are `rec.*`; Clean keeps `prof.neutral`. */
+  /** Always equal to `manifest.profileId`. Starters are `rec.*`; the phone's own look keeps `prof.neutral`. */
   id: string;
   name: string;
   manifest: RecipeManifest;
@@ -265,11 +265,26 @@ function neutralStage(type: StageType): RecipeStage {
   return { type: s.type, scaling: s.scaling, params };
 }
 
-/** "Clean": no stages, no LUT. The manifest is pinned byte for byte so its `capture_pipeline_id` is stable. */
+/**
+ * What the look that adds nothing is called. On a phone it is the phone's own camera, so the app
+ * names it for the phone before anything lists the looks (`src/recipes/deviceLook.ts`, imported
+ * first by index.js). Nothing else sets it, so the build gates see the shipped name.
+ */
+let neutralName = "Phone";
+export function setNeutralName(name: string | null): void {
+  if (!name) return;
+  try {
+    neutralName = normalizeRecipeName(name);
+  } catch {
+    // A model string no recipe could be called: the shipped name stays.
+  }
+}
+
+/** The phone's own picture: no stages, no LUT. The manifest is pinned byte for byte so its `capture_pipeline_id` is stable. */
 export function neutralRecipe(): Recipe {
   return {
     id: "prof.neutral",
-    name: "Clean",
+    name: neutralName,
     manifest: {
       schema: 1,
       profileId: "prof.neutral",

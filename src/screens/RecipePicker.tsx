@@ -1,5 +1,5 @@
 /**
- * The look row, in store order: Clean, the starters, one's own recipes oldest first, then `+`.
+ * The look row, in store order: the phone's own look, the starters, one's own recipes oldest first, then `+`.
  * Only one's own recipes offer a long press; starters ship with the build. It runs out to the
  * screen's edges rather than ending at a wall inside them, and it keeps the look in force in
  * view, so the chosen chip is never the one cut off. No state of its own: the recipes are
@@ -13,7 +13,7 @@ import { Chip } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
 
 interface RecipePickerProps {
-  /** Clean and the starters, then the photographer's own, in the order they are shown. */
+  /** The phone's own look and the starters, then the photographer's own, in the order they are shown. */
   choices: readonly Recipe[];
   /** The recipe in force. */
   selected: Recipe | null;

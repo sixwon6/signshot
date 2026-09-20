@@ -13,7 +13,7 @@ const LUT_SIZE = 17;
 
 /**
  * One strength law for every starter: the dial is the mix. The LUT and every stage parameter ride
- * one straight line from neutral at 0 to the look's full value at 100, so 0 is exactly Clean, the
+ * one straight line from neutral at 0 to the look's full value at 100, so 0 is exactly the phone's own picture, the
  * default is 60 % of the look, and the last forty points of travel are worth as much as the first
  * forty. Each grade below is therefore written as the look at 100.
  */
@@ -318,13 +318,13 @@ const camcorderManifest: RecipeManifest = {
 /** The empty recipe. Nothing is applied; the frame is still decoded and dithered. */
 const CLEAN_RECIPE_ID = neutralRecipe().id;
 
-/** The camera opens on Clean until the photographer has chosen otherwise. */
+/** The camera opens on the phone's own look until the photographer has chosen otherwise. */
 export const DEFAULT_RECIPE_ID = CLEAN_RECIPE_ID;
 
 /** Where the strength dial starts for a recipe that has never been used. */
 export const DEFAULT_STRENGTH = 0.6;
 
-/** In picker order: Clean, then the cameras from the newest back. */
+/** In picker order: the phone's own look, then the cameras from the newest back. */
 export const STARTERS: readonly Recipe[] = [
   neutralRecipe(),
   {

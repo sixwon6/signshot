@@ -25,11 +25,23 @@ holding. M holds the exposure: Camera2 holds ISO and shutter together, so tappin
 the camera just metered, moving either ruler in P turns the dial to M by itself, and P hands both
 back. AUTO remembers what P and M were holding and returns it with the dial, the dial shows which
 position is keeping it, and AUTO held down lets everything go. The looks are cameras you could
-have owned: Clean, Digicam, Disposable and Camcorder. Off AUTO the look in force opens its
+have owned: the phone itself (SEEKER on a Seeker, with nothing added), Digicam, Disposable and Camcorder. Off AUTO the look in force opens its
 strength, and from there its stages for editing. DISP cycles a plain picture, a grid of thirds and
 the histogram.
-Camera resolutions are selected from the device's supported 4:3 YUV sizes. See [APP_READINESS.md](APP_READINESS.md) for the current
-device-tested status and the devnet-to-mainnet work remaining.
+Camera resolutions are selected from the device's supported 4:3 YUV sizes.
+
+## Before release
+
+- **On the Seeker:** send a copy; buy a priced copy from a second wallet; cancel, time out and
+  background the wallet mid-publish and mid-upload, and recover. Judge the looks in daylight with a
+  face and something red in frame; check Camcorder's smear in both landscapes; save one photograph
+  per look and compare it with the preview.
+- **Site:** redeploy `site/`; its copy changed after the 2026-09-18 deploy.
+- **Mainnet:** `programs/editions/MAINNET.md`, then the program address and digest in
+  `publications/deployments.ts`, production RPC and storage.
+- **Final APK:** `npm run release:check`, `npm run release:apk` with the upload key, a fresh
+  install, an offline capture, one small mainnet publication.
+- **Submission:** `SUBMISSION_DRAFT.md`.
 
 ## The edition lifecycle
 
@@ -167,7 +179,9 @@ its digests), `check-prebuild.ts` (the generated Android project still matches `
 config plugins), `check-signing.ts` (the release signing configuration),
 `check-runtime-behavior.mjs` (legacy publication metadata, the devnet rent and upload budget,
 capture modes and exposure, collect-link parsing, malformed URLs, photo-editor
-debounce/cancellation, bounded library loading, serialized storage) and `check-attestation.ts`
+debounce/cancellation, bounded library loading, serialized storage), `check-capture-hook.mjs` (the
+capture controls' hook against a fake camera), `check-looks.mjs` (each look's colour targets and the
+strength dial), `check-smear.mjs` (the chroma smear kernel), `check-site.ts` and `check-attestation.ts`
 (the attestation parser, chain verifier and document reader against a synthetic certificate and
 Google's real root certificates).
 

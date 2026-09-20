@@ -45,7 +45,7 @@ const APPLY_ATTEMPTS = 8;
 const APPLY_RETRY_MS = 250;
 
 interface RecipesInForce {
-  /** Clean, the starters as the photographer has set them, then their own: the row, in order. */
+  /** The phone's own look, the starters as the photographer has set them, then their own: the row, in order. */
   choices: readonly Recipe[];
   /** The recipe on the viewfinder, moves included. Null until the store has been read. */
   recipe: Recipe | null;
@@ -57,7 +57,7 @@ interface RecipesInForce {
   applying: boolean;
   /** ...and has been long enough to say so. */
   slowApply: boolean;
-  /** Clean, untouched: the strength dial has nothing to mix. */
+  /** The phone's own look, untouched: the strength dial has nothing to mix. */
   isClean: boolean;
   /** Reset has somewhere to go. */
   canReset: boolean;
@@ -119,7 +119,7 @@ export function useRecipes({
   const persistSoon = useDeferred(() => debounce(PERSIST_DEBOUNCE_MS));
   const rememberSoon = useDeferred(() => debounce(LAST_USED_DEBOUNCE_MS));
 
-  // Restore the last-used recipe and strength; a deleted recipe falls back to Clean (`lastUsed`).
+  // Restore the last-used recipe and strength; a deleted recipe falls back to the phone's own look (`lastUsed`).
   useEffect(() => {
     let alive = true;
     Promise.all([allRecipes(), lastUsed()])

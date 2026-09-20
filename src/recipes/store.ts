@@ -351,7 +351,7 @@ export function deleteRecipe(id: string): Promise<boolean> {
 }
 
 /**
- * Where the camera was left: the recipe it was on and the strength dial. Falls back to Clean at
+ * Where the camera was left: the recipe it was on and the strength dial. Falls back to the phone's own look at
  * the default strength, and to the same when the remembered recipe has since been deleted.
  */
 export async function lastUsed(): Promise<LastUsed> {

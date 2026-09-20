@@ -8,7 +8,7 @@ import { mock } from "node:test";
 /**
  * The built-in looks, with no device.
  *
- *   1. what ships: ids, names, picker order, and Clean pinned byte for byte;
+ *   1. what ships: ids, names, picker order, and the phone's own look pinned byte for byte;
  *   2. what each look IS: reference colours pushed through the real LUT and `levels` stage at the
  *      default strength and at full, held to the numbers that define that camera, and to one
  *      strength law shared by all of them;
@@ -61,7 +61,7 @@ if (!process.argv.includes("--worker")) {
   // 1. What ships
   // =====================================================================================
   assert.deepEqual(STARTERS.map((r) => [r.id, r.name]), [
-    ["prof.neutral", "Clean"],
+    ["prof.neutral", "Phone"],
     ["rec.digicam", "Digicam"],
     ["rec.disposable", "Disposable"],
     ["rec.camcorder", "Camcorder"],
@@ -77,10 +77,10 @@ if (!process.argv.includes("--worker")) {
     assert.ok(!/\s/.test(recipe.name), `${recipe.name}: one word, so a chip never breaks it`);
     assert.equal(starterById(recipe.id), recipe);
   }
-  // Clean's capture_pipeline_id hangs on these bytes. This is the manifest as it was at HEAD 99f7d34.
+  // The phone's own look: its capture_pipeline_id hangs on these bytes. This is the manifest as it was at HEAD 99f7d34.
   assert.equal(JSON.stringify(STARTERS[0].manifest),
     '{"schema":1,"profileId":"prof.neutral","profileVersion":1,"rendererMin":"0.2.0","stages":[]}',
-    "Clean's manifest is pinned byte for byte");
+    "the neutral manifest is pinned byte for byte");
   assert.equal(STARTERS[0].lut, null);
 
   // =====================================================================================
@@ -236,7 +236,7 @@ if (!process.argv.includes("--worker")) {
       }
       if (recipe.id === "rec.disposable") {
         // A drugstore print is contrasty, warm and saturated, and its blacks are dense. Measured on
-        // the phone on 2026-09-20 the look was flatter than Clean and passed anyway, because the
+        // the phone on 2026-09-20 the look was flatter than the phone's own picture and passed anyway, because the
         // targets here asked for a lifted black, a pulled-down white and a midtone slope of 1.0.
         within(m.black, 1.5, 6, `${tag} print black: paper, not a digital zero, and not a lift`);
         within(m.white, 244, 253, `${tag} paper white is creamy, not clipped and not pulled down`);
@@ -281,7 +281,7 @@ if (!process.argv.includes("--worker")) {
     within(moved, 0.15, 1, `${recipe.name} is recognisable at the default strength`);
 
     // ---- One strength law: the dial IS the mix. Every curve is a straight line from neutral at 0
-    //      to the look's full value at 100, so 0 is exactly Clean and the dial's travel is even.
+    //      to the look's full value at 100, so 0 is exactly the phone's own picture and the dial's travel is even.
     assert.deepEqual(recipe.manifest.intensity.lutMix, [[0, 0], [100, 1]], `${recipe.name}: the shared colour ramp`);
     const NEUTRAL = { inBlack: 0, inWhite: 1, gamma: 1, outBlack: 0, outWhite: 1 };
     for (const stage of recipe.manifest.stages) {
@@ -292,9 +292,9 @@ if (!process.argv.includes("--worker")) {
         assert.notEqual(curve[1][1], neutral, `${recipe.name} ${stage.type}.${param} does nothing`);
       }
     }
-    // Strength 0 is Clean exactly, not nearly: the LUT is mixed out and every stage is neutral.
+    // Strength 0 is the phone's own picture exactly, not nearly: the LUT is mixed out and every stage is neutral.
     for (const rgb8 of [[0, 0, 0], [128, 128, 128], [255, 255, 255], ...Object.values(PATCH), ...Object.values(SCENE)])
-      assert.deepEqual(render(recipe, 0, rgb8), rgb8.map((v) => v / 255), `${recipe.name} at strength 0 is Clean`);
+      assert.deepEqual(render(recipe, 0, rgb8), rgb8.map((v) => v / 255), `${recipe.name} at strength 0 is the input, untouched`);
 
     // ---- 100 is a heavier picture, by as much again as the step into the default. The old law put
     //      85 % of the colour in by 60, so 60 and 100 were the same photograph; this is the guard.
@@ -456,7 +456,7 @@ if (!process.argv.includes("--worker")) {
   seed({ v: 1, recipes: [{ ...ownRecipe, id: "rec.warm-film", manifest: { ...ownRecipe.manifest, profileId: "rec.warm-film" } }] });
   assert.deepEqual((await store.allRecipes()).map((r) => r.id), STARTERS.map((r) => r.id));
 
-  console.log("looks ok — Clean pinned; Digicam, Disposable and Camcorder hold their numbers at 60 and 100; "
+  console.log("looks ok — Phone pinned; Digicam, Disposable and Camcorder hold their numbers at 60 and 100; "
     + "one strength law; retired starters resolve as shipped; the store carries retired data forward once");
   console.log(report.join("\n"));
 }

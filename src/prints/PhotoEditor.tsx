@@ -20,6 +20,7 @@ import {
   type Recipe,
   type StageType,
 } from "../recipes/model";
+import { retiredById } from "../recipes/retired";
 import { allRecipes, saveRecipe } from "../recipes/store";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale } from "../ui/type";
@@ -91,7 +92,8 @@ export function PhotoEditor({
           return;
         }
         const id = initial?.profileId ?? record.profileId;
-        const found = list.find((item) => item.id === id);
+        // A starter that no longer ships is off the row, but still develops its own photographs.
+        const found = list.find((item) => item.id === id) ?? retiredById(id);
         if (found) setRecipe(found);
       })
       .catch((e: unknown) => {

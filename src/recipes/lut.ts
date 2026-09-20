@@ -26,6 +26,16 @@ export function sCurve(x: number, t: number): number {
 }
 
 /**
+ * Soft exponential shoulder: identity up to `knee`, then knee + (1 - e^(-rate·(x-knee))) / rate.
+ * The 1/rate coefficient makes the slope at the knee exactly 1, so the curve only ever compresses
+ * highlights. Monotonic, asymptotic to knee + 1/rate.
+ */
+export function shoulder(x: number, knee: number, rate: number): number {
+  if (x <= knee) return x;
+  return knee + (1 - Math.exp(-(x - knee) * rate)) / rate;
+}
+
+/**
  * Builds an RGBA8 3D LUT (size^3, r fastest) and returns it base64-encoded, matching the layout
  * the native lut3d stage uploads. The transform is applied to gamma-encoded, display-referred
  * RGB — that is what the renderer feeds the LUT.

@@ -6,25 +6,64 @@ package expo.modules.seekercamera
  * stage type never changes existing shaders or pipeline ids. Mirrored by `src/recipes/model.ts`.
  */
 object ShaderGen {
-  // Bump when output for the same graph changes; it is part of every pipeline id (see ShaderPinTest).
-  const val RENDERER_VERSION = "0.2.1"
+  // Bump when output for the same graph changes; it is part of every pipeline id.
+  // 0.3.0: the YUV decode went from limited to full range. Frames from 0.2.x have crushed ends.
+  const val RENDERER_VERSION = "0.3.0"
 
-  // The one place YUV->RGB math exists. BT.601 limited range.
+  // The one place YUV->RGB math exists. BT.601 full range (JFIF): the dataspace Android gives an
+  // ImageReader YUV_420_888 stream (PublicFormat.cpp), and what the Seeker writes (black at code 0).
   private const val YUV_GLSL = """
       uniform sampler2D uTexY;
       uniform sampler2D uTexU;
       uniform sampler2D uTexV;
       vec3 sampleYuvRgb(vec2 uv) {
-        float y = (texture(uTexY, uv).r - 0.0627451) * 1.1643835;
-        float u = texture(uTexU, uv).r - 0.5;
-        float v = texture(uTexV, uv).r - 0.5;
+        float y = texture(uTexY, uv).r;
+        float u = texture(uTexU, uv).r - 0.5019608;
+        float v = texture(uTexV, uv).r - 0.5019608;
         return clamp(vec3(
-          y + 1.5960267 * v,
-          y - 0.3917623 * u - 0.8129676 * v,
-          y + 2.0172321 * u
+          y + 1.402 * v,
+          y - 0.3441363 * u - 0.7141363 * v,
+          y + 1.772 * u
         ), 0.0, 1.0);
       }
   """
+
+  /**
+   * The chroma-difference vector (R-Y, G-Y, B-Y) straight off the U and V planes: linear in Cb/Cr,
+   * so averaging taps is exact, and two fetches rather than three. These four decode constants and
+   * the 0.5019608 offset MUST match YUV_GLSL above; `scripts/check-smear.mjs` asserts they do.
+   * Emitted only when chromaSmear is present.
+   */
+  private const val SMEAR_CHROMA_YUV = """
+      vec3 sampleChroma(vec2 uv) {
+        float u = texture(uTexU, uv).r - 0.5019608;
+        float v = texture(uTexV, uv).r - 0.5019608;
+        return vec3(1.402 * v, -0.3441363 * u - 0.7141363 * v, 1.772 * u);
+      }
+  """
+
+  /** The same vector from an already-decoded RGB frame (editedFragmentSrc), in one fetch. */
+  private const val SMEAR_CHROMA_RGB = """
+      vec3 sampleChroma(vec2 uv) {
+        vec3 c = texture(uTexRgb, uv).rgb;
+        return c - dot(c, vec3(0.299, 0.587, 0.114));
+      }
+  """
+
+  /**
+   * The chroma smear kernel: the centre weight, then one per tap each side. Gaussian with
+   * sigma = width / 2.5, sampled at k * width / SMEAR_HALF_TAPS reference pixels, so the taps
+   * span +/-2.5 sigma whatever their count and the 10-90 % chroma rise stays ~1.03 * width:
+   *   w[k] = exp(-(2.5 * k / SMEAR_HALF_TAPS)^2 / 2) / (w[0] + 2 * sum(w[1..]))
+   * This list IS the tap count — trimming it to five entries is the drop to 9 taps. Literals
+   * rather than Kotlin's exp(), which is only accurate to 1 ulp: the fragment source is hashed
+   * into every capture_pipeline_id, so a weight that moved between devices would move the id.
+   * `scripts/check-smear.mjs` parses these and re-derives them.
+   */
+  private val SMEAR_WEIGHTS = listOf(
+    "0.16729192", "0.15338247", "0.11821653", "0.07659181", "0.04171460", "0.01909834", "0.00735029",
+  )
+  private val SMEAR_HALF_TAPS = SMEAR_WEIGHTS.size - 1
 
   const val VERTEX_SRC = """#version 300 es
       layout(location = 0) in vec2 aPos;
@@ -46,6 +85,7 @@ object ShaderGen {
     "vignette" to listOf("radius", "softness", "strength"),
     "grain" to listOf("size", "opacity", "shadowBias"),
     "chromaticAberration" to listOf("shift"),
+    "chromaSmear" to listOf("amount", "width", "shift"),
     "levels" to listOf("inBlack", "inWhite", "gamma", "outBlack", "outWhite"),
     "resolutionSoften" to listOf("amount"),
     "temperatureTint" to listOf("temperature", "tint"),
@@ -61,6 +101,7 @@ object ShaderGen {
     "vignette" to "frame-relative",
     "grain" to "reference-pixel",
     "chromaticAberration" to "reference-pixel",
+    "chromaSmear" to "reference-pixel",
     "levels" to "invariant",
     "resolutionSoften" to "reference-pixel",
     "temperatureTint" to "invariant",
@@ -72,7 +113,8 @@ object ShaderGen {
   )
 
   /** Stages applied at SOURCE-SAMPLE time regardless of manifest position; at most one of each. */
-  val SAMPLE_TIME_STAGES: Set<String> = setOf("chromaticAberration", "resolutionSoften", "sharpen")
+  val SAMPLE_TIME_STAGES: Set<String> =
+    setOf("chromaticAberration", "resolutionSoften", "sharpen", "chromaSmear")
 
   // Standard recursive 8x8 ordered Bayer thresholds, 0..63.
   private const val BAYER_GLSL = """
@@ -155,6 +197,38 @@ object ShaderGen {
     }
     // Styled source sampler; the clean output always uses the single un-softened tap.
     val src = if (sharpen != null) "sampleSharp" else softSrc
+    // Analog video carries chroma at a fraction of luma's bandwidth, so colour bleeds along the
+    // scan line while luma detail survives, with a slight rightward chroma delay. Luma — and
+    // everything upstream — still comes from $src; only the chroma-difference vector is re-averaged,
+    // off the U/V planes directly, which is far cheaper and well below the smear's own width.
+    // At amount 0, c + 0.0 * (s - d) is exactly c.
+    val smear = profile.stages.withIndex().firstOrNull { it.value.type == "chromaSmear" }
+    if (smear != null) {
+      val i = smear.index
+      val n = SMEAR_WEIGHTS.size
+      sb.append(SMEAR_CHROMA_YUV)
+      sb.append(
+        """
+        uniform vec2 uScanAxis;
+        const float SMEAR_W[$n] = float[$n](${SMEAR_WEIGHTS.joinToString(", ")});
+        vec3 sampleSmear(vec2 uv) {
+          vec3 c = $src(uv);
+          vec3 d = c - dot(c, vec3(0.299, 0.587, 0.114));
+          vec2 px = uScanAxis * uRefScale / uFrameSize;
+          vec2 at = uv - px * u_s${i}_shift;
+          vec2 stp = px * (u_s${i}_width / ${SMEAR_HALF_TAPS}.0);
+          vec3 s = SMEAR_W[0] * sampleChroma(at);
+          for (int k = 1; k <= $SMEAR_HALF_TAPS; k++) {
+            s += SMEAR_W[k] * (sampleChroma(at + stp * float(k)) + sampleChroma(at - stp * float(k)));
+          }
+          return c + u_s${i}_amount * (s - d);
+        }
+        """
+      )
+    }
+    // The top of the sample chain: chromaticAberration and the main sample read through the smear.
+    // Halation keeps the pre-smear source, so its eight rings do not each pay for 13 chroma taps.
+    val top = if (smear != null) "sampleSmear" else src
     sb.append("void main() {\n  vec3 rgb;\n")
 
     // chromaticAberration must resample the source, so it wraps the initial sample.
@@ -167,15 +241,15 @@ object ShaderGen {
           vec2 dir = vUv - 0.5;
           vec2 off = dir * (u_s${i}_shift * uRefScale) / uFrameSize;
           if (uStyled == 1) {
-            rgb = vec3($src(vUv + off).r, $src(vUv).g, $src(vUv - off).b);
+            rgb = vec3($top(vUv + off).r, $top(vUv).g, $top(vUv - off).b);
           } else {
             rgb = sampleYuvRgb(vUv);
           }
         }
         """
       )
-    } else if (src != "sampleYuvRgb") {
-      sb.append("  if (uStyled == 1) { rgb = $src(vUv); } else { rgb = sampleYuvRgb(vUv); }\n")
+    } else if (top != "sampleYuvRgb") {
+      sb.append("  if (uStyled == 1) { rgb = $top(vUv); } else { rgb = sampleYuvRgb(vUv); }\n")
     } else {
       sb.append("  rgb = sampleYuvRgb(vUv);\n")
     }
@@ -286,7 +360,7 @@ object ShaderGen {
           }
           """
         )
-        "chromaticAberration", "resolutionSoften", "sharpen" -> { /* handled at sample time above */ }
+        "chromaticAberration", "resolutionSoften", "sharpen", "chromaSmear" -> { /* handled at sample time above */ }
       }
     }
     sb.append("  }\n")
@@ -306,10 +380,14 @@ object ShaderGen {
 
   /** For saved JPEGs (already RGB and upright): the same look stages with an RGB sampler in place
    * of the YUV one. Capture shaders are unaffected. */
-  fun editedFragmentSrc(profile: Profile): String = fragmentSrc(profile).replace(YUV_GLSL, """
+  fun editedFragmentSrc(profile: Profile): String = fragmentSrc(profile)
+    .replace(YUV_GLSL, """
       uniform sampler2D uTexRgb;
       vec3 sampleYuvRgb(vec2 uv) { return texture(uTexRgb, uv).rgb; }
   """)
+    // A no-op unless chromaSmear is present: the YUV form reads the U and V planes, and the edit
+    // path uploads one RGB texture.
+    .replace(SMEAR_CHROMA_YUV, SMEAR_CHROMA_RGB)
 
   /**
    * The shader-dependent half of a capture_pipeline_id, split out so the renderer can reuse it

@@ -5,6 +5,7 @@ const MAIN: Record<StageType, string> = {
   resolutionSoften: "amount",
   sharpen: "amount",
   chromaticAberration: "shift",
+  chromaSmear: "amount",
   temperatureTint: "temperature",
   saturation: "amount",
   contrast: "amount",

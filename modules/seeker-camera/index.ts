@@ -116,11 +116,11 @@ export interface MeterReading {
   aeState: string;
   afState: string;
   manualExposure: boolean;
-  /** 64 bins of preview luma, 8-bit code 0..255 over limited-range BT.601. */
+  /** 64 bins of preview luma, 8-bit code 0..255 over full-range BT.601. */
   histogram: number[];
   /** Pixels the histogram counted (the preview frame is subsampled). */
   sampled: number;
-  /** Fraction of sampled pixels at or below code 16 / at or above code 235. */
+  /** Fraction of sampled pixels at code 0 / at code 255. */
   clippedBlack: number;
   clippedWhite: number;
 }

@@ -18,6 +18,7 @@ export type StageType =
   | "resolutionSoften"
   | "sharpen"
   | "chromaticAberration"
+  | "chromaSmear"
   | "temperatureTint"
   | "saturation"
   | "contrast"
@@ -133,6 +134,22 @@ export const STAGES: readonly StageSpec[] = [
     scaling: "reference-pixel",
     sampleTime: true,
     params: [spec("chromaticAberration", "shift", "Shift", "refPixels", 0, 6, 0.1, 0)],
+  },
+  {
+    type: "chromaSmear",
+    label: "Smear",
+    scaling: "reference-pixel",
+    sampleTime: true,
+    params: [
+      spec("chromaSmear", "amount", "Amount", "unit", 0, 1, 0.01, 0),
+      // The 10-90 % chroma transition. The ceiling sits just under where a 3264 px still's
+      // half-resolution chroma planes are sampled more than two texels apart (29.4 at 13 taps):
+      // past that the still shows a ribbed trail the preview does not.
+      // `scripts/check-smear.mjs` measures both and reports where the taps stop overlapping.
+      spec("chromaSmear", "width", "Width", "refPixels", 0, 28, 0.5, 24),
+      // Chroma delay: rightward in the upright picture, never leftward.
+      spec("chromaSmear", "shift", "Shift", "refPixels", 0, 12, 0.5, 0),
+    ],
   },
   {
     type: "temperatureTint",

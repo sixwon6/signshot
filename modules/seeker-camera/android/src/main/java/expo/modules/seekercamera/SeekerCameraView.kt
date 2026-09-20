@@ -30,7 +30,12 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
   private var surfaceAttached = false
   private val captureOrientation = CaptureOrientation()
   private val orientationListener = object : OrientationEventListener(context) {
-    override fun onOrientationChanged(orientation: Int) { captureOrientation.update(orientation) }
+    override fun onOrientationChanged(orientation: Int) {
+      captureOrientation.update(orientation)
+      // The still snapshots this at the shutter; the preview needs it live, because an anisotropic
+      // stage runs along the upright picture's axis and the viewfinder is drawn sensor-upright.
+      renderer.deviceDegrees = captureOrientation.rotation(0)
+    }
   }
 
   private val onSessionError by EventDispatcher()
@@ -81,6 +86,8 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
     // Camera thread → main thread. Already throttled to <=10 Hz where it is produced.
     camera.onMeter = { reading -> post { onMeter(reading) } }
     renderer.intensity = SeekerCameraModule.lastIntensity
+    // A rebuilt renderer comes up on the orientation already in force, not on portrait.
+    renderer.deviceDegrees = captureOrientation.rotation(0)
     // Queued while !glReady; start() applies it and resolves with the fresh id.
     SeekerCameraModule.lastProfile?.let { p -> renderer.applyProfile(p) { _, _ -> } }
     // The manual controls come up on the same settings the rebuilt view went down on: the first

@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * GL render pipeline: one YUV->RGB definition (ShaderGen, BT.601 limited), clean output = same shader
+ * GL render pipeline: one YUV->RGB definition (ShaderGen, BT.601 full range), clean output = same shader
  * with uStyled=0, FRAMEBUFFER_SRGB disabled (the Seeker enables it by default).
  * Texture units: 0-2 Y/U/V, 3 LUT, 5 scratch for FBO allocation.
  */
@@ -88,6 +88,13 @@ class GlRenderer {
     private set
   @Volatile var intensity: Float = 0.6f
   @Volatile var rotationDegrees: Int = 90
+  /**
+   * Physical phone orientation, from the view's orientation listener. The preview deliberately
+   * ignores it when rotating the picture (the viewfinder is sensor-upright, so the world turns on
+   * screen as the phone turns), but an anisotropic stage must run along the axis the STILL will
+   * have, so uScanAxis adds this in. The still passes its own shutter snapshot instead.
+   */
+  @Volatile var deviceDegrees: Int = 0
 
   /** GL-init / surface-attach failures, for the view's onSessionError dispatch. */
   var onGlError: ((String) -> Unit)? = null
@@ -291,7 +298,8 @@ class GlRenderer {
     GLES30.glViewport(0, 0, surfaceW, surfaceH)
     GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
     GLES30.glViewport((surfaceW - vpW) / 2, (surfaceH - vpH) / 2, vpW, vpH)
-    draw(styled = true, frameW = vpW.toFloat(), frameH = vpH.toFloat())
+    draw(styled = true, frameW = vpW.toFloat(), frameH = vpH.toFloat(),
+      scanRotation = (rotationDegrees + deviceDegrees) % 360)
     EGL14.eglSwapBuffers(eglDisplay, windowSurface)
   }
 
@@ -710,9 +718,11 @@ class GlRenderer {
   /**
    * @param intensityOverride non-null on the still path only (shutter snapshot); preview keeps
    * reading the live @Volatile so the dial stays frame-tight.
+   * @param scanRotation the rotation the OUTPUT picture will be upright at, which the preview
+   * alone differs on: it draws at the sensor rotation but must smear along the still's horizontal.
    */
   private fun draw(styled: Boolean, frameW: Float, frameH: Float, intensityOverride: Float? = null,
-    frameRotation: Int = rotationDegrees) {
+    frameRotation: Int = rotationDegrees, scanRotation: Int = frameRotation) {
     val p = profile
     GLES30.glUseProgram(program)
     GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, quadVbo)
@@ -734,6 +744,17 @@ class GlRenderer {
     GLES30.glUniform2f(uni("uFrameSize"), if (rotated) frameH else frameW, if (rotated) frameW else frameH)
     // uRefScale is rotation-invariant: the long edge is the long edge either way.
     GLES30.glUniform1f(uni("uRefScale"), maxOf(frameW, frameH) / REF_LONG_EDGE)
+    // The upright picture's rightward direction, in source uv. From VERTEX_SRC: at rotation 0 uv
+    // is (x right, y down) of the upright picture, and 90/180/270 rewrite it to (uv.y, 1-uv.x) /
+    // (1-uv.x, 1-uv.y) / (1-uv.y, uv.x), whose derivative along rightward is (0,-1) / (-1,0) /
+    // (0,1). Set for every program: a shader without an anisotropic stage has no such uniform, and
+    // glUniform on location -1 is ignored.
+    when (scanRotation) {
+      90 -> GLES30.glUniform2f(uni("uScanAxis"), 0f, -1f)
+      180 -> GLES30.glUniform2f(uni("uScanAxis"), -1f, 0f)
+      270 -> GLES30.glUniform2f(uni("uScanAxis"), 0f, 1f)
+      else -> GLES30.glUniform2f(uni("uScanAxis"), 1f, 0f)
+    }
     GLES30.glUniform1i(uni("uStyled"), if (styled) 1 else 0)
     if (p != null) {
       GLES30.glUniform1f(uni("uLutSize"), p.lutSize.toFloat())

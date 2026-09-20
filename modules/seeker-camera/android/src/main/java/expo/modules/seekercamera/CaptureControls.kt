@@ -459,8 +459,8 @@ class LumaStats {
 }
 
 /**
- * 64-bin luma histogram and clipping counts from the preview Y plane, as limited-range BT.601
- * (16 = black, 235 = white) to match the renderer. Allocation-free; absolute `get(index)` leaves the
+ * 64-bin luma histogram and clipping counts from the preview Y plane, as full-range BT.601
+ * (0 = black, 255 = white) to match the renderer. Allocation-free; absolute `get(index)` leaves the
  * buffer position untouched for the renderer's upload. Samples every `step`-th pixel.
  */
 fun lumaHistogram(
@@ -490,7 +490,7 @@ fun lumaHistogram(
       if (at >= limit) break
       val v = y.get(at).toInt() and 0xFF
       bins[v shr HISTOGRAM_SHIFT]++
-      if (v <= LIMITED_BLACK) out.clippedBlack++ else if (v >= LIMITED_WHITE) out.clippedWhite++
+      if (v <= CLIP_BLACK) out.clippedBlack++ else if (v >= CLIP_WHITE) out.clippedWhite++
       out.sampled++
       col += step
     }
@@ -500,5 +500,5 @@ fun lumaHistogram(
 
 const val HISTOGRAM_BINS = 64
 private const val HISTOGRAM_SHIFT = 2 // 256 codes / 64 bins
-private const val LIMITED_BLACK = 16
-private const val LIMITED_WHITE = 235
+private const val CLIP_BLACK = 0
+private const val CLIP_WHITE = 255

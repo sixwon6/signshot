@@ -239,11 +239,33 @@ export const LEGACY_WITHOUT_PUBLISHED_AT: readonly string[] = [
   "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
 ];
 
+/**
+ * Deployments that predate the creator's royalty and Seeker-only editions.
+ *
+ * The build after these takes two more ARGUMENTS at the end of `publish` and `publish_in_album` —
+ * `royalty_bps: u16` and `seeker_only: bool` — seals a locked `Royalties` plugin into every new
+ * collection, appends `seeker_only` to the `Edition` account (8 + 302 bytes), and gives `collect`
+ * and `buy` the two Genesis Token accounts at the END of their lists, with the claim receipt keyed
+ * on the collector's Genesis Token mint on a Seeker-only edition. Like the lists above, this names
+ * only what was deployed before.
+ */
+export const LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY: readonly string[] = [
+  "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz",
+  "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
+  "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
+];
+
 /** What a given `era_editions` deployment can do. Garbage input answers all `true`, never throws. */
-export function programFeatures(program: string): { offers: boolean; genesis: boolean; publishedAt: boolean } {
+export function programFeatures(program: string): {
+  offers: boolean;
+  genesis: boolean;
+  publishedAt: boolean;
+  royaltiesAndSeekerOnly: boolean;
+} {
   return {
     offers: !LEGACY_WITHOUT_OFFERS.includes(program),
     genesis: !LEGACY_WITHOUT_GENESIS.includes(program),
     publishedAt: !LEGACY_WITHOUT_PUBLISHED_AT.includes(program),
+    royaltiesAndSeekerOnly: !LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY.includes(program),
   };
 }

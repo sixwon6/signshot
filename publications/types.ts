@@ -11,6 +11,12 @@ export const CORE_PROTOCOL = "metaplex-core-editions-v1" as const;
 /** The clusters this app has a use for. Spelt as the RPC cluster names, not the MWA chain ids. */
 export type Cluster = "devnet" | "mainnet-beta";
 
+/** The program's ceiling on `CoreDraft.royaltyBps`: 10% (`InvalidRoyalty`, 6010, above it). */
+export const MAX_ROYALTY_BPS = 1000;
+/** A new draft's royalty, 5%, and its Seeker-only setting, on. */
+export const DEFAULT_ROYALTY_BPS = 500;
+export const DEFAULT_SEEKER_ONLY = true;
+
 /**
  * The phone's own record of one publication; never published. The public document is built by
  * `metadata()` in `core/protocol.ts`: `name`, `description` and `image`, plus `attributes` and
@@ -139,6 +145,19 @@ export interface CoreDraft {
    * is sealed, the distribution offer beside it is not.
    */
   price?: string;
+  /**
+   * The creator's royalty on resales in basis points, 0–`MAX_ROYALTY_BPS` (500 is 5%). Sealed at
+   * publish into the collection's locked `Royalties` plugin, which names the creator alone, so
+   * unlike the price it never changes afterwards. `DEFAULT_ROYALTY_BPS` unless the creator chose.
+   * Always 0 on a program without `programFeatures().royaltiesAndSeekerOnly`, which cannot hold one.
+   */
+  royaltyBps: number;
+  /**
+   * Only a wallet holding a Seeker Genesis Token can collect, one copy per token. Sealed at
+   * publish like the royalty. `DEFAULT_SEEKER_ONLY` unless the creator chose; always `false` on a
+   * program without `programFeatures().royaltiesAndSeekerOnly`.
+   */
+  seekerOnly: boolean;
   attempt?: PublicationAttempt;
   /** Last confirmation time, shown as cached when the network cannot be checked. */
   confirmedAt?: number;

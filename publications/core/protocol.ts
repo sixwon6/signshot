@@ -15,7 +15,13 @@ import {
 } from "@solana/kit";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { EDITION_ACCOUNT_BYTES, LEGACY_EDITION_ACCOUNT_BYTES, arweaveBytes, request } from "../rpc";
+import {
+  EDITION_ACCOUNT_BYTES,
+  LEGACY_EDITION_ACCOUNT_BYTES,
+  PUBLISHED_AT_EDITION_ACCOUNT_BYTES,
+  arweaveBytes,
+  request,
+} from "../rpc";
 import { isTrustedDeployment, programFeatures } from "../deployments";
 import { hasUnsafeText, readDescription } from "./details";
 import { readPhotoMetadata } from "./metadataDocument";
@@ -23,7 +29,14 @@ import { attestationAttributes, readAttestationBundle, type AttestationBundle } 
 import { genesisAttributes, genesisClaim, type GenesisClaim } from "./genesisToken";
 import { albumConformance } from "./albumRules";
 import { safeErrorText } from "../../src/ui/errorText";
-import { CORE_PROTOCOL, type Cluster, type CoreDraft, type CoreMetadata, type PublicationView } from "../types";
+import {
+  CORE_PROTOCOL,
+  MAX_ROYALTY_BPS,
+  type Cluster,
+  type CoreDraft,
+  type CoreMetadata,
+  type PublicationView,
+} from "../types";
 
 /** Metaplex Core. The same address on devnet and mainnet. */
 export const MPL_CORE = address("CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d");
@@ -124,6 +137,7 @@ const KEY_PLUGIN_REGISTRY = 4;
 const KEY_COLLECTION = 5;
 const KEY_GROUP = 6;
 /** Core `Plugin` data-enum indices → `enums.Plugin`. They equal the `PluginType` indices. */
+const PLUGIN_ROYALTIES = 0;
 const PLUGIN_ATTRIBUTES = 6;
 const PLUGIN_EDITION = 9;
 const PLUGIN_MASTER_EDITION = 10;
@@ -228,6 +242,28 @@ export async function albumAddress(program: string, creator: string, nonce: stri
     seeds: [utf8("album"), addressBytes(creator), hexToBytes(nonce)],
   });
   return pda;
+}
+
+/**
+ * The claim receipt PDA `["claim", edition, claimant]` (`receipt_bump` in `lib.rs`). The claimant
+ * is the collecting wallet — which is what `addresses().receipt` derives — except on a Seeker-only
+ * edition, where it is the collector's Seeker Genesis Token MINT, and for the publisher's copy 1
+ * the mint sealed at publish: one claim per token, whichever wallet holds it now.
+ */
+export async function claimReceiptAddress(program: string, edition: string, claimant: string) {
+  const [pda] = await getProgramDerivedAddress({
+    programAddress: address(program),
+    seeds: [utf8("claim"), addressBytes(edition), addressBytes(claimant)],
+  });
+  return pda;
+}
+
+/**
+ * Who the publisher's copy-1 receipt is counted against: the Genesis Token sealed at publish on a
+ * Seeker-only edition (`publisher_claimant` in `lib.rs`), the creator's wallet otherwise.
+ */
+export function publisherClaimant(creator: string, seekerOnly: boolean, sealedGenesis: string | null) {
+  return seekerOnly && sealedGenesis ? sealedGenesis : creator;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +376,29 @@ export interface GenesisAccounts {
 export const GENESIS_ATTRIBUTE = "seeker_genesis_token";
 
 /**
+ * What `publish` seals beside the edition on a program with `royaltiesAndSeekerOnly`, from
+ * `CoreDraft.royaltyBps` and `CoreDraft.seekerOnly`.
+ */
+export interface SealedTerms {
+  royaltyBps: number;
+  seekerOnly: boolean;
+}
+
+export const ROYALTY_RANGE = "Use a royalty from 0% to 10%.";
+/** Said wherever a royalty or a Seeker-only edition is asked of a program that predates both. */
+export const NO_ROYALTIES = "Royalties and Seeker-only editions are not available on this network's program yet.";
+
+/** The program's own `validate_royalty` (`InvalidRoyalty`, 6010), restated before any upload. */
+export function checkSealedTerms(sealed: SealedTerms): void {
+  if (
+    !sealed || !Number.isInteger(sealed.royaltyBps) || sealed.royaltyBps < 0 ||
+    sealed.royaltyBps > MAX_ROYALTY_BPS
+  )
+    throw new Error(ROYALTY_RANGE);
+  if (typeof sealed.seekerOnly !== "boolean") throw new Error("Invalid edition creation");
+}
+
+/**
  * `publish`: creates the edition and print #1. With `album` it becomes `publish_in_album`: same
  * arguments, different discriminator, plus the group as a writable account. Every created account
  * is a PDA, so the wallet is the only signer.
@@ -347,6 +406,12 @@ export const GENESIS_ATTRIBUTE = "seeker_genesis_token";
  * A deployment with `programFeatures().genesis` takes two more accounts at the end, both read
  * only: the Genesis Token accounts, or — Anchor's convention for an absent optional account — the
  * program's own id in each place. The instruction data is the same either way.
+ *
+ * A deployment with `programFeatures().royaltiesAndSeekerOnly` takes two more ARGUMENTS after
+ * `supply`, `royalty_bps` (u16) and `seeker_only` (bool), which `sealed` must carry: the data grows
+ * from 185 to 188 bytes and nothing before them moves. On a Seeker-only edition published with the
+ * creator's Genesis Token, the creator's receipt is keyed on that mint (`publisherClaimant`). An
+ * older deployment is sent neither, and refuses anything but `{ royaltyBps: 0, seekerOnly: false }`.
  */
 export async function instruction(
   e: CoreMetadata,
@@ -358,6 +423,8 @@ export async function instruction(
   album?: string,
   /** The creator's Genesis Token, for the program to verify and seal. */
   genesis?: GenesisAccounts,
+  /** The royalty and the Seeker-only setting; required by a program that takes them. */
+  sealed?: SealedTerms,
 ): Promise<Instruction> {
   const k = await addresses(e.program, e.creator, e.nonce, number, payer);
   terms(e.title, e.supply);
@@ -367,12 +434,20 @@ export async function instruction(
     !HEX32.test(metadataHash) || !HEX32.test(e.imageHash))
     throw new Error("Invalid edition creation");
   const program = address(e.program);
-  const takesGenesis = programFeatures(e.program).genesis;
+  const features = programFeatures(e.program);
+  const takesGenesis = features.genesis;
   // Refused rather than dropped: the accounts would land in `remaining_accounts` and the
   // publication would go out unsealed while the caller believed otherwise.
   if (genesis && !takesGenesis) throw new Error("This network's program cannot seal a Genesis Token.");
   if (genesis && genesis.mint !== e.genesisMint)
     throw new Error("The Genesis Token to seal is not the one this edition names.");
+  // Required, never defaulted: a missing choice must not publish as somebody else's.
+  if (features.royaltiesAndSeekerOnly) {
+    if (!sealed) throw new Error("Invalid edition creation");
+    checkSealedTerms(sealed);
+  } else if (sealed && (sealed.royaltyBps !== 0 || sealed.seekerOnly !== false))
+    throw new Error(NO_ROYALTIES);
+  const extended = features.royaltiesAndSeekerOnly && sealed ? sealed : null;
   const data = concat(
     disc(album ? "global:publish_in_album" : "global:publish"),
     hexToBytes(e.nonce),
@@ -381,12 +456,16 @@ export async function instruction(
     hexToBytes(metadataHash),
     hexToBytes(e.imageHash),
     u16(e.supply),
+    ...(extended ? [u16(extended.royaltyBps), new Uint8Array([extended.seekerOnly ? 1 : 0])] : []),
   );
+  const receipt = extended
+    ? await claimReceiptAddress(program, k.edition, publisherClaimant(e.creator, extended.seekerOnly, genesis?.mint ?? null))
+    : k.receipt;
   return {
     programAddress: program,
     accounts: [
       { address: address(payer), role: AccountRole.WRITABLE_SIGNER },
-      ...[k.edition, k.collection, k.print, k.receipt, ...(album ? [address(album)] : [])].map(
+      ...[k.edition, k.collection, k.print, receipt, ...(album ? [address(album)] : [])].map(
         (a) => ({ address: a, role: AccountRole.WRITABLE }),
       ),
       ...[MPL_CORE, SYSTEM].map((a) => ({ address: a, role: AccountRole.READONLY })),
@@ -432,18 +511,31 @@ export async function instruction(
  * a bypass. The instruction data is identical either way — only the account
  * list grew — so which list to send is decided by `programFeatures(e.program).offers`, and the
  * deployment that predates offers keeps its seven accounts exactly.
+ *
+ * SEEKER-ONLY EDITIONS. A deployment with `programFeatures().royaltiesAndSeekerOnly` takes the
+ * collector's Genesis Token accounts last, as `publish` takes the creator's, or the program's id in
+ * both places. `genesis` is exactly what a Seeker-only edition needs (`seekerOnly` on the read
+ * publication) and what any other edition refuses: with it the receipt is
+ * `claimReceiptAddress(program, edition, genesis.mint)`, one claim per token; without it
+ * `["claim", edition, collector]` as before. The program answers `GenesisTokenRequired` (6011) or
+ * `InvalidGenesisToken` (6008) for the wrong choice; nothing here guesses which one it is.
  */
 export async function collectInstruction(
   e: CoreMetadata,
   collector: string,
   number: number,
+  /** The collector's Seeker Genesis Token, on a Seeker-only edition only. */
+  genesis?: GenesisAccounts,
 ): Promise<Instruction> {
   const k = await addresses(e.program, e.creator, e.nonce, number, collector);
   terms(e.title, e.supply);
-  // The publisher can never collect: `publish` already initialised their receipt at
-  // ["claim", edition, creator], and that same account is `init` in `struct Collect`, so the
-  // program would reject a second claim by the same wallet. Refused before any wallet opens.
-  if (collector === e.creator)
+  const features = programFeatures(e.program);
+  if (genesis && !features.royaltiesAndSeekerOnly) throw new Error(NO_ROYALTIES);
+  // The publisher can never collect with their wallet: `publish` already opened their receipt at
+  // ["claim", edition, creator], so the program would reject a second claim by the same wallet.
+  // Refused before any wallet opens. With a Genesis Token the claim is the token's, and whether
+  // that token already claimed is the program's answer (`AlreadyCollected`).
+  if (collector === e.creator && !genesis)
     throw new Error("The publisher already holds copy 1 and cannot collect from this edition.");
   // `collect` requires `number == minted + 1` and `publish` leaves `minted = 1`, so a claim is
   // never copy 1; `minted < supply` bounds it above. Both are program rules, restated here so a
@@ -454,12 +546,12 @@ export async function collectInstruction(
   // name accounts belonging to a different publication.
   if (k.edition !== e.edition || k.collection !== e.collection)
     throw new Error("Invalid edition addresses");
-  const offers = programFeatures(e.program).offers;
+  const offers = features.offers;
   return {
     programAddress: address(e.program),
     accounts: [
       { address: address(collector), role: AccountRole.WRITABLE_SIGNER },
-      ...[k.edition, k.collection, k.print, k.receipt].map((a) => ({
+      ...[k.edition, k.collection, k.print, await claimReceipt(e, k.receipt, genesis)].map((a) => ({
         address: a,
         role: AccountRole.WRITABLE,
       })),
@@ -474,9 +566,28 @@ export async function collectInstruction(
           ]
         : []),
       ...[MPL_CORE, SYSTEM].map((a) => ({ address: a, role: AccountRole.READONLY })),
+      ...claimGenesisAccounts(e.program, genesis),
     ],
     data: concat(disc("global:collect"), u16(number)),
   };
+}
+
+/** The receipt a claim opens: the wallet's (`walletReceipt`), or on a Seeker-only claim the token's. */
+async function claimReceipt(e: CoreMetadata, walletReceipt: Address, genesis?: GenesisAccounts) {
+  return genesis ? claimReceiptAddress(e.program, e.edition, genesis.mint) : walletReceipt;
+}
+
+/**
+ * The two trailing Genesis Token accounts of `collect` and `buy`, read only: the collector's, or the
+ * program's id in both places. None at all on a deployment that predates them.
+ */
+function claimGenesisAccounts(program: string, genesis?: GenesisAccounts) {
+  if (!programFeatures(program).royaltiesAndSeekerOnly) return [];
+  const own = address(program);
+  return (genesis ? [address(genesis.mint), address(genesis.token)] : [own, own]).map((a) => ({
+    address: a,
+    role: AccountRole.READONLY,
+  }));
 }
 
 /** Said wherever a price is asked of a deployment that has no `Offer` account. */
@@ -540,7 +651,9 @@ export async function setOfferInstruction(
  *
  * ACCOUNTS, in `struct Buy`'s order: collector (writable signer), edition, collection, print and
  * receipt (writable), the offer read-only, the creator writable — pinned by
- * `address = edition.creator`, so no caller can redirect the money — then Core and System.
+ * `address = edition.creator`, so no caller can redirect the money — then Core and System, then on
+ * a deployment with `royaltiesAndSeekerOnly` the collector's Genesis Token accounts exactly as
+ * `collectInstruction` sends them, with the same receipt rule.
  */
 export async function buyInstruction(
   e: CoreMetadata,
@@ -548,13 +661,16 @@ export async function buyInstruction(
   number: number,
   expectedPriceLamports: bigint,
   expectedRevision: number,
+  /** The collector's Seeker Genesis Token, on a Seeker-only edition only. */
+  genesis?: GenesisAccounts,
 ): Promise<Instruction> {
   const k = await addresses(e.program, e.creator, e.nonce, number, collector);
   terms(e.title, e.supply);
   if (!programFeatures(e.program).offers) throw new Error(NO_OFFERS);
+  if (genesis && !programFeatures(e.program).royaltiesAndSeekerOnly) throw new Error(NO_ROYALTIES);
   // The same three rules `collect` restates, for the same reason: they are program rules, and
   // failing them locally costs no simulation and opens no wallet.
-  if (collector === e.creator)
+  if (collector === e.creator && !genesis)
     throw new Error("The publisher already holds copy 1 and cannot collect from this edition.");
   if (!Number.isInteger(number) || number < 2 || number > e.supply)
     throw new Error("Invalid print number");
@@ -570,7 +686,7 @@ export async function buyInstruction(
     programAddress: address(e.program),
     accounts: [
       { address: address(collector), role: AccountRole.WRITABLE_SIGNER },
-      ...[k.edition, k.collection, k.print, k.receipt].map((a) => ({
+      ...[k.edition, k.collection, k.print, await claimReceipt(e, k.receipt, genesis)].map((a) => ({
         address: a,
         role: AccountRole.WRITABLE,
       })),
@@ -578,6 +694,7 @@ export async function buyInstruction(
       // Writable because it receives the price. The program pins it to `edition.creator`.
       { address: address(e.creator), role: AccountRole.WRITABLE },
       ...[MPL_CORE, SYSTEM].map((a) => ({ address: a, role: AccountRole.READONLY })),
+      ...claimGenesisAccounts(e.program, genesis),
     ],
     data: concat(disc("global:buy"), u16(number), price, u32(expectedRevision)),
   };
@@ -623,17 +740,22 @@ function reader(bytes: Uint8Array, start = 0) {
 }
 
 /**
- * The pinned lengths are the only layout version: `Edition` is 8 + 301 bytes (8 + 293 on the
- * deployments without `published_at`, chosen by program in `editionAccountBytes`) and `Receipt`
- * 8 + 98, with no version byte. A layout change must ship as a new program address, never an
- * in-place upgrade. The discriminator alone does not identify the program; length and owner
- * checks do.
+ * The pinned lengths are the only layout version: `Edition` is 8 + 302 bytes (8 + 301 on the
+ * deployments without `seeker_only` and 8 + 293 on those without `published_at` either, chosen by
+ * program in `editionAccountBytes`) and `Receipt` 8 + 98, with no version byte. A layout change
+ * must ship as a new program address, never an in-place upgrade. The discriminator alone does not
+ * identify the program; length and owner checks do.
  */
 const RECEIPT_BYTES = 106;
 
-/** The `Edition` length `program` writes: the only thing that tells its two layouts apart. */
+/** The `Edition` length `program` writes: the only thing that tells its three layouts apart. */
 export function editionAccountBytes(program: string): number {
-  return programFeatures(program).publishedAt ? EDITION_ACCOUNT_BYTES : LEGACY_EDITION_ACCOUNT_BYTES;
+  const features = programFeatures(program);
+  return features.royaltiesAndSeekerOnly
+    ? EDITION_ACCOUNT_BYTES
+    : features.publishedAt
+      ? PUBLISHED_AT_EDITION_ACCOUNT_BYTES
+      : LEGACY_EDITION_ACCOUNT_BYTES;
 }
 
 /**
@@ -650,10 +772,13 @@ const MAX_UNIX_SECONDS = 8_640_000_000_000n;
 /**
  * The `Edition` account: publication terms and issuance state. Anchor `account:Edition`, in the
  * layout of `program`, which owns it: `publishedAt` is the `published_at` it recorded at publish
- * (Unix seconds), or `null` on a deployment that predates the field. Any other length is refused.
+ * (Unix seconds), or `null` on a deployment that predates the field, and `seekerOnly` its
+ * `seeker_only`, `false` on a deployment that predates that one (every edition there is open to
+ * any wallet). Any other length is refused.
  */
 export function readEdition(bytes: Uint8Array, program: string) {
-  const recorded = programFeatures(program).publishedAt;
+  const features = programFeatures(program);
+  const recorded = features.publishedAt || features.royaltiesAndSeekerOnly;
   if (bytes.length !== editionAccountBytes(program) || hash(bytes.slice(0, 8)) !== hash(disc("account:Edition")))
     throw new Error("Unsupported edition account");
   const r = reader(bytes, 8);
@@ -670,12 +795,16 @@ export function readEdition(bytes: Uint8Array, program: string) {
   const time = recorded ? r.i64() : null;
   if (time !== null && (time <= 0n || time > MAX_UNIX_SECONDS)) throw new Error("Invalid edition state");
   const publishedAt = time === null ? null : Number(time);
+  // A Borsh `bool` is exactly 0 or 1.
+  const flag = features.royaltiesAndSeekerOnly ? r.u8() : 0;
+  if (flag > 1) throw new Error("Invalid edition state");
+  const seekerOnly = flag === 1;
   const title = r.text(24);
   const uri = r.text(96);
   terms(title, supply);
   if (minted < 1 || minted > supply || !ARWEAVE_URI.test(uri))
     throw new Error("Invalid edition state");
-  return { creator, nonce, collection, metadataHash, imageHash, supply, minted, title, uri, publishedAt };
+  return { creator, nonce, collection, metadataHash, imageHash, supply, minted, title, uri, publishedAt, seekerOnly };
 }
 
 /** The permanent one-claim record. Anchor `account:Receipt`. */
@@ -769,27 +898,31 @@ export function pricedOffer(offer: EditionOffer | null): EditionOffer | null {
  * collector, or an asset that is not the canonical print for its own number, is an error rather
  * than a quiet `false` — the alternative is offering a second claim the program would refuse
  * after the wallet has already been opened.
+ *
+ * On a Seeker-only edition the claim is the token's, so pass the collector's Genesis Token mint as
+ * `claimant`: the answer is then that token's receipt, whichever wallet collected with it — the
+ * token may have moved since, so its `collector` is not required to be `wallet`.
  */
-export async function collectedCopy(endpoint: string, e: CoreMetadata, wallet: string) {
-  // The number only chooses the print PDA, which this does not read; the receipt seed has none.
-  const key = (await addresses(e.program, e.creator, e.nonce, 1, wallet)).receipt;
+export async function collectedCopy(endpoint: string, e: CoreMetadata, wallet: string, claimant = wallet) {
+  const key = await claimReceiptAddress(e.program, e.edition, claimant);
   const raw = await account(endpoint, key);
   if (!raw) return null;
   if (raw.owner !== e.program || raw.executable) throw new Error("Invalid collection receipt");
   const receipt = readReceipt(raw.bytes);
   if (
     receipt.edition !== e.edition ||
-    receipt.collector !== wallet ||
+    (claimant === wallet && receipt.collector !== wallet) ||
     receipt.number > e.supply ||
-    receipt.asset !== (await addresses(e.program, e.creator, e.nonce, receipt.number, wallet)).print
+    // The print PDA carries no collector, so the number alone decides it.
+    receipt.asset !== (await addresses(e.program, e.creator, e.nonce, receipt.number)).print
   )
     throw new Error("The collection receipt names an unexpected NFT.");
   return receipt;
 }
 
-/** Has this wallet already claimed a copy? The boolean form of `collectedCopy`. */
-export async function hasCollected(endpoint: string, e: CoreMetadata, wallet: string) {
-  return (await collectedCopy(endpoint, e, wallet)) !== null;
+/** Has this wallet (or on a Seeker-only edition, this `claimant` token) already claimed a copy? */
+export async function hasCollected(endpoint: string, e: CoreMetadata, wallet: string, claimant = wallet) {
+  return (await collectedCopy(endpoint, e, wallet, claimant)) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -822,6 +955,18 @@ type CorePlugin =
       uri: string | null;
     }
   | { type: "ImmutableMetadata"; authority: CorePluginAuthority }
+  /**
+   * The creator's royalty on a collection (`Royalties`: basis points, creators with their shares,
+   * and the rule set naming which programs may transfer). Read by `collectionRoyalty`.
+   */
+  | {
+      type: "Royalties";
+      authority: CorePluginAuthority;
+      basisPoints: number;
+      creators: readonly { address: Address; percentage: number }[];
+      ruleSet: "None" | "ProgramAllowList" | "ProgramDenyList";
+      programs: readonly Address[];
+    }
   /**
    * The groups a collection claims to belong to. A claim, not evidence: `verifyEditionCollection`
    * requires the group's own list to include it. The authority is recorded, never acted on.
@@ -951,6 +1096,25 @@ function readPlugin(
       };
     case PLUGIN_IMMUTABLE_METADATA:
       return { type: "ImmutableMetadata", authority };
+    case PLUGIN_ROYALTIES: {
+      // `Royalties { basis_points: u16, creators: Vec<Creator { address, percentage: u8 }>,
+      // rule_set: RuleSet }`, `RuleSet` being `None`, or a `Vec<Pubkey>` allow or deny list.
+      const basisPoints = r.u16();
+      const count = r.u32();
+      if (count > 16) throw new Error(NOT_CORE);
+      const creators: { address: Address; percentage: number }[] = [];
+      for (let i = 0; i < count; i += 1) creators.push({ address: r.key(), percentage: r.u8() });
+      const tag = r.u8();
+      if (tag > 2) throw new Error(NOT_CORE);
+      const programs: Address[] = [];
+      if (tag !== 0) {
+        const listed = r.u32();
+        if (listed > 64) throw new Error(NOT_CORE);
+        for (let i = 0; i < listed; i += 1) programs.push(r.key());
+      }
+      const ruleSet = (["None", "ProgramAllowList", "ProgramDenyList"] as const)[tag];
+      return { type: "Royalties", authority, basisPoints, creators, ruleSet, programs };
+    }
     case PLUGIN_GROUPS: {
       const count = r.u32();
       if (count > GROUP_MAX_COLLECTIONS) throw new Error(NOT_CORE);
@@ -1202,14 +1366,48 @@ function collectionAlbum(
   return { group: named[0].groups[0], pluginAuthority: named[0].authority };
 }
 
+/** The creator's royalty as a published edition's collection seals it. */
+export interface EditionRoyalty {
+  /** 0–`MAX_ROYALTY_BPS`; 500 is 5%. */
+  basisPoints: number;
+  /** The one creator the plugin names, at 100%: the publisher. */
+  creator: Address;
+}
+
 /**
- * Accept only the collection `era_editions` creates. The one tolerated extra is a `Groups` plugin
- * naming one album whose group account (`membership`) lists this collection.
+ * The collection's `Royalties` plugin as `era_editions` writes it (`royalties` in `lib.rs`), or
+ * `null` when it carries none — every collection of a deployment that predates it. Throws for any
+ * other shape: a second one, a plugin authority other than `None`, a rule set, anything but one
+ * creator at 100%, or more than the program allows.
+ */
+export function collectionRoyalty(collection: CoreCollection): EditionRoyalty | null {
+  const found = collection.plugins.filter(
+    (p): p is Extract<CorePlugin, { type: "Royalties" }> => p.type === "Royalties",
+  );
+  if (found.length === 0) return null;
+  const [royalty] = found;
+  if (
+    found.length !== 1 ||
+    royalty.authority.kind !== "None" ||
+    royalty.ruleSet !== "None" ||
+    royalty.creators.length !== 1 ||
+    royalty.creators[0].percentage !== 100 ||
+    royalty.basisPoints > MAX_ROYALTY_BPS
+  )
+    throw new Error(COLLECTION_MESSAGE);
+  return { basisPoints: royalty.basisPoints, creator: royalty.creators[0].address };
+}
+
+/**
+ * Accept only the collection `era_editions` creates. The tolerated extras are a `Groups` plugin
+ * naming one album whose group account (`membership`) lists this collection, and the `Royalties`
+ * plugin naming the publisher (`collectionRoyalty`); whether the edition's program writes one is
+ * `verifyPublication`'s check, which knows the program.
  */
 export function verifyEditionCollection(
   bytes: Uint8Array,
-  // The terms the collection seals; the publication time is not one of them.
-  state: Omit<ReturnType<typeof readEdition>, "publishedAt">,
+  // The terms the collection seals; the publication time and the Seeker-only setting are not.
+  state: Omit<ReturnType<typeof readEdition>, "publishedAt" | "seekerOnly">,
   edition: string,
   membership?: AlbumMembership,
 ): CoreCollection {
@@ -1224,10 +1422,12 @@ export function verifyEditionCollection(
       throw new Error(ALBUM_MESSAGE);
   }
   requirePlugins(
-    collection.plugins.filter((p) => p.type !== "Groups"),
+    collection.plugins.filter((p) => p.type !== "Groups" && p.type !== "Royalties"),
     ["MasterEdition", "ImmutableMetadata", "Attributes"],
     COLLECTION_MESSAGE,
   );
+  const royalty = collectionRoyalty(collection);
+  if (royalty && royalty.creator !== state.creator) throw new Error(COLLECTION_MESSAGE);
   const master = pluginOfType(collection.plugins, "MasterEdition", COLLECTION_MESSAGE);
   const attributes = pluginOfType(collection.plugins, "Attributes", COLLECTION_MESSAGE);
   const expected: readonly { key: string; value: string }[] = [
@@ -1308,10 +1508,22 @@ type VerifiedPublication = {
   keys: Awaited<ReturnType<typeof addresses>>;
   collection: CoreCollection;
   creatorReceipt: ReturnType<typeof readReceipt>;
+  /**
+   * Where `creatorReceipt` lives: `keys.receipt`, except on a Seeker-only edition sealed with the
+   * creator's Genesis Token, where copy 1 is that token's claim (`publisherClaimant`).
+   */
+  creatorReceiptAddress: Address;
   /** `null` when the collection carries no `Groups` plugin. */
   album: EditionAlbum | null;
   /** The Genesis Token mint the program sealed at publish; `null` when it sealed none. */
   sealedGenesis: string | null;
+  /**
+   * Only a wallet holding a Seeker Genesis Token can collect, one copy per token: pass the
+   * collector's to `collectInstruction` / `buyInstruction`. `false` on every older deployment.
+   */
+  seekerOnly: boolean;
+  /** The creator's sealed royalty; `null` on a deployment that predates it. */
+  royalty: EditionRoyalty | null;
 };
 
 async function verifyPublication(
@@ -1348,10 +1560,17 @@ async function verifyPublication(
     edition,
     album ? { group: album.group, collections: album.collections } : undefined,
   );
+  // The program that seals a royalty seals one into every collection, at 0 too, and no other does.
+  const royalty = collectionRoyalty(collection);
+  if ((royalty !== null) !== programFeatures(program).royaltiesAndSeekerOnly)
+    throw new Error(COLLECTION_MESSAGE);
+  const sealedGenesis = sealedGenesisMint(collection);
 
   // Publish creates this receipt atomically with print #1; transferring or burning the print
   // does not change it.
-  const receiptRaw = await account(endpoint, keys.receipt);
+  const creatorReceiptAddress = await claimReceiptAddress(
+    program, edition, publisherClaimant(state.creator, state.seekerOnly, sealedGenesis));
+  const receiptRaw = await account(endpoint, creatorReceiptAddress);
   if (!receiptRaw || receiptRaw.owner !== program || receiptRaw.executable !== false)
     throw new Error("Missing or invalid creator publication receipt");
   const creatorReceipt = readReceipt(receiptRaw.bytes);
@@ -1363,8 +1582,8 @@ async function verifyPublication(
   )
     throw new Error("The creator publication receipt does not match this edition.");
   return {
-    program, edition, state, keys, collection, creatorReceipt, album,
-    sealedGenesis: sealedGenesisMint(collection),
+    program, edition, state, keys, collection, creatorReceipt, creatorReceiptAddress, album,
+    sealedGenesis, seekerOnly: state.seekerOnly, royalty,
   };
 }
 
@@ -1494,6 +1713,10 @@ async function loadPublication(
      * quoting. This is what a screen renders, not what a wallet approves.
      */
     offer: pricedOffer(await readOfferAccount(endpoint, program, edition)),
+    /** `publication.seekerOnly`: a claim needs the collector's Seeker Genesis Token. */
+    seekerOnly: publication.seekerOnly,
+    /** `publication.royalty`: the creator's sealed royalty, or `null` on an older deployment. */
+    royalty: publication.royalty,
   };
 }
 

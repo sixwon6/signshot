@@ -367,6 +367,13 @@ const EDITION_ERROR = {
   // `set_offer` refuses a non-zero price below the rent-exempt minimum of an empty account
   // (`minimumPriceLamports` in `src/prints/price.ts`).
   PRICE_TOO_LOW: 6009n,
+  // `publish` refuses a royalty above 1000 basis points.
+  INVALID_ROYALTY: 6010n,
+  // A Seeker-only edition's claim came without the collector's Genesis Token accounts.
+  GENESIS_TOKEN_REQUIRED: 6011n,
+  // The claim receipt for this wallet, or on a Seeker-only edition this Genesis Token, exists.
+  // Permanent: no refreshed number can pass it, so it is never read as a competing collector.
+  ALREADY_COLLECTED: 6012n,
 } as const;
 /** `MplCoreError::GroupVectorFull`, 0x36. Raised by `AddCollectionsToGroupV1` at 256 members. */
 const CORE_GROUP_VECTOR_FULL = 54n;
@@ -393,6 +400,11 @@ const EDITION_MESSAGES: Readonly<Record<string, string>> = {
     "This wallet no longer holds the Genesis Token this edition names. Discard the draft and publish again.",
   [String(EDITION_ERROR.PRICE_TOO_LOW)]:
     "This price is below the network minimum. Raise it or make the edition free.",
+  [String(EDITION_ERROR.INVALID_ROYALTY)]: "Use a royalty from 0% to 10%.",
+  [String(EDITION_ERROR.GENESIS_TOKEN_REQUIRED)]:
+    "This edition is for Seeker holders. Collect with the wallet that holds a Seeker Genesis Token.",
+  [String(EDITION_ERROR.ALREADY_COLLECTED)]:
+    "This wallet or Seeker Genesis Token has already collected this edition.",
 };
 
 /** The program named by the LAST `Program <id> failed` line, which is the one that failed. */
@@ -553,12 +565,15 @@ const rentExemption = (dataBytes: number | bigint): bigint =>
 
 /**
  * Anchor's fixed account sizes. Neither account has a version byte, so these lengths are the
- * layout version (see the decoders in `core/protocol.ts`). `Edition` is 8 + 301 bytes with
- * `published_at`, and 8 + 293 on the deployments that predate it (`LEGACY_WITHOUT_PUBLISHED_AT`);
- * `editionAccountBytes` in `core/protocol.ts` picks one by program. The floors below price the
- * current layout, which is what a new publication creates.
+ * layout version (see the decoders in `core/protocol.ts`). `Edition` is 8 + 302 bytes with
+ * `published_at` and `seeker_only`, 8 + 301 with `published_at` alone on the deployments that
+ * predate `seeker_only` (`LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY`), and 8 + 293 on those that
+ * predate both (`LEGACY_WITHOUT_PUBLISHED_AT`); `editionAccountBytes` in `core/protocol.ts` picks
+ * one by program. The floors below price the current layout, which is what a new publication
+ * creates.
  */
-export const EDITION_ACCOUNT_BYTES = 309;
+export const EDITION_ACCOUNT_BYTES = 310;
+export const PUBLISHED_AT_EDITION_ACCOUNT_BYTES = 309;
 export const LEGACY_EDITION_ACCOUNT_BYTES = 301;
 const RECEIPT_ACCOUNT_BYTES = 106;
 /** 8 + `Offer::INIT_SPACE` (32 + 32 + 8 + 4 + 1). `core/protocol.ts` pins the same number. */

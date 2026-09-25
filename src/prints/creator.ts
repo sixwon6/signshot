@@ -45,17 +45,22 @@ import {
 } from "../../publications/storage";
 import {
   MAX_PRINT_EDGE,
+  NO_ROYALTIES,
   account,
   addresses,
+  checkSealedTerms,
+  claimReceiptAddress,
   coreView,
   hash,
   instruction,
   metadata,
+  publisherClaimant,
   readPublication,
   setOfferInstruction,
   terms,
   utf8,
   type GenesisAccounts,
+  type SealedTerms,
 } from "../../publications/core/protocol";
 import { findGenesisTokenAccount } from "../../publications/core/genesisToken";
 import { normalizeDescription, readDescription } from "../../publications/core/details";
@@ -67,7 +72,14 @@ import {
   publishingAvailability,
 } from "../../publications/deployments";
 import { checkPriceMinimum, MAX_PRICE_LAMPORTS, minimumPriceLamports } from "./price";
-import { CORE_PROTOCOL, type CoreDraft, type CoreMetadata, type PublicationView } from "../../publications/types";
+import {
+  CORE_PROTOCOL,
+  DEFAULT_ROYALTY_BPS,
+  DEFAULT_SEEKER_ONLY,
+  type CoreDraft,
+  type CoreMetadata,
+  type PublicationView,
+} from "../../publications/types";
 // `coordinator.ts` imports `readDraft` from here in return. Only function references cross the
 // cycle and none runs at module scope.
 import {
@@ -157,6 +169,18 @@ function priceText(program: string, priceLamports?: bigint): string | undefined 
   return priceLamports.toString();
 }
 
+/**
+ * The royalty and Seeker-only setting a draft records for `program`: the creator's choice, checked
+ * as the program checks it, on a program that seals them; `{ 0, false }` on one that cannot, which
+ * refuses anything else rather than drop a choice the creator made.
+ */
+function sealedFor(program: string, requested: SealedTerms): SealedTerms {
+  checkSealedTerms(requested);
+  if (programFeatures(program).royaltiesAndSeekerOnly) return requested;
+  if (requested.royaltyBps !== 0 || requested.seekerOnly) throw new Error(NO_ROYALTIES);
+  return { royaltyBps: 0, seekerOnly: false };
+}
+
 /** A pending attempt means wait; a terminal one means discard. Only discarding may pass a terminal attempt. */
 const ATTEMPT_PENDING =
   "The previous publishing attempt may still land. Wait a moment, then check again.";
@@ -201,6 +225,21 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
   if (d.price !== undefined) {
     const lamports = readPrice(d.price);
     if (lamports > 0n && !programFeatures(d.edition.program).offers) throw new Error(NO_PRICES);
+  }
+  // The royalty and the Seeker-only setting decide the instruction data, so a program that seals
+  // them needs both exactly as `createDraft` recorded them. A draft for an older program records
+  // none (every draft written before they existed), which is `{ 0, false }` there.
+  if (programFeatures(d.edition.program).royaltiesAndSeekerOnly) {
+    try {
+      checkSealedTerms({ royaltyBps: d.royaltyBps, seekerOnly: d.seekerOnly });
+    } catch {
+      throw new Error("Saved edition draft does not match this photo.");
+    }
+  } else {
+    if ((d.royaltyBps ?? 0) !== 0 || (d.seekerOnly ?? false) !== false)
+      throw new Error("Saved edition draft does not match this photo.");
+    d.royaltyBps = 0;
+    d.seekerOnly = false;
   }
   return d;
 }
@@ -321,6 +360,12 @@ export async function createDraft(
    * `src/prints/offer.ts`, which is the only way to re-price a live edition.
    */
   priceLamports?: bigint,
+  /**
+   * The creator's royalty (basis points) and whether only Seeker Genesis Token holders may collect.
+   * Frozen here with the price, and sealed on chain at publish. Absent: `DEFAULT_ROYALTY_BPS` and
+   * `DEFAULT_SEEKER_ONLY` on a program that seals them, `{ 0, false }` on one that cannot.
+   */
+  sealed?: SealedTerms,
 ): Promise<CoreDraft> {
   const reusable = await assertFreshIntentAllowed(r);
   if (reusable) return reusable;
@@ -331,6 +376,9 @@ export async function createDraft(
     terms(title, count);
     // Validated with the terms, before the wallet, the camera or the network is touched.
     const moment = normalizeDescription(description);
+    const chosenTerms = sealedFor(program, sealed ?? (programFeatures(program).royaltiesAndSeekerOnly
+      ? { royaltyBps: DEFAULT_ROYALTY_BPS, seekerOnly: DEFAULT_SEEKER_ONLY }
+      : { royaltyBps: 0, seekerOnly: false }));
     // The same gate `readDraft` applies on the way back in, so a price this deployment cannot hold
     // is refused before a photograph is measured rather than at the estimate.
     const price = priceText(program, priceLamports);
@@ -410,6 +458,8 @@ export async function createDraft(
       // Absent for a free edition, so a draft written before prices existed and one published free
       // afterwards are the same record.
       ...(price ? { price } : {}),
+      royaltyBps: chosenTerms.royaltyBps,
+      seekerOnly: chosenTerms.seekerOnly,
       storage: "local",
     };
     await save(r, d);
@@ -523,7 +573,9 @@ async function settleStorage(r: CaptureRecord, d: CoreDraft) {
     if (d.attempt?.signature) return d.attempt.signature;
     const quoteId = (d.attempt as ReviewedAttempt | undefined)?.quoteId;
     if (!d.attempt || !quoteId) throw new Error("This publication's wallet receipt is missing.");
-    const { receipt } = await addresses(d.edition.program, d.edition.creator, d.edition.nonce);
+    // The creator's receipt, keyed on the sealed Genesis Token on a Seeker-only edition.
+    const receipt = await claimReceiptAddress(d.edition.program, d.edition.edition,
+      publisherClaimant(d.edition.creator, d.seekerOnly, d.edition.genesisSealed ? d.edition.genesisMint ?? null : null));
     d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId);
     await save(r, d);
     return d.attempt.signature;
@@ -568,7 +620,10 @@ export async function isSigned(d: CoreDraft) {
     // The album is not in the hashed document; this is its only check against chain evidence.
     (publication.album?.group ?? undefined) !== d.album ||
     // The program seals only what the document names. A seal is optional; a different one is not.
-    (publication.sealedGenesis !== null && publication.sealedGenesis !== e.genesisMint)
+    (publication.sealedGenesis !== null && publication.sealedGenesis !== e.genesisMint) ||
+    // Neither is in the hashed document either; the chain is their only record.
+    publication.seekerOnly !== d.seekerOnly ||
+    (publication.royalty?.basisPoints ?? 0) !== d.royaltyBps
   )
     throw new Error("The onchain edition differs from this draft.");
   // A chain fact, re-read here every time and never taken from the saved draft.
@@ -645,7 +700,9 @@ async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
     // The album selects the instruction, so a stale copy would approve a different transaction.
     current.album !== d.album ||
     // So does the price: it decides whether `set_offer` is in the message at all, and for how much.
-    current.price !== d.price)
+    current.price !== d.price ||
+    // And the royalty and Seeker-only setting, which are the publication's last two arguments.
+    current.royaltyBps !== d.royaltyBps || current.seekerOnly !== d.seekerOnly)
     throw new Error("This photo's publication changed. Close and reopen it before continuing.");
   readSavedPhotoMetadata(d.metadata, d.edition);
   // The durable attempt always wins over a stale screen instance.
@@ -687,6 +744,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     // Absent for a plain publication; present turns the same arguments into `publish_in_album`.
     d.album,
     await genesisAccounts(d.edition),
+    { royaltyBps: d.royaltyBps, seekerOnly: d.seekerOnly },
   );
   /**
    * PUBLISHING WITH A PRICE IS ONE APPROVAL, NOT TWO.

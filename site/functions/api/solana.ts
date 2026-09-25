@@ -20,8 +20,11 @@
 // would make every collect send a request this Function refuses.
 // `getTokenAccountsByOwner` is the Seeker Genesis Token check (`verifyGenesisToken`): one wallet,
 // filtered to one mint, so it answers at most a couple of token accounts. It runs against this
-// proxy for devnet editions too, because the SGT exists on mainnet only. `getGenesisHash` is how
-// that check confirms the upstream is mainnet before believing it (`assertMainnet`); no params.
+// proxy for devnet editions too, because the SGT exists on mainnet only. The same method, filtered
+// to the Token-2022 program instead, finds a collector's own SGT for a seeker-only edition
+// (`findHeldGenesisToken`): one wallet's Token-2022 accounts, whose size MAX_UPSTREAM bounds, and
+// then its candidate mints through the sliced `getAccountInfo` below. `getGenesisHash` is how
+// both confirm the upstream is mainnet before believing it (`assertMainnet`); no params.
 // `getSignaturesForAddress` and `getTransaction` are the device row's publication time
 // (`publicationTime` in `publications/core/attestationCheck.ts`): the history of one claim
 // receipt, normally a single entry, and the ~10 KB parsed transaction that created it.
@@ -51,19 +54,22 @@ const int=(min:number,max:number):Check=>(value)=>Number.isSafeInteger(value)&&(
 const object=(fields:Record<string,Check>,required:readonly string[]):Check=>(value)=>
   !!value&&typeof value==='object'&&!Array.isArray(value)&&required.every((key)=>Object.hasOwn(value,key))&&
   Object.entries(value).every(([key,item])=>Object.hasOwn(fields,key)&&fields[key](item));
+const either=(...checks:Check[]):Check=>(value)=>checks.some((check)=>check(value));
+const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 /**
  * The methods whose params could widen what the provider does, held to exactly what the page sends
  * (`scripts/check-site.ts` replays the page's own requests through this Function):
  *   getAccountInfo           `account` in `publications/core/protocol.ts`; sliced by
  *                            `publications/programImage.ts` and `publications/core/genesisToken.ts`.
- *   getTokenAccountsByOwner  `genesisHolding` in `genesisToken.ts`: one wallet, one mint, parsed.
+ *   getTokenAccountsByOwner  `genesisHolding` in `genesisToken.ts`: one wallet, one mint, parsed;
+ *                            or `findHeldGenesisToken` there: one wallet, Token-2022 only, parsed.
  *   getSignaturesForAddress  `publicationTime` in `publications/core/attestationCheck.ts`.
  *   getTransaction           the same, for the transaction that created the claim receipt.
  * The others take a fixed few scalars and keep the generic `shallow` bound.
  */
 const SHAPES:Record<string,readonly Check[]>={
   getAccountInfo:[pubkey,object({encoding:is('base64'),commitment:is('confirmed'),dataSlice:object({offset:int(0,MAX_ACCOUNT),length:int(0,MAX_SLICE)},['offset','length'])},['encoding','commitment'])],
-  getTokenAccountsByOwner:[pubkey,object({mint:pubkey},['mint']),object({encoding:is('jsonParsed'),commitment:is('confirmed')},['encoding','commitment'])],
+  getTokenAccountsByOwner:[pubkey,either(object({mint:pubkey},['mint']),object({programId:is(TOKEN_2022)},['programId'])),object({encoding:is('jsonParsed'),commitment:is('confirmed')},['encoding','commitment'])],
   getSignaturesForAddress:[pubkey,object({limit:int(1,1000),commitment:is('confirmed'),before:signature},['limit','commitment'])],
   getTransaction:[signature,object({encoding:is('jsonParsed'),maxSupportedTransactionVersion:is(0),commitment:is('confirmed')},['encoding','maxSupportedTransactionVersion','commitment'])],
 };

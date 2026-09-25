@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#f2efe6" />
     <meta
       name="description"
-      content="A photograph published from a Seeker as a numbered edition on Solana. Open it in Signshot, or review the costs and collect a copy here."
+      content="A photograph published as a numbered edition on Solana. Open it in Signshot, or review the costs and collect a copy here."
     />
     <title>Collect a photograph · Signshot</title>
     <link rel="icon" href="/icon.png" />
@@ -28,7 +28,7 @@
   </head>
   <body>
     <header>
-      <a href="/" class="wordmark">Signshot<span>PHOTO EDITIONS FROM A SEEKER</span></a
+      <a href="/" class="wordmark">Signshot<span>PHOTO EDITIONS</span></a
       ><span id="network" hidden>DEVNET · TEST EDITION</span>
     </header>
     <main>
@@ -48,7 +48,8 @@
           <div id="veil" class="photograph veil" hidden><span></span></div>
         </div>
         <div class="details">
-          <p class="eyebrow">A PHOTOGRAPH TO KEEP</p>
+          <!-- Names the Seeker only once the device row has verified one. -->
+          <p id="eyebrow" class="eyebrow">A PHOTOGRAPH TO KEEP</p>
           <h1 id="title"></h1>
           <p class="byline">Published by <span id="creator"></span></p>
           <div id="moment" hidden><p id="moment-text" class="byline"></p></div>
@@ -76,6 +77,7 @@
           <p id="availability" class="availability" aria-live="polite"></p>
           <progress id="supply-progress" aria-label="Copies collected"></progress>
           <p id="price" class="price" hidden></p>
+          <p id="seeker-only" class="price" hidden></p>
           <div class="open-app">
             <a id="open-app" class="open-app-link" hidden>Open in Signshot</a>
             <div id="open-qr" class="open-qr" hidden></div>
@@ -121,7 +123,7 @@
       </dialog>
     </main>
     <footer>
-      <a href="/">Signshot · Photo editions from a Seeker</a
+      <a href="/">Signshot · Photo editions</a
       ><span class="legal"><a href="/privacy">Privacy</a><a href="/terms/">Terms</a></span>
     </footer>
     <script type="module" src="./collect.js"></script>

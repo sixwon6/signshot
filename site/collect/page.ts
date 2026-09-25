@@ -53,7 +53,10 @@ import {
 import type { DeviceVerdict } from "../../publications/core/attestation";
 
 import { qrMatrix } from "./qr";
-import { DEVICE_LINE, deviceProblem, deviceVerdictRow, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "./summary";
+import {
+  ALREADY_GENESIS, DEVICE_LINE, deviceProblem, deviceVerdictRow, EYEBROW, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE,
+  SEEKER_ONLY, sol,
+} from "./summary";
 import { registerMobileWallet, SolanaMobileWalletAdapterWalletName } from "./mwa";
 
 export type { Cluster } from "../../publications/types";
@@ -138,7 +141,7 @@ export interface Price {
  * "verified"; `problem` when the document carries evidence the reader set aside (the photograph
  * still loads); `null` for a plain document that carries none.
  */
-export type Device = { line: string; check(): Promise<DeviceVerdict> } | { problem: string } | null;
+export type Device = { line: string; seeker: boolean; check(): Promise<DeviceVerdict> } | { problem: string } | null;
 
 /**
  * The Genesis Token row: the mint the document claims, and the check that says whether the
@@ -166,6 +169,8 @@ export interface Loaded {
   description: string;
   /** The price of the remaining copies as loaded, or `null` when they are free. Display only. */
   price: Price | null;
+  /** Copies go to Seeker Genesis Token holders only, one per token. */
+  seekerOnly: boolean;
   device: Device;
   genesis: Genesis;
 }
@@ -213,7 +218,10 @@ export interface Adapter {
   copy: Copy;
   /** Fully verify the publication under its actual account owner, checked against build trust. */
   load(): Promise<Loaded>;
-  /** The permanent one-claim receipt for `wallet`: the only proof a claim succeeded. */
+  /**
+   * The permanent one-claim receipt for `wallet` (on a seeker-only edition, for the wallet's
+   * Genesis Token): the only proof a claim succeeded.
+   */
   hasCollected(wallet: string): Promise<boolean>;
   /**
    * The claim instruction plus the print address it creates, for the pending record, and the
@@ -441,7 +449,7 @@ export function run(adapter: Adapter) {
     b.textContent = busy
       ? "Please wait…"
       : alreadyCollected
-        ? "You hold a copy"
+        ? loaded?.seekerOnly ? "Already collected" : "You hold a copy"
         : loaded?.remaining === 0
           ? "All copies collected"
           : !connection
@@ -508,6 +516,9 @@ export function run(adapter: Adapter) {
     price.textContent = loaded.price
       ? `${sol(loaded.price.priceLamports)} SOL per copy`
       : "Free to collect";
+    const seekerOnly = el("seeker-only");
+    seekerOnly.textContent = SEEKER_ONLY;
+    seekerOnly.hidden = !loaded.seekerOnly;
     el("fees").textContent = adapter.copy.fees();
     el("about").textContent = adapter.copy.details(loaded);
   }
@@ -529,6 +540,9 @@ export function run(adapter: Adapter) {
       el("device-fine").hidden = state !== "device-ok";
       row.classList.remove("device-ok", "device-problem", "device-none");
       row.classList.add(state);
+      // "From a Seeker" only once the row itself names one; never before, and never otherwise.
+      el("eyebrow").textContent =
+        state === "device-ok" && !!device && "seeker" in device && device.seeker ? EYEBROW.seeker : EYEBROW.plain;
     };
     row.hidden = false;
     if (!device) return say(NO_DEVICE, "device-none");
@@ -715,9 +729,7 @@ export function run(adapter: Adapter) {
     showAvailability();
     alreadyCollected = await adapter.hasCollected(connection.address);
     if (alreadyCollected) {
-      message(
-        "Already collected by this wallet.",
-      );
+      message(loaded.seekerOnly ? ALREADY_GENESIS : "Already collected by this wallet.");
       return;
     }
     if (!loaded.remaining) {

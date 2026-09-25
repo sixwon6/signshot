@@ -20,8 +20,13 @@
  *     from the installed package;
  *   - the RPC proxy's upstream is its `SOLANA_RPC_URL` binding, or Solana's public mainnet with
  *     `X-Upstream: public` on every answer; its allowlist equals the methods the page sends, every
- *     request the page's own callers send passes it byte for byte and near misses are refused, and
- *     an upstream body with no Content-Length is cut off at the cap as it streams;
+ *     request the page's own callers send passes it byte for byte (the collector's Genesis Token
+ *     lookup for a seeker-only edition included) and near misses are refused, and an upstream body
+ *     with no Content-Length is cut off at the cap as it streams;
+ *   - a seeker-only edition in the app's own words, and the page naming a Seeker only once the
+ *     device row verified one: nothing static on the page says "from a Seeker";
+ *   - the privacy page says publications from one phone can be linked, and a sealed Genesis Token
+ *     links the publishing wallet to its Seeker;
  *   - the bundle builds, carries the trusted programs, reads no `process.env`, and includes no
  *     React Native module (the build's own guards, exercised here so `npm test` runs them);
  *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
@@ -47,13 +52,17 @@ import { readPhotoMetadata } from "../publications/core/metadataDocument";
 import { metadata } from "../publications/core/protocol";
 import type { CoreMetadata } from "../publications/types";
 import {
+  ALREADY_GENESIS,
   DEVICE_LINE,
   deviceLine,
   deviceProblem,
   deviceVerdictRow,
+  EYEBROW,
   GENESIS_LINE,
   MODERATION_WORDS,
+  NEEDS_GENESIS,
   NO_DEVICE,
+  SEEKER_ONLY,
   sol,
 } from "../site/collect/summary";
 import {
@@ -66,7 +75,7 @@ import { ALLOWED, MAX_UPSTREAM as RPC_MAX_UPSTREAM, onRequestPost, PUBLIC_MAINNE
 import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
 import { extension, getMintEncoder } from "@solana-program/token-2022";
 import { addresses, loadTrustedEdition } from "../publications/core/protocol";
-import { MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, verifyGenesisToken } from "../publications/core/genesisToken";
+import { DEVNET_GENESIS_GROUP, MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, findHeldGenesisToken, verifyGenesisToken } from "../publications/core/genesisToken";
 import { publicationTime } from "../publications/core/attestationCheck";
 import { assertReviewedProgram } from "../publications/programImage";
 import { LEGACY_WITHOUT_PUBLISHED_AT, PROGRAM_IMAGES } from "../publications/deployments";
@@ -150,6 +159,27 @@ ok("a document that names a Genesis Token loads through the page's reader with t
   readPhotoMetadata(JSON.parse(genesisDoc), e, genesisDoc).genesisMint === "So11111111111111111111111111111111111111112");
 ok("no page wording overclaims", !/authentic|camera-verified|proves? the (scene|photo)/i.test(
   [deviceLine(summary), NO_DEVICE, deviceProblem("x"), ...Object.values(GENESIS_LINE), readFileSync(resolve(site, "public", "collect", "index.html"), "utf8"), readFileSync(resolve(site, "collect", "page.ts"), "utf8"), readFileSync(resolve(site, "collect", "core.ts"), "utf8")].join("\n")));
+
+// --- A seeker-only edition, and naming the Seeker -------------------------------------------------
+ok("the page's seeker-only words are the app's own",
+  appCopy.includes(`seekerOnly: "${SEEKER_ONLY}"`) && appCopy.includes(`needsGenesis: "${NEEDS_GENESIS}"`)
+    && appCopy.includes(`alreadyGenesis: "${ALREADY_GENESIS}"`));
+const collectHtml = readFileSync(resolve(site, "public", "collect", "index.html"), "utf8");
+const pageText = readFileSync(resolve(site, "collect", "page.ts"), "utf8");
+const coreText = readFileSync(resolve(site, "collect", "core.ts"), "utf8");
+ok("nothing static on the collect page says the photograph came from a Seeker",
+  !/from a Seeker/i.test(collectHtml) && collectHtml.includes(`<p id="eyebrow" class="eyebrow">${EYEBROW.plain}</p>`));
+ok("the eyebrow names a Seeker only beside a verified device row that names one, and is reset otherwise",
+  /state === "device-ok" && !!device && "seeker" in device && device\.seeker \? EYEBROW\.seeker : EYEBROW\.plain/.test(pageText)
+    && /seeker: isSeeker\(a\)/.test(coreText));
+ok("the page shows the seeker-only rule as a value",
+  /<p id="seeker-only" class="price" hidden><\/p>/.test(collectHtml) && /seekerOnly\.hidden = !loaded\.seekerOnly/.test(pageText)
+    && /seekerOnly = result\.seekerOnly;/.test(coreText) && /seekerOnly: result\.seekerOnly,/.test(coreText));
+ok("the adapter keys the claim and the receipt it proves on the collector's Genesis Token",
+  /if \(genesis === null\) throw new Error\(NEEDS_GENESIS\)/.test(coreText)
+    && /claimGenesis\(endpoint, cluster, seekerOnly, wallet\)/.test(coreText)
+    && /claimedCopy\(endpoint, e, wallet, await genesisOf\(wallet\)\)/.test(coreText)
+    && /buyInstruction\([^)]*genesis \?\? undefined\)/.test(coreText) && /collectInstruction\([^)]*genesis \?\? undefined\)/.test(coreText));
 
 // --- Money wording --------------------------------------------------------------------------------
 ok("lamports render exactly", sol(1_000_000n) === "0.001" && sol(1_500_000_000n) === "1.5" && sol(0n) === "0" && sol(1n) === "0.000000001" && sol(2_000_000_000n) === "2");
@@ -270,6 +300,8 @@ ok("the privacy page says what a report sends and that blocks and the agreement 
   /<td>Report a publication<\/td>/.test(privacyPage) && /names the edition's address and carries its collect link/.test(privacyPage)
     && /The publishers you block and your agreement to the <a href="\/terms\/">terms<\/a>/.test(privacyPage) && /Neither is ever sent to Signshot/.test(privacyPage)
     && /moderation list/.test(privacyPage));
+ok("the privacy page says one phone's publications can be linked across wallets, and a sealed token links the wallet to its Seeker",
+  privacyPage.includes("Photographs published from the same phone carry the same device certificate chain for a few weeks, so they can be linked to one another even across wallets, and a sealed Genesis Token links the publishing wallet to that Seeker."));
 const STATIC_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const headerLines = headers.split(/\r?\n/);
 const ruleAfter = (path: string) => { const at = headerLines.findIndex((line) => line.trim() === path); return at < 0 ? "" : (headerLines[at + 1] ?? "").trim(); };
@@ -380,6 +412,8 @@ ok("bundle carries the trusted devnet programs and reads no process.env",
 ok("bundle knows the attested document schema", bundled.includes("seedshot-attestation/1"));
 ok("bundle knows the Genesis Token claim, Solana Mobile's group and mainnet's genesis hash",
   bundled.includes("seedshot-genesis/1") && bundled.includes("GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te") && bundled.includes("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"));
+ok("bundle knows the devnet stand-in group and says what a collector without a token needs",
+  bundled.includes(DEVNET_GENESIS_GROUP) && DEVNET_GENESIS_GROUP === "CmJzRVDQjrj8NjAcN4qKuLNKwhWJVcPKsngfAWfu88WB" && bundled.includes(NEEDS_GENESIS));
 ok("bundle carries the moderation list's address and the Blocked and Hidden words",
   bundled.includes(MODERATION_URL) && bundled.includes(`"${MODERATION_WORDS.blocked}"`) && bundled.includes(`"${MODERATION_WORDS.hidden}"`));
 const proxy = readFileSync(resolve(site, "functions", "api", "solana.ts"), "utf8");
@@ -431,7 +465,8 @@ async function upstreamChecks() {
  * Every request the collect page sends `/api/solana`, recorded from the page's own callers against a
  * stubbed chain and kept byte for byte: the edition read (`loadTrustedEdition`, whose `account` also
  * serves `hasCollected` and the offer), the program check's sliced reads (`assertReviewedProgram`,
- * through both ELF chunks), the Genesis Token check (`verifyGenesisToken`), the device row's time
+ * through both ELF chunks), the Genesis Token check (`verifyGenesisToken`), a collector's own token
+ * for a seeker-only edition (`findHeldGenesisToken`, which `claim` and `hasCollected` make), the device row's time
  * (`publicationTime`: a recorded `published_at`, and a legacy deployment's receipt history over two
  * pages), the quote (`prepareTransaction`), the attempt check
  * (`checkAttempt`), the confirmation (`confirmTransaction`) and the block height `collect` reads
@@ -446,6 +481,7 @@ async function pageRequests(): Promise<string[]> {
     programAddress: address(LOADER), seeds: [getAddressEncoder().encode(address(program))],
   });
   const mint = "21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH", holder = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+  const TOKEN_ACCOUNT = "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77";
   const sgt = new Uint8Array(getMintEncoder().encode({
     mintAuthority: none(), supply: 1n, decimals: 0, isInitialized: true, freezeAuthority: none(),
     extensions: some([
@@ -495,7 +531,12 @@ async function pageRequests(): Promise<string[]> {
         return { context, value: null };
       }
       case "getGenesisHash": return MAINNET_GENESIS_HASH;
-      case "getTokenAccountsByOwner": return { context, value: [] };
+      // By mint (the publisher's check): nothing held. By program (a collector's lookup): the SGT,
+      // so its mint is read through the sliced `getAccountInfo` as well.
+      case "getTokenAccountsByOwner": return { context, value: params[1]?.programId ? [{
+        pubkey: TOKEN_ACCOUNT,
+        account: { data: { program: "spl-token-2022", parsed: { type: "account", info: { mint, owner: holder, state: "frozen", tokenAmount: { amount: "1", decimals: 0 } } } } },
+      }] : [] };
       // A full first page, so the second asks with `before`.
       case "getSignaturesForAddress": return params[1]?.before ? [] : Array.from({ length: 1000 }, () => ({ signature: SIG, err: null, slot: 7 }));
       case "getTransaction": return null;
@@ -523,6 +564,8 @@ async function pageRequests(): Promise<string[]> {
     await loadTrustedEdition(ENDPOINT, holder, "mainnet-beta").catch(() => undefined);
     await assertReviewedProgram(ENDPOINT, program, "devnet").catch(() => undefined);
     await verifyGenesisToken(ENDPOINT, mint, holder);
+    const held = await findHeldGenesisToken(ENDPOINT, holder, "mainnet-beta");
+    if (held?.mint !== mint || held.token !== TOKEN_ACCOUNT) throw new Error("the recording did not find the collector's SGT");
     await publicationTime(ENDPOINT, RECORDING, recordedEdition);
     await publicationTime(ENDPOINT, program, legacyEdition).catch(() => undefined);
     await prepareTransaction(ENDPOINT, holder, [{ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new Uint8Array([1]) }]);
@@ -542,9 +585,12 @@ async function shapeChecks() {
   ok(`the proxy allowlist equals the methods the page sends (${[...methods].sort().join(", ")})`,
     methods.size === ALLOWED.size && [...methods].every((method) => ALLOWED.has(method)));
   const shapes = (method: string) => bodies.filter((body) => JSON.parse(body).method === method).map((body) => JSON.stringify(JSON.parse(body).params));
-  ok("the recording reached the sliced ELF chunks, the paged history and the mint-filtered token read",
+  const tokenReads = shapes("getTokenAccountsByOwner");
+  ok("the recording reached the sliced ELF chunks, the paged history, and the token reads by mint and by Token-2022",
     shapes("getAccountInfo").some((params) => params.includes('"dataSlice":{"offset":262144,"length":')) &&
-    shapes("getSignaturesForAddress").some((params) => params.includes('"before"')) && shapes("getTokenAccountsByOwner").length === 1);
+    shapes("getSignaturesForAddress").some((params) => params.includes('"before"')) && tokenReads.length === 2 &&
+    tokenReads.some((params) => params.includes('{"mint":')) &&
+    tokenReads.some((params) => params.includes('{"programId":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"}')));
   const passed = await Promise.all(bodies.map(async (body) => (await viaProxy(body, rpcAnswer)).response.status));
   const failed = bodies.filter((_, index) => passed[index] !== 200);
   ok(`every request the page sends passes the proxy, byte for byte (${bodies.length} requests)`, failed.length === 0);
@@ -553,7 +599,10 @@ async function shapeChecks() {
   const OWNER = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT", MINT = "21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH", SIG = "5".repeat(88);
   const call = (method: string, params: unknown[]) => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
   const nearMisses: [string, string][] = [
-    ["token accounts by program, not by mint", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["token accounts of the SPL Token program", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["token accounts by program as base64", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "base64", commitment: "confirmed" }])],
+    ["token accounts by program with no commitment", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "jsonParsed" }])],
+    ["token accounts by program with an extra filter key", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", owner: OWNER }, { encoding: "jsonParsed", commitment: "confirmed" }])],
     ["token accounts with a second filter key", call("getTokenAccountsByOwner", [OWNER, { mint: MINT, programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
     ["token accounts as base64", call("getTokenAccountsByOwner", [OWNER, { mint: MINT }, { encoding: "base64", commitment: "confirmed" }])],
     ["token accounts with no options", call("getTokenAccountsByOwner", [OWNER, { mint: MINT }])],

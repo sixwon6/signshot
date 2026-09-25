@@ -47,6 +47,20 @@ export const GENESIS_LINE: Record<GenesisLine, string> = {
 export const GENESIS_SEALED = "Verified and sealed by the edition program at publish.";
 
 /**
+ * A seeker-only edition, in the app's own words (`collect` in `src/ui/copy.ts`): the rule as a
+ * value, the one line for a wallet without a token, and the claim a token already made.
+ */
+export const SEEKER_ONLY = "Seeker holders only";
+export const NEEDS_GENESIS = "Needs a Seeker Genesis Token.";
+export const ALREADY_GENESIS = "Already collected with this Seeker Genesis Token.";
+
+/** The eyebrow above the title: the Seeker only once the device row has verified one. */
+export const EYEBROW = {
+  seeker: "A PHOTOGRAPH PUBLISHED FROM A SEEKER",
+  plain: "A PHOTOGRAPH TO KEEP",
+} as const;
+
+/**
  * Terms, reports and blocks, in the app's own words (`moderation` in `src/ui/copy.ts`). `hidden`
  * and `blocked` stand in for the picture's title when the publication is veiled.
  */

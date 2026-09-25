@@ -37,6 +37,7 @@ import {
 } from "../../publications/core/protocol";
 import { reviewedFingerprint } from "../../publications/core/transferReceipt";
 import { isTrustedDeployment, programFeatures } from "../../publications/deployments";
+import { assertReviewedProgram } from "../../publications/programImage";
 import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
 import {
   OPERATION_FLOOR_LAMPORTS,
@@ -206,6 +207,9 @@ export async function prepareOffer(
   await assertEndpointCluster();
   if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
   if (!programFeatures(e.program).offers) throw new Error(NO_OFFERS);
+  // The creator signs, and a signer's privileges reach every program it calls: the deployed bytes
+  // and upgrade authority must still be the reviewed ones.
+  await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
   if (operationInProgress(lock(e.edition)))
     throw new Error("This edition already has a price change in progress. Wait for it to finish.");
 
@@ -266,6 +270,8 @@ export async function sendOffer(
     if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
     if (!programFeatures(e.program).offers) throw new Error(NO_OFFERS);
     await assertNoStandingAttempt(e);
+    // Again right before the wallet opens: two header reads while the reviewed slot is cached.
+    await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
 
     let attempt: OfferAttempt | undefined;
     onProgress?.("wallet");

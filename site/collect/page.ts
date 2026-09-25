@@ -223,6 +223,11 @@ export interface Adapter {
     wallet: string,
     number: number,
   ): Promise<{ instruction: Instruction; asset: string; price: Price | null }>;
+  /**
+   * Refuse a program whose deployed bytes or upgrade authority are not the reviewed ones. `claim`
+   * checks when quoting; the page asks again right before the wallet opens.
+   */
+  assertProgram(): Promise<void>;
   /** The public link this page is reachable at; encoded into the share card's QR. */
   collectUrl(): string;
   /** Explorer links, available once `load()` has succeeded. */
@@ -784,6 +789,7 @@ export function run(adapter: Adapter) {
         lastValidBlockHeight: String(current.prepared.lastValidBlockHeight),
         kind: current.price ? "buy" : "collect",
       };
+      await adapter.assertProgram();
       writePending(p); // If storage fails, do not send an unrecoverable wallet request.
       message(current.price ? "Approve the purchase in your wallet…" : "Approve collection in your wallet…");
       try {

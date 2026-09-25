@@ -136,6 +136,7 @@ export function coreAdapter(edition: string): Adapter {
         : await collectInstruction(e, wallet, number);
       return { instruction, asset: keys.print, price: offer };
     },
+    assertProgram: () => assertReviewedProgram(endpoint, current().program, cluster),
     collectUrl: () => collectUrl(edition, cluster),
     links: () => ({
       source: explorerUrl(edition, cluster),

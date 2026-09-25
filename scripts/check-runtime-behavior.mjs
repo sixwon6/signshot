@@ -662,6 +662,21 @@ if (!process.argv.includes("--worker")) {
   } finally {
     globalThis.fetch = realFetch;
   }
+  {
+    // Every path that asks a wallet to sign against the program checks it: each signing module
+    // at quote and again before its wallet opens, and the collect page right before sending.
+    const { readFileSync } = await import("node:fs");
+    const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+    const calls = (text) => text.split("await assertReviewedProgram(").length - 1;
+    assert.equal(calls(source("../src/prints/collect.ts")), 2, "collect and buy check at quote and before the wallet");
+    assert.equal(calls(source("../src/prints/offer.ts")), 2, "set_offer checks at quote and before the wallet");
+    assert.ok(calls(source("../src/prints/PrintSheet.tsx")) >= 1, "publish checks before the wallet");
+    const page = source("../site/collect/page.ts");
+    assert.ok(page.indexOf("await adapter.assertProgram();") > 0 &&
+      page.indexOf("await adapter.assertProgram();") < page.indexOf("p.signature = await connection.send("),
+      "the collect page checks the program again right before the wallet opens");
+    assert.match(source("../site/collect/core.ts"), /assertProgram: \(\) => assertReviewedProgram\(/);
+  }
   for (const cluster of CLUSTERS)
     for (const program of TRUSTED[cluster]) {
       const record = pinnedImage(program, cluster);

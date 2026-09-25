@@ -63,9 +63,9 @@ import {
 import { MAX_UPSTREAM, onRequestGet as attestationStatus, UPSTREAM } from "../site/functions/api/attestation-status";
 import { admitMwaMarkup, MWA_FONTS, MWA_MARKUP } from "../site/collect/mwa";
 import { ALLOWED, MAX_UPSTREAM as RPC_MAX_UPSTREAM, onRequestPost, PUBLIC_MAINNET } from "../site/functions/api/solana";
-import { address, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
+import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
 import { extension, getMintEncoder } from "@solana-program/token-2022";
-import { loadTrustedEdition } from "../publications/core/protocol";
+import { addresses, loadTrustedEdition } from "../publications/core/protocol";
 import { MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, verifyGenesisToken } from "../publications/core/genesisToken";
 import { publicationTime } from "../publications/core/attestationCheck";
 import { assertReviewedProgram } from "../publications/programImage";
@@ -432,7 +432,8 @@ async function upstreamChecks() {
  * stubbed chain and kept byte for byte: the edition read (`loadTrustedEdition`, whose `account` also
  * serves `hasCollected` and the offer), the program check's sliced reads (`assertReviewedProgram`,
  * through both ELF chunks), the Genesis Token check (`verifyGenesisToken`), the device row's time
- * (`publicationTime`, over two pages), the quote (`prepareTransaction`), the attempt check
+ * (`publicationTime`: a recorded `published_at`, and a legacy deployment's receipt history over two
+ * pages), the quote (`prepareTransaction`), the attempt check
  * (`checkAttempt`), the confirmation (`confirmTransaction`) and the block height `collect` reads
  * before the wallet opens (`site/collect/page.ts`).
  */
@@ -457,6 +458,24 @@ async function pageRequests(): Promise<string[]> {
     ({ owner, executable: owner === LOADER, lamports: 1, rentEpoch: 0, space, data: [base64(bytes), "base64"] });
   const SIG = "5".repeat(88);
   const context = { slot: 100 };
+  // The device row's time: an Edition with `published_at` (8 + 301 bytes) under a deployment that
+  // records it, and one without (8 + 293) under the legacy program, whose receipt history is walked.
+  const NONCE = "cd".repeat(32);
+  const RECORDING = getAddressDecoder().decode(new Uint8Array(32).fill(7));
+  const recordedEdition = (await addresses(RECORDING, holder, NONCE)).edition;
+  const legacyEdition = (await addresses(program, holder, NONCE)).edition;
+  const editionAccount = (publishedAt: bigint | null) => {
+    const text = (s: string) => { const b = new TextEncoder().encode(s); return [u32(b.length), b]; };
+    const time = new Uint8Array(publishedAt === null ? 0 : 8);
+    if (publishedAt !== null) new DataView(time.buffer).setBigInt64(0, publishedAt, true);
+    const parts = [createHash("sha256").update("account:Edition").digest().subarray(0, 8),
+      getAddressEncoder().encode(address(holder)), Buffer.from(NONCE, "hex"), new Uint8Array(96),
+      new Uint8Array([1, 0, 1, 0, 255]), time, ...text("Sample"), ...text(`https://arweave.net/${"A".repeat(43)}`)];
+    const out = new Uint8Array(publishedAt === null ? 301 : 309);
+    let at = 0;
+    for (const part of parts) { out.set(part, at); at += part.length; }
+    return out;
+  };
   const answer = (method: string, params: any[]): unknown => {
     switch (method) {
       case "getAccountInfo": {
@@ -469,6 +488,8 @@ async function pageRequests(): Promise<string[]> {
           return { context, value: held(LOADER, bytes, 45 + image.bytes) };
         }
         if (params[0] === mint) return { context, value: held("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", sgt) };
+        if (params[0] === recordedEdition) return { context, value: held(RECORDING, editionAccount(1_790_000_000n)) };
+        if (params[0] === legacyEdition) return { context, value: held(program, editionAccount(null)) };
         return { context, value: null };
       }
       case "getGenesisHash": return MAINNET_GENESIS_HASH;
@@ -500,7 +521,8 @@ async function pageRequests(): Promise<string[]> {
     await loadTrustedEdition(ENDPOINT, holder, "mainnet-beta").catch(() => undefined);
     await assertReviewedProgram(ENDPOINT, program, "devnet").catch(() => undefined);
     await verifyGenesisToken(ENDPOINT, mint, holder);
-    await publicationTime(ENDPOINT, program, holder).catch(() => undefined);
+    await publicationTime(ENDPOINT, RECORDING, recordedEdition);
+    await publicationTime(ENDPOINT, program, legacyEdition).catch(() => undefined);
     await prepareTransaction(ENDPOINT, holder, [{ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new Uint8Array([1]) }]);
     await checkAttempt(ENDPOINT, { lastValidBlockHeight: "10", signature: SIG }, { operation: "collect" });
     await confirmTransaction(ENDPOINT, SIG, 10n).catch(() => undefined);
@@ -680,11 +702,28 @@ async function attestationStatusChecks() {
     const again = await call("/api/attestation-status?bust=1");
     ok("a second request, with a query string or not, is served from the cache", again.status === 200 && upstream === 1);
     store.clear();
+    // A key no serial is looked up by drops that entry, not the list.
+    google(JSON.stringify({ entries: {
+      "2c8cdddfd5e03bfc": { status: "REVOKED" },
+      "2C8CDDDFD5E03BFD": { status: "REVOKED" },
+      "serial-1": { status: "SUSPENDED" },
+      "9": { status: "SUSPENDED" },
+    } }));
+    const odd = await call();
+    await Promise.all(pending);
+    ok("an entry under an odd key is dropped and the rest is served",
+      odd.status === 200 && await odd.text() === JSON.stringify({ entries: {
+        "9": { status: "SUSPENDED" },
+        "2c8cdddfd5e03bfc": { status: "REVOKED" },
+      } }));
+    store.clear();
     const refusals: [string, string, ResponseInit | undefined][] = [
       ["unavailable at Google", "unavailable", { status: 503 }],
       ["declared larger than the bound", "{}", { headers: { "Content-Length": String(MAX_UPSTREAM + 1) } }],
       ["not JSON", "<html></html>", undefined],
-      ["not the documented shape", JSON.stringify({ entries: { AB: { status: "REVOKED" } } }), undefined],
+      ["not the documented shape: no entries", JSON.stringify({ list: {} }), undefined],
+      ["not the documented shape: an entry without a status", JSON.stringify({ entries: { ab: { reason: "KEY_COMPROMISE" } } }), undefined],
+      ["not the documented shape: an entry without a status, under an odd key", JSON.stringify({ entries: { AB: { reason: "KEY_COMPROMISE" } } }), undefined],
     ];
     for (const [name, body, init] of refusals) {
       google(body, init);

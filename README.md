@@ -145,10 +145,12 @@ StrongBox hardware key · verified boot, bootloader locked" only when every one 
   (`RELEASE_APP`, from `dapp-store/signing-certificate.json`); a debug or test build is another app;
 - verified boot and a locked bootloader, and the hardware-attested manufacturer and model are
   Solana Mobile Inc. / Seeker (another device that passes everything is named as itself);
-- every certificate is valid at the edition's on-chain publication time: the block time of the
-  transaction in which the System program created the publisher's claim receipt for the edition
-  program (`publicationTime`), so an earlier mention of the address cannot backdate it. A draft not
-  yet sent is judged now. Google: RKP certificates must "continue to have their validity period
+- every certificate is valid at the edition's on-chain publication time (`publicationTime`): the
+  `published_at` the program wrote into the `Edition` from the Clock sysvar at publish, which no
+  later transaction can move or bury. On the two legacy devnet deployments, which predate the
+  field, it is the block time of the transaction in which the System program created the
+  publisher's claim receipt for the edition program, so an earlier mention of the address cannot
+  backdate it. A draft not yet sent is judged now. Google: RKP certificates must "continue to have their validity period
   checked"; the Seeker's StrongBox certificate lives 13 days. This is applied to RSA-rooted chains
   too, which Google does not require for pre-2021 factory keys, none of which is a Seeker;
 - no certificate serial, in hex or decimal, is on Google's revocation list

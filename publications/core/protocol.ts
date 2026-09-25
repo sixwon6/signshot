@@ -15,7 +15,7 @@ import {
 } from "@solana/kit";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { arweaveBytes, request } from "../rpc";
+import { EDITION_ACCOUNT_BYTES, LEGACY_EDITION_ACCOUNT_BYTES, arweaveBytes, request } from "../rpc";
 import { isTrustedDeployment, programFeatures } from "../deployments";
 import { hasUnsafeText, readDescription } from "./details";
 import { readPhotoMetadata } from "./metadataDocument";
@@ -603,6 +603,7 @@ function reader(bytes: Uint8Array, start = 0) {
     u16: () => view(2).getUint16(0, true),
     u32: () => view(4).getUint32(0, true),
     u64: () => view(8).getBigUint64(0, true),
+    i64: () => view(8).getBigInt64(0, true),
     key: () => getAddressDecoder().decode(take(32)),
     hex: () => bytesToHex(take(32)),
     text: (max: number) => {
@@ -622,12 +623,19 @@ function reader(bytes: Uint8Array, start = 0) {
 }
 
 /**
- * The pinned lengths are the only layout version: `Edition` is 8 + 293 bytes and `Receipt` 8 + 98,
- * with no version byte. A layout change must ship as a new program address, never an in-place
- * upgrade. The discriminator alone does not identify the program; length and owner checks do.
+ * The pinned lengths are the only layout version: `Edition` is 8 + 301 bytes (8 + 293 on the
+ * deployments without `published_at`, chosen by program in `editionAccountBytes`) and `Receipt`
+ * 8 + 98, with no version byte. A layout change must ship as a new program address, never an
+ * in-place upgrade. The discriminator alone does not identify the program; length and owner
+ * checks do.
  */
-const EDITION_BYTES = 301;
 const RECEIPT_BYTES = 106;
+
+/** The `Edition` length `program` writes: the only thing that tells its two layouts apart. */
+export function editionAccountBytes(program: string): number {
+  return programFeatures(program).publishedAt ? EDITION_ACCOUNT_BYTES : LEGACY_EDITION_ACCOUNT_BYTES;
+}
+
 /**
  * `Offer` is 8 + 77 bytes: the Anchor discriminator, then `edition` (32), `creator` (32),
  * `price_lamports` (u64), `revision` (u32) and `bump` (u8). Like the other two it carries no
@@ -636,9 +644,17 @@ const RECEIPT_BYTES = 106;
  */
 export const OFFER_ACCOUNT_BYTES = 85;
 
-/** The `Edition` account: publication terms and issuance state. Anchor `account:Edition`. */
-export function readEdition(bytes: Uint8Array) {
-  if (bytes.length !== EDITION_BYTES || hash(bytes.slice(0, 8)) !== hash(disc("account:Edition")))
+/** The last second a JavaScript `Date` can represent (8.64e15 ms). */
+const MAX_UNIX_SECONDS = 8_640_000_000_000n;
+
+/**
+ * The `Edition` account: publication terms and issuance state. Anchor `account:Edition`, in the
+ * layout of `program`, which owns it: `publishedAt` is the `published_at` it recorded at publish
+ * (Unix seconds), or `null` on a deployment that predates the field. Any other length is refused.
+ */
+export function readEdition(bytes: Uint8Array, program: string) {
+  const recorded = programFeatures(program).publishedAt;
+  if (bytes.length !== editionAccountBytes(program) || hash(bytes.slice(0, 8)) !== hash(disc("account:Edition")))
     throw new Error("Unsupported edition account");
   const r = reader(bytes, 8);
   const creator = r.key();
@@ -649,12 +665,17 @@ export function readEdition(bytes: Uint8Array) {
   const supply = r.u16();
   const minted = r.u16();
   r.u8(); // bump
+  // Set from the Clock sysvar in the publishing transaction, so never zero, negative or past what
+  // a `Date` can hold.
+  const time = recorded ? r.i64() : null;
+  if (time !== null && (time <= 0n || time > MAX_UNIX_SECONDS)) throw new Error("Invalid edition state");
+  const publishedAt = time === null ? null : Number(time);
   const title = r.text(24);
   const uri = r.text(96);
   terms(title, supply);
   if (minted < 1 || minted > supply || !ARWEAVE_URI.test(uri))
     throw new Error("Invalid edition state");
-  return { creator, nonce, collection, metadataHash, imageHash, supply, minted, title, uri };
+  return { creator, nonce, collection, metadataHash, imageHash, supply, minted, title, uri, publishedAt };
 }
 
 /** The permanent one-claim record. Anchor `account:Receipt`. */
@@ -1187,7 +1208,8 @@ function collectionAlbum(
  */
 export function verifyEditionCollection(
   bytes: Uint8Array,
-  state: ReturnType<typeof readEdition>,
+  // The terms the collection seals; the publication time is not one of them.
+  state: Omit<ReturnType<typeof readEdition>, "publishedAt">,
   edition: string,
   membership?: AlbumMembership,
 ): CoreCollection {
@@ -1300,7 +1322,7 @@ async function verifyPublication(
 ): Promise<VerifiedPublication> {
   if (raw.owner !== program || raw.executable !== false)
     throw new Error("Edition not found on this network");
-  const state = readEdition(raw.bytes);
+  const state = readEdition(raw.bytes, program);
   const keys = await addresses(program, state.creator, state.nonce);
   if (keys.edition !== edition || keys.collection !== state.collection)
     throw new Error("Invalid edition addresses");

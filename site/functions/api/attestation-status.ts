@@ -15,18 +15,23 @@
 export const UPSTREAM='https://android.googleapis.com/attestation/status';
 export const MAX_UPSTREAM=4000000; // bytes; 179 KB on 2026-09-24.
 const TTL_SECONDS=3600;             // Google sends max-age=86400; an hour keeps new revocations close.
-const SERIAL=/^[0-9a-f]{1,80}$/;    // hex, as documented, or decimal, as the live list also uses.
+const SERIAL=/^[0-9a-f]+$/;        // hex, as documented, or decimal, as the live list also uses.
 const SECURITY={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
 const size=(value:string)=>new TextEncoder().encode(value).byteLength;
 const unavailable=()=>new Response(JSON.stringify({error:{message:'Revocation list unavailable.'}}),{status:502,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...SECURITY}});
-/** The documented shape, reduced to what a reader uses; `null` for anything else. */
+/**
+ * The documented shape, reduced to what a reader uses; `null` for anything else. A well-formed
+ * entry under a key no serial is looked up by is dropped, as `parseRevocationList` does, rather
+ * than failing the whole list.
+ */
 function reshape(json:unknown):Record<string,{status:string;reason?:string}>|null{
   const entries=(json as {entries?:unknown}|null)?.entries;
   if(!entries||typeof entries!=='object'||Array.isArray(entries))return null;
   const out:Record<string,{status:string;reason?:string}>={};
   for(const [key,value] of Object.entries(entries as Record<string,unknown>)){
     const entry=value as {status?:unknown;reason?:unknown}|null;
-    if(!SERIAL.test(key)||!entry||typeof entry!=='object'||typeof entry.status!=='string')return null;
+    if(!entry||typeof entry!=='object'||typeof entry.status!=='string')return null;
+    if(!SERIAL.test(key))continue;
     out[key]=typeof entry.reason==='string'?{status:entry.status,reason:entry.reason}:{status:entry.status};
   }
   return out;

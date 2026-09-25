@@ -217,10 +217,23 @@ export const LEGACY_WITHOUT_GENESIS: readonly string[] = [
   "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
 ];
 
+/**
+ * Deployments whose `Edition` account predates `published_at`: 8 + 293 bytes, against 8 + 301 for
+ * every build after them, which records the Clock's `unix_timestamp` at publish right after `bump`.
+ * An edition of one of these has no recorded time, so its publication time is looked for in the
+ * creator's claim receipt history instead (`publicationTime` in `core/attestationCheck.ts`). Like
+ * the two lists above, this names only what was deployed before.
+ */
+export const LEGACY_WITHOUT_PUBLISHED_AT: readonly string[] = [
+  "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
+  "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
+];
+
 /** What a given `era_editions` deployment can do. Garbage input answers all `true`, never throws. */
-export function programFeatures(program: string): { offers: boolean; genesis: boolean } {
+export function programFeatures(program: string): { offers: boolean; genesis: boolean; publishedAt: boolean } {
   return {
     offers: !LEGACY_WITHOUT_OFFERS.includes(program),
     genesis: !LEGACY_WITHOUT_GENESIS.includes(program),
+    publishedAt: !LEGACY_WITHOUT_PUBLISHED_AT.includes(program),
   };
 }

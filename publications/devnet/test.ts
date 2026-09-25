@@ -401,7 +401,7 @@ export async function lifecycle(c: TestContext) {
       assert.equal(await hasCollected(c.endpoint, five, wallet), true);
     }
     assert.equal(await hasCollected(c.endpoint, five, frank.address), false);
-    const state = readEdition((await account(c.endpoint, five.edition))!.bytes);
+    const state = readEdition((await account(c.endpoint, five.edition))!.bytes, c.program.address);
     assert.equal(state.minted, 5);
     assert.equal(state.supply, 5);
     return "One publisher and four friends hold prints 1-5; a fifth friend is refused";
@@ -418,7 +418,12 @@ export async function lifecycle(c: TestContext) {
         raw && raw.owner === c.program.address && !raw.executable,
         "Edition account is not owned by this program",
       );
-      const state = readEdition(raw.bytes);
+      const state = readEdition(raw.bytes, c.program.address);
+      // The Clock's time at publish: later than this code (2026-05-28), and not in the future.
+      assert.ok(
+        state.publishedAt !== null && state.publishedAt > 1_780_000_000 && state.publishedAt * 1000 <= Date.now() + 60_000,
+        "The edition records no plausible publication time",
+      );
       assert.equal(state.supply, item.supply);
       assert.equal(state.minted, minted);
       assert.equal(state.creator, item.creator);
@@ -509,7 +514,7 @@ export async function lifecycle(c: TestContext) {
       [e, "3"],
       [solo, "1"],
     ] as const) {
-      const state = readEdition((await account(c.endpoint, item.edition))!.bytes);
+      const state = readEdition((await account(c.endpoint, item.edition))!.bytes, c.program.address);
       await arweaveBytes(state.uri.split("/").pop()!, state.metadataHash);
       await arweaveBytes(item.image.split("/").pop()!, state.imageHash);
       assert.equal(state.uri, journal[`metadata-${key}`]);
@@ -629,7 +634,7 @@ export async function lifecycle(c: TestContext) {
   await once("priced-edition-state", async () => {
     const raw = await account(c.endpoint, priced.edition);
     assert.ok(raw && raw.owner === c.program.address, "The priced edition changed owner");
-    const state = readEdition(raw.bytes);
+    const state = readEdition(raw.bytes, c.program.address);
     // The point of a separate Offer account: three price changes and a sale, and the sealed
     // commitment is byte for byte what `publish` wrote.
     assert.equal(state.supply, priced.supply);
@@ -688,7 +693,7 @@ export async function lifecycle(c: TestContext) {
       "The album does not list exactly its two members",
     );
     for (const member of members) {
-      const state = readEdition((await account(c.endpoint, member.edition))!.bytes);
+      const state = readEdition((await account(c.endpoint, member.edition))!.bytes, c.program.address);
       assert.equal(state.supply, 2);
       assert.equal(state.minted, 1, "The publisher's own print #1 is live");
       const collectionRaw = await account(c.endpoint, member.collection);
@@ -775,7 +780,7 @@ export async function lifecycle(c: TestContext) {
     ]),
   );
   await once("sealed-genesis-attribute", async () => {
-    const state = readEdition((await account(c.endpoint, sealed.edition))!.bytes);
+    const state = readEdition((await account(c.endpoint, sealed.edition))!.bytes, c.program.address);
     const collectionRaw = await account(c.endpoint, sealed.collection);
     assert.ok(collectionRaw && collectionRaw.owner === MPL_CORE, "The sealed edition has no Core collection");
     const collection = verifyEditionCollection(collectionRaw.bytes, state, sealed.edition);
@@ -785,7 +790,7 @@ export async function lifecycle(c: TestContext) {
     assert.equal(attributes.attributes.length, 6, "The sealed collection carries the five attributes plus one");
     assert.deepEqual(attributes.attributes[5], { key: GENESIS_ATTRIBUTE, value: member.address });
     // The editions published without the accounts seal nothing, and read that way.
-    const plainState = readEdition((await account(c.endpoint, e.edition))!.bytes);
+    const plainState = readEdition((await account(c.endpoint, e.edition))!.bytes, c.program.address);
     const plain = verifyEditionCollection((await account(c.endpoint, e.collection))!.bytes, plainState, e.edition);
     assert.equal(sealedGenesisMint(plain), null, "A plain edition must seal no Genesis Token");
     const publication = await readPublication(c.endpoint, c.program.address, sealed.edition);

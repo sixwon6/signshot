@@ -3,10 +3,10 @@ import {
   address, getAddressDecoder, getAddressEncoder, getBase64Encoder, getBase64Decoder,
 } from "@solana/kit";
 import { TRUSTED, isTrustedDeployment } from "../deployments";
-import { EDITION_ACCOUNT_BYTES, request } from "../rpc";
+import { request } from "../rpc";
 import type { Cluster } from "../types";
 import {
-  MPL_CORE, account, addresses, decodeAsset, decodeCollection, readEdition,
+  MPL_CORE, account, addresses, decodeAsset, decodeCollection, editionAccountBytes, readEdition,
   loadTrustedEdition, readPrintState,
 } from "./protocol";
 
@@ -95,9 +95,10 @@ export async function loadLibrary(
   const collectedScan = (extra: unknown[] = []) =>
     scan(MPL_CORE, [ASSET_V1_FILTER, { memcmp: { offset: 1, bytes: wallet } }, ...extra],
       { offset: 0, length: ASSET_PREFIX_BYTES });
-  // `dataSize` is the pinned `Edition` length, which is also its only layout version.
+  // `dataSize` is the pinned `Edition` length of that program's layout, which is also its only
+  // layout version.
   const publishedScan = (program: string) =>
-    scan(program, [{ dataSize: EDITION_ACCOUNT_BYTES }, { memcmp: { offset: 8, bytes: wallet } }],
+    scan(program, [{ dataSize: editionAccountBytes(program) }, { memcmp: { offset: 8, bytes: wallet } }],
       { offset: 0, length: EDITION_PREFIX_BYTES });
 
   const groups = mode === "collected"
@@ -121,8 +122,8 @@ export async function loadLibrary(
       // Trusted ownership is not enough (Receipts qualify, and a collection's update authority is
       // minter-chosen): require the Edition length and discriminator, and that the address
       // re-derives from the creator and nonce the account carries.
-      if (edition.bytes.length !== EDITION_ACCOUNT_BYTES) return null;
-      const state = readEdition(edition.bytes);
+      if (edition.bytes.length !== editionAccountBytes(edition.owner)) return null;
+      const state = readEdition(edition.bytes, edition.owner);
       const derived = await addresses(edition.owner, state.creator, state.nonce);
       if (derived.edition !== collection.updateAuthority) return null;
       verifiedCollections.add(key);
@@ -164,7 +165,7 @@ export async function loadLibrary(
         const full = await account(endpoint, row.pubkey);
         if (!full || full.owner !== row.account.owner || full.executable)
           throw new Error("Edition unavailable");
-        if (readEdition(full.bytes).creator !== wallet) throw new Error("Wrong publisher");
+        if (readEdition(full.bytes, full.owner).creator !== wallet) throw new Error("Wrong publisher");
         edition = row.pubkey;
       }
       check();
@@ -224,7 +225,7 @@ export async function loadLibrary(
           if (targets.length >= MAX_TARGETED_COLLECTIONS) break;
           const full = await account(endpoint, row.pubkey);
           if (!full || !isTrustedDeployment(cluster, full.owner) || full.executable) continue;
-          const e = readEdition(full.bytes);
+          const e = readEdition(full.bytes, full.owner);
           if (e.creator === wallet) seed(e.collection);
         }
       }

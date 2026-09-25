@@ -40,8 +40,10 @@ import {
   publicationTime,
   readRevocationList,
 } from "../publications/core/attestationCheck";
+import { address, getAddressDecoder, getAddressEncoder } from "@solana/kit";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { readPhotoMetadata, readSavedPhotoMetadata } from "../publications/core/metadataDocument";
-import { metadata } from "../publications/core/protocol";
+import { addresses, metadata } from "../publications/core/protocol";
 import type { CoreMetadata } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -280,12 +282,33 @@ const parsed = parseRevocationList({ entries: {
 } });
 ok("the documented shape parses, hex and decimal keys alike",
   parsed.size === 2 && parsed.get("2c8cdddfd5e03bfc")?.reason === "KEY_COMPROMISE" && parsed.get("123456789012345678")?.status === "SUSPENDED");
+// A key no serial is looked up under costs that entry, never the list: one odd key upstream must not
+// turn every device row into "Couldn't check.".
+const oddKeys = parseRevocationList({ entries: {
+  AB: { status: "REVOKED" },
+  "2C8CDDDFD5E03BFC": { status: "REVOKED" },
+  "serial-1": { status: "REVOKED" },
+  "0x2c8c": { status: "REVOKED" },
+  "": { status: "REVOKED" },
+  [rsaIntermediate]: { status: "REVOKED", reason: "KEY_COMPROMISE" },
+  [BigInt("0x" + seekerCa1.certificates[1].serial).toString(10)]: { status: "SUSPENDED" },
+} });
+ok("entries under keys that are neither lowercase hex nor decimal are skipped, and the rest still read",
+  oddKeys.size === 2 && oddKeys.get(rsaIntermediate)?.status === "REVOKED");
+ok("a list with odd keys still revokes by hex and by decimal serial",
+  is(deviceVerdict(factoryRsa, at, oddKeys), "refused", DEVICE_REFUSAL.revoked)
+    && is(deviceVerdict(seekerCa1, at, oddKeys), "refused", DEVICE_REFUSAL.suspended));
+ok("a list with only odd keys reads as an empty list: verified",
+  is(deviceVerdict(seekerCa1, at, parseRevocationList({ entries: { AB: { status: "REVOKED" } } })), "verified"));
 for (const [name, bad] of [
   ["no entries", {}],
   ["entries as an array", { entries: [] }],
+  ["entries as a string", { entries: "ab" }],
+  ["null", null],
   ["an entry without a status", { entries: { ab: { reason: "KEY_COMPROMISE" } } }],
-  ["an upper-case key", { entries: { AB: { status: "REVOKED" } } }],
-  ["a key that is not a serial", { entries: { "serial-1": { status: "REVOKED" } } }],
+  ["an entry whose status is not a string", { entries: { ab: { status: 1 } } }],
+  ["an entry that is not an object", { entries: { ab: "REVOKED" } }],
+  ["a malformed entry under an odd key", { entries: { ab: { status: "REVOKED" }, AB: { reason: "KEY_COMPROMISE" } } }],
 ] as const)
   ok(`an unreadable list is refused, never read as empty: ${name}`, (() => {
     try { parseRevocationList(bad); return false; } catch { return true; }
@@ -295,17 +318,53 @@ for (const [name, bad] of [
 const realFetch = globalThis.fetch;
 const reply = (body: unknown, init?: ResponseInit) => new Response(JSON.stringify(body), init);
 const SYSTEM = "11111111111111111111111111111111";
-const PROGRAM = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
-const RECEIPT = "47WtZNkAdcuMKudNXEp6T5NhqQEGoXwRcU1xLUDN71uh";
-/** A JSON-RPC endpoint that answers `getSignaturesForAddress` with `history` and `getTransaction` from `txs`. */
-function chain(history: { signature: string; err: unknown }[] | ((before?: string) => { signature: string; err: unknown }[]), txs: Record<string, unknown>) {
+/** A deployment that predates `published_at` (`LEGACY_WITHOUT_PUBLISHED_AT`), and one after it. */
+const LEGACY = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
+const CURRENT = getAddressDecoder().decode(new Uint8Array(32).fill(7));
+const CREATOR = getAddressDecoder().decode(new Uint8Array(32).fill(9));
+const NONCE = "ab".repeat(32);
+type Stored = { owner: string; bytes: Uint8Array };
+
+/**
+ * An `Edition` account as a program writes it: 8 + 293 bytes before `published_at`, 8 + 301 with it
+ * as an i64 after `bump` (lib.rs `published_at_is_eight_bytes_right_after_bump`).
+ */
+function editionBytes(publishedAt: bigint | null): Uint8Array {
+  const text = (s: string) => { const b = new TextEncoder().encode(s); const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, b.length, true); return [n, b]; };
+  const i64 = (v: bigint) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigInt64(0, v, true); return b; };
+  const parts = [
+    sha256(new TextEncoder().encode("account:Edition")).slice(0, 8),
+    getAddressEncoder().encode(address(CREATOR)), Buffer.from(NONCE, "hex"), getAddressEncoder().encode(address(SYSTEM)),
+    new Uint8Array(32).fill(1), new Uint8Array(32).fill(2),
+    new Uint8Array([3, 0, 1, 0, 254]), // supply 3, minted 1, bump
+    ...(publishedAt === null ? [] : [i64(publishedAt)]),
+    ...text("Sample"), ...text(`https://arweave.net/${"A".repeat(43)}`),
+  ];
+  const out = new Uint8Array(publishedAt === null ? 301 : 309);
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+
+/**
+ * A JSON-RPC endpoint that answers `getAccountInfo` from `accounts`, `getSignaturesForAddress` with
+ * `history` and `getTransaction` from `txs`. Returns the methods asked, in order.
+ */
+function chain(
+  history: { signature: string; err: unknown }[] | ((before?: string) => { signature: string; err: unknown }[]),
+  txs: Record<string, unknown>,
+  accounts: Record<string, Stored> = {},
+) {
   const calls: string[] = [];
   globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
     const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string, { before?: string }] };
     calls.push(method);
-    const result = method === "getSignaturesForAddress"
-      ? typeof history === "function" ? history(params[1]?.before) : history
-      : txs[params[0]] ?? null;
+    const stored = accounts[params[0]];
+    const result = method === "getAccountInfo"
+      ? { context: { slot: 1 }, value: stored ? { owner: stored.owner, executable: false, lamports: 1, data: [Buffer.from(stored.bytes).toString("base64"), "base64"] } : null }
+      : method === "getSignaturesForAddress"
+        ? typeof history === "function" ? history(params[1]?.before) : history
+        : txs[params[0]] ?? null;
     return reply({ jsonrpc: "2.0", id: 1, result });
   }) as typeof fetch;
   return calls;
@@ -316,32 +375,66 @@ const tx = (blockTime: number, instructions: unknown[], err: unknown = null) =>
 const rejects = async (p: Promise<unknown>) => p.then(() => false, () => true);
 
 async function networkChecks() {
-  // Publication time: the creating transaction, not the oldest mention.
   const PUBLISHED = 1_790_000_000;
+  const full = Array.from({ length: 1000 }, (_, i) => ({ signature: `s${i}`, err: null }));
+  let endpoint = 0;
+  const rpc = () => `https://rpc.invalid/${(endpoint += 1)}`;
+
+  // A deployment that records `published_at`: the Edition alone, whatever the history holds.
+  const current = await addresses(CURRENT, CREATOR, NONCE);
+  const recorded = (bytes: Uint8Array, owner: string = CURRENT) => ({ [current.edition]: { owner, bytes } });
+  const flooded = chain(() => full, {}, recorded(editionBytes(BigInt(PUBLISHED))));
+  ok("a recorded published_at is the publication time, read from the Edition in one request; a padded history is never asked",
+    (await publicationTime(rpc(), CURRENT, current.edition)).getTime() === PUBLISHED * 1000
+      && flooded.join() === "getAccountInfo");
+  chain([], {}, recorded(editionBytes(null)));
+  ok("a recording deployment's Edition in the 301-byte layout is refused, never read as untimed",
+    await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+  for (const [name, time] of [["zero", 0n], ["negative", -1n], ["past what a Date holds", 8_640_000_000_001n]] as const) {
+    chain([], {}, recorded(editionBytes(time)));
+    ok(`a published_at that is ${name} is refused`, await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+  }
+  chain([], {}, recorded(editionBytes(BigInt(PUBLISHED)), LEGACY));
+  ok("an Edition owned by another program is refused", await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+  chain([], {});
+  ok("no Edition account: no time", await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+
+  // A legacy deployment: the transaction that created the creator's receipt, not the oldest mention.
+  const legacy = await addresses(LEGACY, CREATOR, NONCE);
+  const RECEIPT = legacy.receipt;
+  const untimed = { [legacy.edition]: { owner: LEGACY, bytes: editionBytes(null) } };
   chain(
     [{ signature: "later", err: null }, { signature: "creation", err: null }, { signature: "mention", err: null }],
     {
       mention: tx(1_780_000_000, [systemIx("transfer", { source: "x", destination: RECEIPT, lamports: 1 })]),
-      creation: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: PROGRAM, source: "x", lamports: 1, space: 106 })]),
+      creation: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: LEGACY, source: "x", lamports: 1, space: 106 })]),
       later: tx(1_800_000_000, []),
     },
+    untimed,
   );
-  ok("publication time is the block time of the receipt's creation, not an earlier mention that would backdate it",
-    (await publicationTime("https://rpc.invalid/1", PROGRAM, RECEIPT)).getTime() === PUBLISHED * 1000);
-  chain([{ signature: "prefunded", err: null }], { prefunded: tx(PUBLISHED, [systemIx("assign", { account: RECEIPT, owner: PROGRAM })]) });
-  ok("a pre-funded receipt, created by allocate and assign, counts", (await publicationTime("https://rpc.invalid/2", PROGRAM, RECEIPT)).getTime() === PUBLISHED * 1000);
-  chain([{ signature: "foreign", err: null }], { foreign: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: SYSTEM })]) });
-  ok("an account created for another owner is not the publication", await rejects(publicationTime("https://rpc.invalid/3", PROGRAM, RECEIPT)));
+  ok("legacy: publication time is the block time of the receipt's creation, not an earlier mention that would backdate it",
+    (await publicationTime(rpc(), LEGACY, legacy.edition)).getTime() === PUBLISHED * 1000);
+  chain([{ signature: "prefunded", err: null }], { prefunded: tx(PUBLISHED, [systemIx("assign", { account: RECEIPT, owner: LEGACY })]) }, untimed);
+  ok("legacy: a pre-funded receipt, created by allocate and assign, counts", (await publicationTime(rpc(), LEGACY, legacy.edition)).getTime() === PUBLISHED * 1000);
+  chain([{ signature: "foreign", err: null }], { foreign: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: SYSTEM })]) }, untimed);
+  ok("legacy: an account created for another owner is not the publication", await rejects(publicationTime(rpc(), LEGACY, legacy.edition)));
   chain([{ signature: "failed", err: { InstructionError: [0, "Custom"] } }], {
-    failed: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: PROGRAM })], { InstructionError: [0, "Custom"] }),
-  });
-  ok("a failed transaction is not the publication", await rejects(publicationTime("https://rpc.invalid/4", PROGRAM, RECEIPT)));
-  chain([], {});
-  ok("no history (not yet indexed, or pruned): no time, never a guess", await rejects(publicationTime("https://rpc.invalid/5", PROGRAM, RECEIPT)));
-  const full = Array.from({ length: 1000 }, (_, i) => ({ signature: `s${i}`, err: null }));
-  const paging = chain(() => full, {});
-  ok("history past three pages is not walked", await rejects(publicationTime("https://rpc.invalid/6", PROGRAM, RECEIPT))
+    failed: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: LEGACY })], { InstructionError: [0, "Custom"] }),
+  }, untimed);
+  ok("legacy: a failed transaction is not the publication", await rejects(publicationTime(rpc(), LEGACY, legacy.edition)));
+  chain([], {}, untimed);
+  ok("legacy: no history (not yet indexed, or pruned): no time, never a guess", await rejects(publicationTime(rpc(), LEGACY, legacy.edition)));
+  const paging = chain(() => full, {}, untimed);
+  ok("legacy: history past three pages is not walked", await rejects(publicationTime(rpc(), LEGACY, legacy.edition))
     && paging.filter((m) => m === "getSignaturesForAddress").length === 3 && !paging.includes("getTransaction"));
+  chain([], {}, { [legacy.edition]: { owner: LEGACY, bytes: editionBytes(BigInt(PUBLISHED)) } });
+  ok("legacy: a 309-byte Edition is refused for a deployment that never wrote one",
+    await rejects(publicationTime(rpc(), LEGACY, legacy.edition)));
+  chain([{ signature: "creation", err: null }], {
+    creation: tx(PUBLISHED, [systemIx("createAccount", { newAccount: RECEIPT, owner: LEGACY })]),
+  }, { [current.edition]: { owner: LEGACY, bytes: editionBytes(null) } });
+  ok("legacy: an Edition whose creator and nonce derive another address is refused",
+    await rejects(publicationTime(rpc(), LEGACY, current.edition)));
 
   // The revocation list: fetched once and held for its max-age; a failure is not held.
   let fetches = 0;

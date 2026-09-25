@@ -39,7 +39,7 @@ import {
   getDeployWithMaxDataLenInstruction,
 } from "@solana-program/loader-v3";
 import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
-import { LEGACY_WITHOUT_GENESIS, LEGACY_WITHOUT_OFFERS, programFeatures } from "../deployments";
+import { LEGACY_WITHOUT_GENESIS, LEGACY_WITHOUT_OFFERS, LEGACY_WITHOUT_PUBLISHED_AT, programFeatures } from "../deployments";
 import { request, confirmTransaction } from "../rpc";
 import { checkAttempt, type TransactionAttempt } from "../lifecycle";
 
@@ -95,8 +95,11 @@ const hex = (bytes: ArrayLike<number>) =>
  * itself.
  */
 export const TEST_COSTS = {
-  /** Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3 and the sealed 1/1. */
-  publish: 12_487_880,
+  /**
+   * Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3 and the sealed 1/1. Plus
+   * 55,680 lamports since: the 8 bytes of `published_at`, at the same 6,960 per byte.
+   */
+  publish: 12_543_560,
   publishes: 5,
   /**
    * The Genesis Token stand-in the sealed publish needs: the group mint, one member mint, the
@@ -107,8 +110,8 @@ export const TEST_COSTS = {
   genesisFixture: 14_000_000,
   /** Measured `create_album` (rent-only group plus a one-signature fee). */
   createAlbum: 1_772_840,
-  /** Measured `publish_in_album`, for the two free album members. */
-  publishInAlbum: 13_037_720,
+  /** Measured `publish_in_album`, for the two free album members, plus `published_at` as above. */
+  publishInAlbum: 13_093_400,
   albumPublishes: 2,
   /** Measured first `set_offer`: 1,482,480 lamports of rent for the 85-byte account plus the fee. */
   firstSetOffer: 1_487_480,
@@ -415,6 +418,12 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
       programFeatures(c.program.address).genesis,
     "This client would treat the session program as a deployment without Genesis Token accounts",
   );
+  // And for `published_at`: read in the older layout, every Edition would be refused as the wrong length.
+  assert.ok(
+    !LEGACY_WITHOUT_PUBLISHED_AT.includes(c.program.address) &&
+      programFeatures(c.program.address).publishedAt,
+    "This client would read the session program's editions without their publication time",
+  );
   const source = readFileSync(c.artifact.sourcePath, "utf8");
   assert.ok(
     source.includes(`declare_id!("${c.program.address}")`),
@@ -639,10 +648,11 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number, a
       source: "devnet acceptance build, publications/devnet session",
     },
 
-3. Leave LEGACY_WITHOUT_OFFERS and LEGACY_WITHOUT_GENESIS exactly as they are: each lists
-   only the OLD builds, and the default for anything else is already offers: true and
-   genesis: true. This deployment carries the devnet-genesis stand-in addresses, so the
-   sealed publish works only against the fixture the acceptance mints, never a real token.
+3. Leave LEGACY_WITHOUT_OFFERS, LEGACY_WITHOUT_GENESIS and LEGACY_WITHOUT_PUBLISHED_AT exactly
+   as they are: each lists only the OLD builds, and the default for anything else is already
+   offers, genesis and publishedAt: true. This deployment carries the devnet-genesis stand-in
+   addresses, so the sealed publish works only against the fixture the acceptance mints, never
+   a real token.
 
 4. Select it, in .env.local (gitignored):
 

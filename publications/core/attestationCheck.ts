@@ -4,12 +4,13 @@
  * validity is judged at. Shared by the app, the collect page and `scripts/verify-attestation.ts`,
  * so all three reach the same answer from the same inputs.
  *
- * Neither is ever guessed. A list that cannot be fetched or read, or a publication whose creating
- * transaction cannot be found, leaves the verdict "unchecked" and the screen says "Couldn't check.".
+ * Neither is ever guessed. A list that cannot be fetched or read, or a publication time that cannot
+ * be read, leaves the verdict "unchecked" and the screen says "Couldn't check.".
  */
 
 import { request } from "../rpc";
 import { deviceVerdict, type AttestationSummary, type DeviceVerdict, type RevocationList } from "./attestation";
+import { account, addresses, readEdition } from "./protocol";
 
 /**
  * Google's list. The app and the verifier fetch it directly; the collect page through its own
@@ -23,13 +24,19 @@ export const MAX_STATUS_BYTES = 4_000_000;
 const STATUS_DEFAULT_TTL_MS = 60 * 60 * 1000;
 const STATUS_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const STATUS_TIMEOUT_MS = 20_000;
-/** A dictionary key: hex (the documented form) or decimal (what the live list also uses). */
-const SERIAL_KEY = /^[0-9a-f]{1,80}$/;
+/**
+ * A key a serial can be looked up under: lowercase hex (the documented form) or decimal (what the
+ * live list also uses), and decimal digits are hex digits. Its length is bounded only by the
+ * list's (`MAX_STATUS_BYTES`), so no serial a certificate can carry is left out.
+ */
+const SERIAL_KEY = /^[0-9a-f]+$/;
 
 /**
  * Parse the list's JSON, refusing anything that is not its documented shape: `{ entries: { <serial>:
  * { status, reason?, ... } } }`. A shape this does not recognise is an unreadable list, not an
- * empty one.
+ * empty one. A well-formed entry under a key that is neither lowercase hex nor decimal is skipped:
+ * `revocationHits` never asks for one, so dropping it changes no answer, while refusing the list
+ * for it would leave every device row "Couldn't check." until Google removed it.
  */
 export function parseRevocationList(json: unknown): RevocationList {
   const entries = (json as { entries?: unknown } | null)?.entries;
@@ -37,8 +44,9 @@ export function parseRevocationList(json: unknown): RevocationList {
   const list = new Map<string, { status: string; reason?: string }>();
   for (const [key, value] of Object.entries(entries as Record<string, unknown>)) {
     const entry = value as { status?: unknown; reason?: unknown } | null;
-    if (!SERIAL_KEY.test(key) || !entry || typeof entry !== "object" || typeof entry.status !== "string")
+    if (!entry || typeof entry !== "object" || typeof entry.status !== "string")
       throw new Error("revocation list: bad entry");
+    if (!SERIAL_KEY.test(key)) continue;
     list.set(key, typeof entry.reason === "string" ? { status: entry.status, reason: entry.reason } : { status: entry.status });
   }
   return list;
@@ -115,20 +123,56 @@ function creates(tx: ParsedTransaction, account: string, owner: string): boolean
 const timeCache = new Map<string, Date>();
 
 /**
- * When the edition was published, from the chain: the block time of the transaction that created
- * the publisher's own claim receipt (`["claim", edition, creator]`, made by `publish` with copy
- * #1 and never written again, so its history is normally that one transaction).
+ * When the edition at `edition` was published, from the chain.
+ *
+ * A deployment with `programFeatures(program).publishedAt` wrote the Clock sysvar's
+ * `unix_timestamp` into the Edition account as `published_at` at publish and never writes it
+ * again, so the answer is one read of an account only that program can write. Nothing anyone
+ * sends afterwards, to the edition or to any address near it, can move it or hide it.
+ *
+ * The legacy deployments (`LEGACY_WITHOUT_PUBLISHED_AT`) recorded no time, so for them it is the
+ * block time of the transaction that created the publisher's own claim receipt (`["claim",
+ * edition, creator]`, made by `publish` with copy #1 and never written again, so its history is
+ * normally that one transaction); see `receiptCreationTime`.
+ *
+ * Throws when the Edition is missing or unreadable in its program's layout, or, on a legacy
+ * deployment, when the receipt's history is too long to walk or its creation is not found.
+ */
+export async function publicationTime(endpoint: string, program: string, edition: string): Promise<Date> {
+  const key = `${endpoint}\n${program}\n${edition}`;
+  const held = timeCache.get(key);
+  if (held) return held;
+  const raw = await account(endpoint, edition);
+  if (!raw || raw.owner !== program || raw.executable) throw new Error("Edition not found on this network");
+  const state = readEdition(raw.bytes, program);
+  const time = state.publishedAt !== null
+    ? new Date(state.publishedAt * 1000)
+    : await receiptCreationTime(endpoint, program, edition, state);
+  if (timeCache.size >= 256) timeCache.clear();
+  timeCache.set(key, time);
+  return time;
+}
+
+/**
+ * A legacy edition's publication time: the block time of the transaction that created its
+ * creator's claim receipt.
  *
  * Not simply the oldest signature: anyone who knows an address can mention it in a transaction,
  * and a publisher knows their PDAs before publishing, so an early mention could backdate the
  * edition into an expired certificate's lifetime. The creating transaction is the one where the
  * System program created (or assigned) the receipt to the edition program, which only the program
- * can sign for. Throws when the history is too long to walk or that transaction is not found.
+ * can sign for. The walk stops at `MAX_SIGNATURE_PAGES`, so on these deployments a history padded
+ * past it leaves the time unknown; `published_at` is what closes that.
  */
-export async function publicationTime(endpoint: string, program: string, receipt: string): Promise<Date> {
-  const key = `${endpoint}\n${program}\n${receipt}`;
-  const held = timeCache.get(key);
-  if (held) return held;
+async function receiptCreationTime(
+  endpoint: string,
+  program: string,
+  edition: string,
+  state: { creator: string; nonce: string },
+): Promise<Date> {
+  const keys = await addresses(program, state.creator, state.nonce);
+  if (keys.edition !== edition) throw new Error("Invalid edition addresses");
+  const receipt = keys.receipt;
   const history: SignatureEntry[] = [];
   let before: string | undefined;
   for (let page = 1; ; page += 1) {
@@ -151,10 +195,7 @@ export async function publicationTime(endpoint: string, program: string, receipt
     if (!tx || tx.meta?.err !== null || !creates(tx, receipt, program)) continue;
     if (typeof tx.blockTime !== "number" || !Number.isSafeInteger(tx.blockTime) || tx.blockTime <= 0)
       throw new Error("The publication transaction has no block time.");
-    const time = new Date(tx.blockTime * 1000);
-    if (timeCache.size >= 256) timeCache.clear();
-    timeCache.set(key, time);
-    return time;
+    return new Date(tx.blockTime * 1000);
   }
   throw new Error("The publication transaction was not found.");
 }

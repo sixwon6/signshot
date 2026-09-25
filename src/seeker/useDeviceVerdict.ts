@@ -6,7 +6,6 @@ import {
   publicationTime,
   readRevocationList,
 } from "../../publications/core/attestationCheck";
-import { addresses } from "../../publications/core/protocol";
 import type { CoreMetadata } from "../../publications/types";
 import { RPC_ENDPOINT } from "../solana/cluster";
 import { proof as copy } from "../ui/copy";
@@ -15,10 +14,10 @@ export type DeviceCheck = DeviceVerdict | { status: "checking" };
 
 /**
  * Whether a screen may name the device a draft's document attests (`deviceVerdict`), checked
- * against Google's revocation list, fetched directly, and at the right time: the block time of
- * the publication transaction once `published`, otherwise now, for a draft not yet sent (the send
- * path renews a chain close to expiry, `src/prints/creator.ts`). Null when the document carries
- * no accepted attestation.
+ * against Google's revocation list, fetched directly, and at the right time: the edition's
+ * on-chain publication time once `published` (`publicationTime`), otherwise now, for a draft not
+ * yet sent (the send path renews a chain close to expiry, `src/prints/creator.ts`). Null when the
+ * document carries no accepted attestation.
  */
 export function useDeviceVerdict(edition: CoreMetadata | null | undefined, published: boolean): DeviceCheck | null {
   const summary = edition?.attestation;
@@ -34,10 +33,7 @@ export function useDeviceVerdict(edition: CoreMetadata | null | undefined, publi
     checkDevice(summary, {
       revocationList: () => readRevocationList(GOOGLE_STATUS_URL),
       publishedAt: published
-        ? async () => {
-            const { receipt } = await addresses(edition.program, edition.creator, edition.nonce);
-            return publicationTime(RPC_ENDPOINT, edition.program, receipt);
-          }
+        ? () => publicationTime(RPC_ENDPOINT, edition.program, edition.edition)
         : async () => new Date(),
     }).then(
       (verdict) => {

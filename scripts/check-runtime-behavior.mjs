@@ -195,7 +195,7 @@ if (!process.argv.includes("--worker")) {
     assert.equal(budget.programData, 2_230_551_800);
     assert.equal(budget.programAccount, 833_120);
     assert.equal(budget.fees, 2_460_000, "488 uploads and two 2-signature transactions exceed the old fixed fee budget");
-    assert.equal(budget.total, 2_420_572_480, "the reserve grew by one publish and the Genesis Token fixture");
+    assert.equal(budget.total, 2_420_962_240, "the reserve grew by one publish, the Genesis Token fixture and published_at");
     assert.equal(budget.reserve, testReserve());
     const short = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 900);
     const overflow = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 901);
@@ -720,6 +720,44 @@ if (!process.argv.includes("--worker")) {
     globalThis.fetch = realFetch;
   }
 
+  // `Edition` in the owning program's layout: 8 + 293 bytes on the deployments that predate
+  // `published_at`, 8 + 301 with it right after `bump`. Any other length is refused, whichever it is.
+  {
+    const { getAddressDecoder, getAddressEncoder } = await import("@solana/kit");
+    const { LEGACY_WITHOUT_PUBLISHED_AT, programFeatures } = await import("../publications/deployments.ts");
+    const { EDITION_ACCOUNT_BYTES, LEGACY_EDITION_ACCOUNT_BYTES } = await import("../publications/rpc.ts");
+    const recording = getAddressDecoder().decode(new Uint8Array(32).fill(7));
+    const legacy = LEGACY_WITHOUT_PUBLISHED_AT[0];
+    const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+    const editionAccount = (time) => {
+      const uri = Buffer.from(`https://arweave.net/${arweaveId}`);
+      const at = time === null ? Buffer.alloc(0) : Buffer.alloc(8);
+      if (time !== null) at.writeBigInt64LE(time);
+      const body = Buffer.concat([Buffer.from(sha256Of(Buffer.from("account:Edition"))).subarray(0, 8),
+        Buffer.from(getAddressEncoder().encode(creator)), Buffer.from(nonce, "hex"), Buffer.alloc(32, 3),
+        Buffer.alloc(64, 4), Buffer.from([2, 0, 1, 0, 255]), at, u32(5), Buffer.from("Title"), u32(uri.length), uri]);
+      return new Uint8Array(Buffer.concat([body, Buffer.alloc((time === null ? 301 : 309) - body.length)]));
+    };
+    assert.equal(programFeatures(legacy).publishedAt, false);
+    assert.equal(programFeatures(recording).publishedAt, true, "a deployment added later records the time unlisted");
+    assert.equal(protocol.editionAccountBytes(legacy), LEGACY_EDITION_ACCOUNT_BYTES);
+    assert.equal(protocol.editionAccountBytes(recording), EDITION_ACCOUNT_BYTES);
+    assert.deepEqual([LEGACY_EDITION_ACCOUNT_BYTES, EDITION_ACCOUNT_BYTES], [301, 309]);
+    const timed = protocol.readEdition(editionAccount(1_790_000_000n), recording);
+    const untimed = protocol.readEdition(editionAccount(null), legacy);
+    assert.equal(timed.publishedAt, 1_790_000_000);
+    assert.equal(untimed.publishedAt, null);
+    const { publishedAt: _timed, ...termsTimed } = timed;
+    const { publishedAt: _untimed, ...termsUntimed } = untimed;
+    assert.deepEqual(termsTimed, termsUntimed, "every other field reads the same in both layouts");
+    assert.equal(termsTimed.title, "Title");
+    assert.equal(termsTimed.creator, creator);
+    assert.throws(() => protocol.readEdition(editionAccount(null), recording), /Unsupported edition account/);
+    assert.throws(() => protocol.readEdition(editionAccount(1_790_000_000n), legacy), /Unsupported edition account/);
+    assert.throws(() => protocol.readEdition(editionAccount(0n), recording), /Invalid edition state/);
+    assert.throws(() => protocol.readEdition(new Uint8Array([...editionAccount(1n), 0]), recording), /Unsupported edition account/);
+  }
+
   // A mainnet release needs its own RPC: unset, or a public solana.com host, fails release:check.
   const { rpcRefusal } = await import("./check-release-config.ts");
   for (const value of [undefined, "", " "])
@@ -769,5 +807,5 @@ if (!process.argv.includes("--worker")) {
       for (const operation of ["publish", "collect", "buy", "set-offer"])
         assert.equal(failed(code, operation).retryable, false, `${code} is never offered again as ${operation}`);
   }
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, release RPC, price floor and program error words");
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, both Edition layouts, release RPC, price floor and program error words");
 }

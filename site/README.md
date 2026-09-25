@@ -194,11 +194,11 @@ that residual. Rate limiting rules are available on the Free plan
 | Cached assets | off (`requests_to_origin: false`) |
 
 Free-plan constraints fix those numbers (one rule per zone, `ip.src` only, 10 s period and
-timeout). A mainnet collector now peaks at about 30 requests per 10 s: loading the page with its
-Genesis Token row (3) and device row (up to 5), then a quote with the program check (4, two of
-them ELF chunks) and the confirmation poll. 120 leaves room for about four collectors behind one
-NAT while capping one abusive IP at 12 rps. Raised from 60 on 2026-09-25; the live rule still
-says 60 until the file is applied again.
+timeout). A mainnet collector now peaks at about 26 requests per 10 s: loading the page with its
+Genesis Token row (3) and device row (1, the edition's `published_at`), then a quote with the
+program check (4, two of them ELF chunks) and the confirmation poll. 120 leaves room for about
+four collectors behind one NAT while capping one abusive IP at 12 rps. Raised from 60 on
+2026-09-25; the live rule still says 60 until the file is applied again.
 
 **Verify it is live at no provider cost** (`getProgramAccounts` is not allowlisted, so every
 request is refused with 400 before anything is forwarded):

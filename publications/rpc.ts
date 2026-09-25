@@ -553,9 +553,13 @@ const rentExemption = (dataBytes: number | bigint): bigint =>
 
 /**
  * Anchor's fixed account sizes. Neither account has a version byte, so these lengths are the
- * layout version (see the decoders in `core/protocol.ts`).
+ * layout version (see the decoders in `core/protocol.ts`). `Edition` is 8 + 301 bytes with
+ * `published_at`, and 8 + 293 on the deployments that predate it (`LEGACY_WITHOUT_PUBLISHED_AT`);
+ * `editionAccountBytes` in `core/protocol.ts` picks one by program. The floors below price the
+ * current layout, which is what a new publication creates.
  */
-export const EDITION_ACCOUNT_BYTES = 301;
+export const EDITION_ACCOUNT_BYTES = 309;
+export const LEGACY_EDITION_ACCOUNT_BYTES = 301;
 const RECEIPT_ACCOUNT_BYTES = 106;
 /** 8 + `Offer::INIT_SPACE` (32 + 32 + 8 + 4 + 1). `core/protocol.ts` pins the same number. */
 export const OFFER_ACCOUNT_BYTES = 85;

@@ -77,6 +77,7 @@ import {
   type GenesisAccounts,
 } from "../publications/core/protocol";
 import { createAlbumInstruction } from "../publications/core/album";
+import { publicationTime } from "../publications/core/attestationCheck";
 import { SGT_GROUP_ADDRESS, isSeekerGenesisMint } from "../publications/core/genesisToken";
 import {
   assertMemberDecodes,
@@ -188,6 +189,32 @@ async function write(key: string, account: { lamports: bigint; owner: string; by
 }
 const rent = async (length: number) => BigInt(await host.call<string>("rent", { len: length }));
 const balance = async (key: string) => (await read(key))?.lamports ?? 0n;
+
+const CLOCK = address("SysvarC1ock11111111111111111111111111111111");
+/** The Clock sysvar's `unix_timestamp` as last set here: what `published_at` must equal. */
+let clockTime = 0n;
+/**
+ * Sets the Clock sysvar's `unix_timestamp`, which LiteSVM starts at 0: the last of its five
+ * 8-byte fields (slot, epoch_start_timestamp, epoch, leader_schedule_epoch, unix_timestamp).
+ * Written as an account, it is what the program's `Clock::get()` reads next.
+ */
+async function setClock(unixTimestamp: bigint) {
+  const clock = await read(CLOCK);
+  if (!clock || clock.bytes.length !== 40) throw new Error("No Clock sysvar to set");
+  const bytes = new Uint8Array(clock.bytes);
+  new DataView(bytes.buffer).setBigInt64(32, unixTimestamp, true);
+  await write(CLOCK, { lamports: clock.lamports, owner: clock.owner, bytes });
+  clockTime = unixTimestamp;
+}
+const PUBLISHED_AT = 173; // lib.rs `published_at_is_eight_bytes_right_after_bump`
+
+/** The edition's `published_at` straight from its bytes, and its length, beside what the client reads. */
+async function recorded(edition: string) {
+  const bytes = (await read(edition))?.bytes ?? new Uint8Array(0);
+  const raw = bytes.length >= PUBLISHED_AT + 8
+    ? new DataView(bytes.buffer, bytes.byteOffset).getBigInt64(PUBLISHED_AT, true) : null;
+  return { length: bytes.length, raw };
+}
 
 async function wallet(): Promise<KeyPairSigner> {
   const signer = await generateKeyPairSigner();
@@ -468,6 +495,7 @@ async function fresh(elf: string, id: Address, chain: Mainnet, groupAuthority?: 
   await host.call("rent_floor", { min0: chain.rentMin0 });
   await host.call("program", { id: hexOf(keyBytes(id)), path: elf });
   await host.call("program", { id: hexOf(keyBytes(MPL_CORE)), path: CORE_ELF });
+  await setClock(BigInt(Math.floor(Date.now() / 1000)));
   await write(SGT_MINT, { lamports: BigInt(chain.sgtMint.lamports), owner: T22, bytes: bytesOf(chain.sgtMint.data) });
   // Solana Mobile's group, with only its TokenGroup update authority rewritten when asked, so
   // Token-2022 itself can write further members of it here.
@@ -515,6 +543,12 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
   const copy1 = verified ? await readPrintState(SVM_RPC, verified, 1) : null;
   ok("copy 1 is live, owned by the creator, Edition #1 and ImmutableMetadata locked",
     copy1?.status === "live" && copy1.asset.owner === creator.address);
+  const stamped = await recorded(first.e.edition);
+  ok(`published_at is the Clock's unix_timestamp at publish (${clockTime}): 309-byte Edition, i64 at byte 173`,
+    stamped.length === 309 && stamped.raw === clockTime && verified?.state.publishedAt === Number(clockTime));
+  // The SVM answers no signature history, so this is the Edition read alone.
+  ok("publicationTime reads it from the Edition, with no signature history to walk",
+    (await publicationTime(SVM_RPC, program, first.e.edition).catch(() => null))?.getTime() === Number(clockTime) * 1000);
 
   // 2. The real Seeker Genesis Token, held by the creator.
   console.log("\n2. publish with the real Seeker Genesis Token");
@@ -654,6 +688,9 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
   const giver = await wallet();
   const free = await draft(program, giver, 3);
   await settles("a free edition", publish(free));
+  const freePublishedAt = clockTime;
+  // An hour on, for every claim below: none of them may move the edition's publication time.
+  await setClock(freePublishedAt + 3_600n);
   const collector = await wallet();
   const collected = await send(collector, [await collectInstruction(free.e, collector.address, 2)]);
   ok("collect copy 2 of a free edition", collected.ok && (await collectedCopy(SVM_RPC, free.e, collector.address))?.number === 2, collected);
@@ -679,6 +716,9 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
   const nobody = await wallet();
   const soldOut = await send(nobody, [await collectInstruction(free.e, nobody.address, 3)]);
   ok("collect after the last copy -> SoldOut", refused(soldOut, E.SoldOut), soldOut);
+  ok("three claims and a set_offer an hour later leave published_at as publish wrote it",
+    (await recorded(free.e.edition)).raw === freePublishedAt &&
+    (await readPublication(SVM_RPC, program, free.e.edition))?.state.minted === 3);
 
   // 6. Albums.
   console.log("\n6. albums");
@@ -696,6 +736,8 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
     albumRead?.album?.group === album && albumRead.album.collections.includes(address(inAlbum.e.collection)) &&
     albumCollection.updateAuthority === inAlbum.e.edition &&
     albumCollection.plugins.some((p) => p.type === "ImmutableMetadata" && p.authority.kind === "None"));
+  ok("publish_in_album records the Clock's unix_timestamp at its own publish",
+    albumRead?.state.publishedAt === Number(clockTime) && clockTime === freePublishedAt + 3_600n);
 }
 
 async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet) {
@@ -713,8 +755,9 @@ async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet)
   ok("genesisFixture.ts builds the stand-in, and the client decodes it only against the stand-in addresses", made && decodes);
   const sealed = await draft(program, creator, 2, standIn.address);
   const outcome = await publish(sealed, { genesis: { mint: standIn.address, token: await genesisTokenAccount(creator.address, standIn.address) } });
-  ok("publish with the stand-in SGT is sealed", outcome.ok &&
-    (await readPublication(SVM_RPC, program, sealed.e.edition))?.sealedGenesis === standIn.address, outcome);
+  const sealedRead = await readPublication(SVM_RPC, program, sealed.e.edition);
+  ok("publish with the stand-in SGT is sealed, and records published_at", outcome.ok &&
+    sealedRead?.sealedGenesis === standIn.address && sealedRead.state.publishedAt === Number(clockTime), outcome);
   await holdRealSgt(chain, creator.address);
   const realOnDevnet = await draft(program, creator, 2, SGT_MINT);
   const refusal = await publish(realOnDevnet, { genesis: { mint: SGT_MINT, token: chain.sgtToken.address } });

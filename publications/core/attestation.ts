@@ -236,11 +236,16 @@ export const RELEASE_APP: { readonly packageName: string; readonly signerDigest:
 /**
  * Google's revocation list, by the dictionary key it files a serial under: the documented key is
  * lowercase hex without leading zeros, and the live list also keys entries by DECIMAL serial
- * (977 of 1,755 were digits only on 2026-09-24), so both spellings are looked up.
+ * (977 of 1,755 were digits only on 2026-09-24), so both spellings are looked up. Those are the
+ * only two spellings looked up, so `parseRevocationList` skips an entry filed under any other key
+ * rather than refusing the whole list for it.
  */
 export type RevocationList = ReadonlyMap<string, { status: string; reason?: string }>;
 
-/** Every entry the list holds for this chain, as `[key, status]`. */
+/**
+ * Every entry the list holds for this chain, as `[key, status]`. `serial` is the reader's own
+ * lowercase hex (`serialHex` in `src/seeker/keyAttestation.ts`), so its decimal spelling is exact.
+ */
 export function revocationHits(s: AttestationSummary, list: RevocationList): [string, string][] {
   const hits: [string, string][] = [];
   for (const { serial } of s.certificates) {

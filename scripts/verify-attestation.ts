@@ -21,10 +21,10 @@
  *
  * Certificate validity is judged at publication time (see `validAt`), because Google's device
  * and intermediate attestation certificates live for days to weeks, and a publication's evidence
- * must stay checkable for as long as the publication exists. By edition that is the block time of
- * the transaction that created the publisher's claim receipt (`publicationTime`, the readers'
- * own). `--at` also works with `--edition` and then overrides it; the `chain` line always names
- * which was used.
+ * must stay checkable for as long as the publication exists. By edition that is the edition's
+ * recorded `published_at`, or on a legacy deployment the block time of the transaction that created
+ * the publisher's claim receipt (`publicationTime`, the readers' own). `--at` also works with
+ * `--edition` and then overrides it; the `chain` line always names which was used.
  *
  * Exit code 0 only when every check passes. What passing means: a hardware-protected key on a
  * device Google's attestation chain vouches for signed this publication's manifest. It does not
@@ -51,7 +51,7 @@ import { GOOGLE_STATUS_URL as STATUS_URL, publicationTime, readRevocationList } 
 import { parseCertificate } from "../src/seeker/keyAttestation";
 import { readPublication } from "../publications/core/protocol";
 import { arweaveBytes } from "../publications/rpc";
-import { TRUSTED } from "../publications/deployments";
+import { TRUSTED, programFeatures } from "../publications/deployments";
 import type { Cluster } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -75,9 +75,10 @@ function pinnedRootKeys(): string[] {
 /**
  * When the chain must have been valid. Google's device and intermediate attestation certificates
  * are short-lived (the Seeker's StrongBox certificate observed on 2026-09-16 was valid for 13
- * days), so a chain is judged at PUBLICATION time, never "now": by edition, the block time of the
- * transaction that created the publisher's claim receipt (`publicationTime`, which the app and
- * the collect page use too); by file, `--at <ISO date>` or, failing that, now.
+ * days), so a chain is judged at PUBLICATION time, never "now": by edition, its `published_at`, or
+ * on a legacy deployment the block time of the transaction that created the publisher's claim
+ * receipt (`publicationTime`, which the app and the collect page use too); by file,
+ * `--at <ISO date>` or, failing that, now.
  */
 let validAt: { time: Date; source: string } = { time: new Date(), source: "now (no publication time known)" };
 if (arg("at")) {
@@ -86,10 +87,13 @@ if (arg("at")) {
   validAt = { time: t, source: "--at" };
 }
 
-async function publishedAt(rpc: string, program: string, receipt: string): Promise<void> {
+async function publishedAt(rpc: string, program: string, edition: string): Promise<void> {
   if (arg("at")) return;
+  const source = programFeatures(program).publishedAt
+    ? "the edition's published_at, recorded at publish"
+    : "block time of the transaction that created the publisher's claim receipt";
   try {
-    validAt = { time: await publicationTime(rpc, program, receipt), source: "block time of the transaction that created the publisher's claim receipt" };
+    validAt = { time: await publicationTime(rpc, program, edition), source };
   } catch (error) {
     throw new Error(`publication time: ${error instanceof Error ? error.message : String(error)} (use an archival --rpc, or pass --at)`);
   }
@@ -123,7 +127,7 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   }
   if (!found) throw new Error(`edition ${edition} was not found under a reviewed ${cluster} deployment`);
   const { state } = found;
-  await publishedAt(rpc, program, found.keys.receipt);
+  await publishedAt(rpc, program, edition);
   const bytes = await arweaveBytes(state.uri.split("/").pop()!, state.metadataHash);
   check("chain-state", true, `document bytes hash to the on-chain metadata_hash ${state.metadataHash}`);
   return {

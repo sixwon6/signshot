@@ -57,12 +57,13 @@ function genesisRow(e: CoreMetadata): Genesis {
 
 /**
  * The document's device evidence and the check that decides whether the page may name the device
- * (`deviceVerdict`): judged at the block time of the transaction that created the publisher's
- * claim receipt, against Google's revocation list.
+ * (`deviceVerdict`): judged at the edition's on-chain publication time (`publicationTime`: its
+ * recorded `published_at`, or on a legacy deployment the block time of the transaction that
+ * created the publisher's claim receipt), against Google's revocation list.
  */
 function deviceRow(
   e: CoreMetadata,
-  publication: { program: string; keys: { receipt: string } },
+  publication: { program: string; edition: string },
 ): Device {
   const a = e.attestation;
   if (!a) return e.attestationProblem ? { problem: e.attestationProblem } : null;
@@ -71,7 +72,7 @@ function deviceRow(
     check: () =>
       checkDevice(a, {
         revocationList: () => readRevocationList(attestationStatusUrl),
-        publishedAt: () => publicationTime(endpoint, publication.program, publication.keys.receipt),
+        publishedAt: () => publicationTime(endpoint, publication.program, publication.edition),
       }),
   };
 }

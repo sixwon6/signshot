@@ -114,7 +114,7 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   const edition = arg("edition");
   if (!edition) throw new Error("give --edition <address> or --file <document.json>");
   const cluster = (arg("cluster") ?? "devnet") as Cluster;
-  const rpc = arg("rpc") ?? (cluster === "devnet" ? "https://api.devnet.solana.com" : "https://api.mainnet-beta.solana.com");
+  const rpc = arg("rpc") ?? (cluster === "devnet" ? "https://api.devnet.solana.com" : "https://api.mainnet.solana.com");
   const programs = TRUSTED[cluster];
   let found: Awaited<ReturnType<typeof readPublication>> = null, program = "";
   for (const candidate of programs) {

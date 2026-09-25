@@ -31,13 +31,17 @@ reader and refused attested editions. Nothing is deployed from that repository a
   run `npm test` (it parses the file) before deploying an edit.
 - `collect/` — the page's TypeScript: `browser.ts` (router), `page.ts` (DOM, wallets, quoting,
   durable attempt, confirmation, device row, open-in-app, share card), `core.ts` (the adapter over
-  the reader: load, receipt check, `collect` vs `buy`), `summary.ts` (pure wording, also used by
-  the gate), `qr.ts`. Imports go straight to `../../publications/...`; Metro never sees this
+  the reader: load, receipt check, program check, `collect` vs `buy`), `mwa.ts` (Mobile Wallet
+  Adapter's registration and the Trusted Types policy for its dialogs), `summary.ts` (pure
+  wording, also used by the gate), `qr.ts`. Imports go straight to `../../publications/...`; Metro never sees this
   directory because nothing under `index.js` imports it, and `tsc --noEmit` typechecks it.
 - `functions/api/solana.ts` — the read-only Solana JSON-RPC proxy the page uses **on mainnet only**
-  (a Pages Function at `/api/solana`; devnet links go straight to `api.devnet.solana.com`). It
-  needs the Production-only `SOLANA_RPC_URL` secret and answers 503 without it. Wrangler uploads a
-  `functions/` directory found in the working directory it is run from, so deploy from `site/`.
+  (a Pages Function at `/api/solana`; devnet links go straight to `api.devnet.solana.com`). Its
+  upstream is the Production-only `SOLANA_RPC_URL` secret (see "Cloudflare state that is not in a
+  file"); without it the proxy forwards to Solana's public `https://api.mainnet.solana.com`, which
+  is rate-limited and "not intended for production applications"
+  (https://solana.com/docs/references/clusters). Wrangler uploads a `functions/` directory found
+  in the working directory it is run from, so deploy from `site/`.
 - `functions/api/attestation-status.ts` — Google's attestation revocation list, same-origin at
   `/api/attestation-status` (GET only, bounded, re-serialised, held an hour in the Cache API) for
   the device row, on every network. Needs no secret.
@@ -91,13 +95,21 @@ the installed app and otherwise sends to the site home; elsewhere it is a QR of 
 for a phone to scan. The page URL itself is the app's verified App Link, so a tap from another app
 already opens Signshot.
 
-**Collect / buy** in a browser wallet (Wallet Standard on desktop, Mobile Wallet Adapter in Chrome
-on Android): the adapter re-reads the `Offer` account immediately before quoting and builds
-`collect` when it is free or `buy(number, price, revision)` when priced, exactly as the app does
+**Collect / buy** in a browser wallet, always through Wallet Standard: desktop wallets register
+themselves, and on Android `mwa.ts` registers Mobile Wallet Adapter with
+`@solana-mobile/wallet-standard-mobile` (pinned; 0.5 and later ask for Chrome's Local Network
+Access permission, without which MWA signing silently fails). Before quoting, the adapter refuses
+a program whose deployed bytes or upgrade authority are not the reviewed ones
+(`publications/programImage.ts`), re-reads the `Offer` account and builds `collect` when it is
+free or `buy(number, price, revision)` when priced, exactly as the app does
 (`src/prints/collect.ts`); the estimate is measured by simulating the collector's own transaction;
 the attempt is written to `localStorage` before the wallet opens; success is proved only by the
 permanent claim receipt. If the creator changes the price between estimate and approval the
 program refuses the purchase (`OfferChanged`) and a fresh estimate is shown.
+
+The photograph and its document are read from `https://arweave.net/raw/<id>`, then
+`https://turbo-gateway.com/raw/<id>`; the bare `arweave.net/<id>` redirects to a per-item
+subdomain the CSP does not allow. The on-chain `uri` stays `https://arweave.net/<id>`.
 
 ## Deploying
 
@@ -143,7 +155,8 @@ curl -sI https://erashot.app/ | head -1   # 200, no WWW-Authenticate
 
 Then open the devnet link above in desktop Chrome (photograph, price line, QR, device row "No
 device attestation…"), and on the Seeker in Chrome (the "Open in Signshot" control must hand off
-to the app). When a device-attested edition exists, open its link and confirm the Device row, and
+to the app; "Connect wallet to buy" → "Seed Vault / Android wallet" shows MWA's local network
+permission dialog once, then Chrome's own prompt, then opens the wallet). When a device-attested edition exists, open its link and confirm the Device row, and
 run `npm run verify:attestation -- --edition <address> --cluster devnet` beside it.
 
 ## Cloudflare state that is not in a file
@@ -151,6 +164,12 @@ run `npm run verify:attestation -- --edition <address> --cluster devnet` beside 
 `_headers` is the only configuration Cloudflare Pages reads from the upload. Everything else —
 the `SOLANA_RPC_URL` secret and its scope, and the abuse control on `/api/solana` — is dashboard
 or API state, written down here so it can be re-applied exactly.
+
+**`SOLANA_RPC_URL`** (Settings → Variables and Secrets, Production, type Secret) is the mainnet
+upstream of `/api/solana`: the full HTTPS URL of a dedicated provider endpoint, key included. It
+never reaches the browser. When it is unset or deleted the proxy falls back to
+`https://api.mainnet.solana.com`, Solana's public endpoint, which rate-limits per IP and may block
+high-traffic sites without notice; a live mainnet page should always have it set.
 
 **Why `/api/solana` needs a rate limit.** It is an unauthenticated proxy in front of a paid RPC
 provider. It refuses cross-origin and `Origin`-less callers, allows only the read-only methods

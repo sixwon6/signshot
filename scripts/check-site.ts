@@ -15,6 +15,10 @@
  *     against, and names the release certificate in `dapp-store/signing-certificate.json`;
  *   - the collect sources never assign markup (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
  *     `document.write`), which the CSP's Trusted Types directive would turn into a runtime throw;
+ *   - Mobile Wallet Adapter is registered through `@solana-mobile/wallet-standard-mobile`, and the
+ *     one Trusted Types policy and the `style-src` hashes admit exactly its dialogs, recomputed
+ *     from the installed package;
+ *   - the RPC proxy's upstream is its `SOLANA_RPC_URL` binding, or Solana's public mainnet;
  *   - the bundle builds, carries the trusted programs, reads no `process.env`, and includes no
  *     React Native module (the build's own guards, exercised here so `npm test` runs them);
  *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
@@ -54,6 +58,8 @@ import {
   fetchModerationList, parseModerationList, readBlockList, reportMailto, termsAgreed, veilOf, withBlocked,
 } from "../src/moderation/core";
 import { MAX_UPSTREAM, onRequestGet as attestationStatus, UPSTREAM } from "../site/functions/api/attestation-status";
+import { admitMwaMarkup, MWA_FONTS, MWA_MARKUP } from "../site/collect/mwa";
+import { onRequestPost, PUBLIC_MAINNET } from "../site/functions/api/solana";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -144,7 +150,10 @@ const html = readFileSync(resolve(site, "public", "collect", "index.html"), "utf
 const metaCsp = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/.exec(html)?.[1];
 ok("collect/index.html <meta> CSP equals the _headers rule minus frame-ancestors",
   !!headerCsp && !!metaCsp && headerCsp.replace(/;\s*frame-ancestors 'none'/, "") === metaCsp);
-ok("the CSP requires Trusted Types and allows no policy", !!metaCsp && /require-trusted-types-for 'script'; trusted-types 'none'/.test(metaCsp));
+const directive = (name: string) =>
+  (metaCsp ?? "").split(";").map((d) => d.trim().split(/\s+/)).find(([key]) => key === name)?.slice(1) ?? [];
+ok("the CSP requires Trusted Types and allows only the default policy",
+  directive("require-trusted-types-for").join(" ") === "'script'" && directive("trusted-types").join(" ") === "default");
 ok("the bundle is a same-origin module script and nothing is inline",
   /<script type="module" src="\.\/collect\.js"><\/script>/.test(html) && !/<script(?![^>]*src=)/.test(html) && !/ style=/.test(html) && !/<style/.test(html));
 
@@ -276,6 +285,78 @@ ok("the router refuses steering parameters and the retired routes",
 ok("the page never takes an endpoint or program from the link",
   /params\.get\("(rpc|endpoint|program|url|api)"\)/.test(sources) === false);
 
+// --- Mobile Wallet Adapter, through Wallet Standard ---------------------------------------------
+/**
+ * The page signs through `@solana-mobile/wallet-standard-mobile`'s registered wallet, never the
+ * protocol's `transact`. That library assigns its own dialog templates to `innerHTML` and writes its
+ * own `<style>` blocks, and the page admits exactly those: the Trusted Types `default` policy by
+ * SHA-256 (`site/collect/mwa.ts`) and `style-src` by CSP hash. Both are recomputed here from the
+ * installed package, and every `innerHTML` and style write in it must be one of those read below,
+ * so a version change cannot slip a new sink or template past the policy.
+ */
+const mwaSource = readFileSync(resolve(site, "collect", "mwa.ts"), "utf8");
+const manifest = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as { devDependencies: Record<string, string> };
+const mwaDir = resolve(root, "node_modules", "@solana-mobile", "wallet-standard-mobile");
+const mwaVersion = (JSON.parse(readFileSync(resolve(mwaDir, "package.json"), "utf8")) as { version: string }).version;
+ok("wallet-standard-mobile is pinned to the exact version installed (0.5.0 or later handles Local Network Access)",
+  manifest.devDependencies["@solana-mobile/wallet-standard-mobile"] === mwaVersion && /^0\.(?:[5-9]|\d{2,})\.\d+$/.test(mwaVersion));
+ok("the page no longer calls the protocol's transact directly",
+  !/mobile-wallet-adapter-protocol-kit|\btransact\(/.test(sources));
+ok("MWA is registered as the recipe says, for the link's one chain and with no remote association",
+  /registerMwa\(\{[\s\S]*appIdentity:[\s\S]*authorizationCache:[\s\S]*chains: \[chain\],[\s\S]*chainSelector: createDefaultChainSelector\(\),[\s\S]*onWalletNotFound: createDefaultWalletNotFoundHandler\(\),[\s\S]*\}\);/.test(mwaSource)
+    && !/remoteHostAuthority|nostrRelay/.test(mwaSource) && /registerMobileWallet\(chain, location\.origin\)/.test(sources));
+
+const library = readFileSync(resolve(mwaDir, "lib", "esm", "index.browser.js"), "utf8").replace(/\r\n/g, "\n");
+const escapeRegExp = (s: string) => s.replace(/[$.*+?^{}()|[\]\\]/g, "\\$&");
+/** A module-level constant of the library: a template or string literal with no substitution. */
+function constant(name: string): string {
+  const template = new RegExp(`\\bconst ${escapeRegExp(name)} = \`([^\`\\\\]*)\`;`).exec(library)?.[1];
+  const quoted = new RegExp(`\\bconst ${escapeRegExp(name)} = "([^"\\\\]*)";`).exec(library)?.[1];
+  const value = template ?? quoted;
+  if (value === undefined || value.includes("${")) throw new Error(`wallet-standard-mobile ${mwaVersion}: ${name} is not a plain constant`);
+  return value;
+}
+ok("wallet-standard-mobile assigns exactly the seven innerHTML values the policy was written for",
+  JSON.stringify([...library.matchAll(/\.innerHTML = ([^;\n]+);/g)].map((m) => m[1])) === JSON.stringify([
+    "modalHtml$1", "this.contentHtml", "fonts", "WALLET_NOT_FOUND_ERROR_MESSAGE", "BROWSER_NOT_SUPPORTED_ERROR_MESSAGE",
+    "`An unexpected error occurred: ${error.message}`", "modalHtml",
+  ]) && !/outerHTML|insertAdjacentHTML|document\.write|srcdoc|DOMParser|createContextualFragment|setHTMLUnsafe|parseHTMLUnsafe/.test(library));
+ok("its style blocks are the modal frame's plus each dialog's, and the spinner's",
+  JSON.stringify([...library.matchAll(/\.textContent = ([^;\n]+);/g)].map((m) => m[1])) === JSON.stringify(["css$6 + this.contentStyles", "css$1"]));
+/** Which template and stylesheet each local-wallet dialog class carries. */
+const dialog = (name: string, css: string, html: string) =>
+  new RegExp(`var ${name} = class extends EmbeddedModal \\{\\s*contentStyles = ${escapeRegExp(css)};\\s*contentHtml = ${escapeRegExp(html)};`).test(library);
+const blocked = /var LoopbackPermissionBlockedModal = class extends EmbeddedModal \{\s*contentStyles = css\$3;\s*get contentHtml\(\) \{\s*const instructions = getIsPwaLaunchedAsApp\(\) \? "([^"]*)" : "([^"]*)";\s*return ErrorDialogHtml\$1\.replace\("\{\{PERMISSION_INSTRUCTION_DETAIL\}\}", instructions\);/.exec(library);
+ok("each local-wallet dialog pairs the template and stylesheet read here",
+  dialog("ErrorModal", "css$5", "ErrorDialogHtml$3") && dialog("LocalConnectionModal", "css$4", "ErrorDialogHtml$2")
+    && dialog("LoopbackPermissionModal", "css$2", "ErrorDialogHtml") && !!blocked);
+const utf8Hash = (text: string, encoding: "hex" | "base64") => createHash("sha256").update(text, "utf8").digest(encoding);
+const admitted = [
+  constant("modalHtml$1"), constant("modalHtml"), constant("ErrorDialogHtml$3"), constant("ErrorDialogHtml$2"),
+  constant("ErrorDialogHtml$1").replace("{{PERMISSION_INSTRUCTION_DETAIL}}", blocked?.[1] ?? ""),
+  constant("ErrorDialogHtml$1").replace("{{PERMISSION_INSTRUCTION_DETAIL}}", blocked?.[2] ?? ""),
+  constant("ErrorDialogHtml"), constant("WALLET_NOT_FOUND_ERROR_MESSAGE"), constant("BROWSER_NOT_SUPPORTED_ERROR_MESSAGE"),
+];
+const fonts = constant("fonts");
+const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+const recomputed = admitted.map((text) => utf8Hash(text, "hex"));
+ok("the Trusted Types policy admits exactly the library's dialog templates",
+  sameSet(MWA_MARKUP, recomputed) && sameSet(MWA_FONTS, [utf8Hash(fonts, "hex")]));
+if (!sameSet(MWA_MARKUP, recomputed)) console.error("  MWA_MARKUP should be:", recomputed.join(", "));
+ok("the policy returns each template unchanged, the font links as nothing, and refuses everything else",
+  admitted.every((text) => admitMwaMarkup(text) === text) && admitMwaMarkup(fonts) === ""
+    && admitMwaMarkup("An unexpected error occurred: <img src=x onerror=alert(1)>") === null
+    && admitMwaMarkup(admitted[0] + " ") === null && admitMwaMarkup("") === null);
+const styleHashes = [
+  constant("css$6") + constant("css$5"), constant("css$6") + constant("css$4"), constant("css$6") + constant("css$3"),
+  constant("css$6") + constant("css$2"), constant("css$1"),
+].map((css) => `'sha256-${utf8Hash(css, "base64")}'`);
+ok("style-src allows the same origin and exactly the dialogs' five style blocks",
+  directive("style-src")[0] === "'self'" && sameSet(directive("style-src").slice(1), styleHashes));
+if (!sameSet(directive("style-src").slice(1), styleHashes)) console.error("  style-src hashes should be:", styleHashes.join(" "));
+ok("connect-src allows MWA's Local Network Access request and the gateways' own hosts, nothing wider",
+  directive("connect-src").includes("http://localhost") && directive("connect-src").every((source) => !source.includes("*.")));
+
 // --- The build and its guards ------------------------------------------------------------------------
 const build = spawnSync(process.execPath, [resolve(site, "build.mjs")], { cwd: root, encoding: "utf8" });
 ok("site build succeeds", build.status === 0 && /Collector bundle built/.test(build.stdout));
@@ -296,6 +377,40 @@ ok("the mainnet proxy allows the two reads the device row's publication time mak
   /ALLOWED=new Set\(\[[^\]]*'getSignaturesForAddress'[^\]]*'getTransaction'[^\]]*\]\)/.test(proxy));
 ok("the bundle reads the revocation list same-origin, never from Google (no CORS there)",
   bundled.includes("/api/attestation-status") && !bundled.includes("android.googleapis.com"));
+ok("bundle reads both gateways at /raw/ and carries MWA's Local Network Access handling",
+  bundled.includes("https://arweave.net/raw/") && bundled.includes("https://turbo-gateway.com/raw/") && bundled.includes("loopback-network"));
+
+/** The proxy's upstream: the `SOLANA_RPC_URL` binding when set, Solana's public mainnet otherwise. */
+async function proxiedTo(env: { SOLANA_RPC_URL?: string }): Promise<string | null> {
+  const realFetch = globalThis.fetch;
+  let upstream: string | null = null;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    upstream = String(input);
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: 1 }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const response = await onRequestPost({
+      env,
+      request: new Request("https://erashot.app/api/solana", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: "https://erashot.app" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBlockHeight", params: [] }),
+      }),
+    });
+    return response.ok ? upstream : null;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+// One after the other: each swaps the global `fetch`. The summary below waits for it.
+const proxyChecked = proxiedTo({})
+  .then(async (fallback) => [fallback, await proxiedTo({ SOLANA_RPC_URL: "https://rpc.example/key" })])
+  .then(([fallback, bound]) => ok("the proxy forwards to SOLANA_RPC_URL when bound and to https://api.mainnet.solana.com otherwise",
+    PUBLIC_MAINNET === "https://api.mainnet.solana.com" && fallback === PUBLIC_MAINNET && bound === "https://rpc.example/key"))
+  .catch((error: unknown) => {
+    console.error(error);
+    ok("the proxy forwards to SOLANA_RPC_URL when bound and to https://api.mainnet.solana.com otherwise", false);
+  });
 
 /**
  * Every origin the bundle could open a connection to must be allowed by `connect-src`, or the
@@ -311,6 +426,10 @@ const NOT_CONNECTIONS: Record<string, string> = {
   "https://sola.na": "@solana/kit invariant-violation error text ('please file an issue at …')",
   "https://developer.mozilla.org": "@solana/kit error text pointing at MDN",
   "https://github.com": "library error text pointing at an issue tracker",
+  "http://www.w3.org": "SVG namespace URIs in the page's QR and in MWA's dialog markup, not fetches",
+  "https://solanamobile.com": "MWA's wallet listing: the wallet's `url` and the Find a wallet navigation, not fetches",
+  "https://fonts.googleapis.com": "MWA's font links, which the Trusted Types policy (`mwa.ts`) replaces with nothing",
+  "https://fonts.gstatic.com": "MWA's font links, which the Trusted Types policy (`mwa.ts`) replaces with nothing",
 };
 const connectSrc = (metaCsp ?? "").split(";").map((d) => d.trim()).find((d) => d.startsWith("connect-src "))?.split(/\s+/).slice(1) ?? [];
 const allowsOrigin = (origin: string) => {
@@ -322,7 +441,7 @@ const allowsOrigin = (origin: string) => {
   });
 };
 const literals = new Set<string>();
-for (const m of bundled.matchAll(/\b(wss?|https):\/\/([A-Za-z0-9.-]+)(:(\d+|\$\{[^}]*\}))?/g)) {
+for (const m of bundled.matchAll(/\b(wss?|https?):\/\/([A-Za-z0-9.-]+)(:(\d+|\$\{[^}]*\}))?/g)) {
   const host = m[2];
   if (!host.includes(".") && host !== "localhost") continue; // template fragments, not hosts
   const port = m[4] && /^\d+$/.test(m[4]) ? `:${m[4]}` : m[4] ? ":*" : "";
@@ -335,7 +454,9 @@ const unexplained = [...literals].filter((origin) => {
 });
 ok(`every connection origin in the bundle is allowed by connect-src (${[...literals].sort().join(", ")})`, unexplained.length === 0);
 if (unexplained.length) console.error("  not allowed and not explained:", unexplained.join(", "));
-ok("MWA's localhost WebSocket is allowed", literals.has("ws://localhost:*") && connectSrc.includes("ws://localhost:*"));
+ok("MWA's localhost WebSocket and permission request are allowed",
+  literals.has("ws://localhost:*") && connectSrc.includes("ws://localhost:*")
+    && literals.has("http://localhost") && connectSrc.includes("http://localhost"));
 ok("dist carries the static routes the app and wallets depend on",
   ["_headers", ".well-known/assetlinks.json", "icon.png", "privacy.html", "terms/index.html", "moderation.json", "index.html", "collect/index.html", "collect/collect.css", "collect/collect.js.LEGAL.txt"]
     .every((p) => { try { return statSync(resolve(dist, p)).isFile(); } catch { return false; } }));
@@ -398,7 +519,9 @@ async function attestationStatusChecks() {
   }
 }
 
-void moderationFetch()
+// One after the other: each swaps the global `fetch`.
+void proxyChecked
+  .then(() => moderationFetch())
   .then(() =>
     attestationStatusChecks().catch((error: unknown) =>
       ok(`attestation-status checks ran (${error instanceof Error ? error.message : String(error)})`, false),

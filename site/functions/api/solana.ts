@@ -1,4 +1,6 @@
-// Cloudflare Pages Function. Set SOLANA_RPC_URL as a server-side environment secret.
+// Cloudflare Pages Function. The upstream is the SOLANA_RPC_URL environment secret when it is
+// set, and Solana's public mainnet endpoint otherwise, which is rate-limited and "not intended for
+// production applications" (https://solana.com/docs/references/clusters); see site/README.md.
 // Read-only method allowlist: wallet submission goes through the wallet's own RPC, and the list
 // is exactly the twelve methods `site/collect/` calls — nothing wider gets to spend the
 // operator's provider budget. It is exported so a test can assert that it
@@ -39,10 +41,11 @@ function shallow(value:unknown,depth:number):boolean{
   return true;
 }
 interface Env { SOLANA_RPC_URL?: string }
+export const PUBLIC_MAINNET='https://api.mainnet.solana.com';
 export async function onRequestPost({request,env}:{request:Request;env:Env}):Promise<Response> {
   const headers={'Content-Type':'application/json','Cache-Control':'no-store',...SECURITY};
   const unavailable=()=>new Response(JSON.stringify({error:{message:'Solana connection unavailable. Please retry.'}}),{status:502,headers});
-  if(!env.SOLANA_RPC_URL)return new Response(JSON.stringify({error:{message:'Collection service is not configured yet.'}}),{status:503,headers});
+  const upstreamUrl=env.SOLANA_RPC_URL||PUBLIC_MAINNET;
   // A MISSING Origin is untrusted, not trusted. The only legitimate caller is the same-origin
   // page, which always sends one; a header is forgeable, so this removes the trivial `curl`
   // path and nothing more. The bound on cost is the Cloudflare rate-limit rule, not this line.
@@ -57,7 +60,7 @@ export async function onRequestPost({request,env}:{request:Request;env:Env}):Pro
   if(!shallow(body.params,1))return refuse('Unsupported request',400);
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
   try {
-    const upstream=await fetch(env.SOLANA_RPC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:text,signal:controller.signal});
+    const upstream=await fetch(upstreamUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:text,signal:controller.signal});
     // Provider errors can include credentials/URLs. Never forward those details.
     if(!upstream.ok)return unavailable();
     // A declared oversize response is refused without buffering it; an undeclared one is

@@ -83,6 +83,8 @@
 # The collector: same-origin bundle, same-origin RPC proxy (/api/solana) plus devnet direct, the
 # two Arweave gateways for the print image, and blob: because the image bytes are hash-checked in
 # JS and only then handed to <img>. Links out to explorer.solana.com are navigations, not loads.
+# Both gateways are read at `/raw/<id>`, which answers 200 in place; `arweave.net/<id>` redirects
+# to a per-item `<hash>.arweave.net` host that this policy does not (and need not) allow.
 #
 # Only what the page uses. `collect/index.html` has no <style> block and no `style=` attribute,
 # `collect.css` has no url() or @import, and nothing in `site/collect/` ever touches `.style` or
@@ -92,16 +94,28 @@
 #
 # `require-trusted-types-for 'script'` turns the page's "no innerHTML anywhere" invariant
 # (`site/collect/page.ts`) from a convention reviewers enforce into one the
-# browser enforces: an assignment to a DOM XSS sink throws instead of executing. `trusted-types
-# 'none'` allows no policy to be created, so nothing can opt back out. Neither directive falls
-# back to `default-src`, so both are stated. Verified by loading the page under it.
+# browser enforces: an assignment to a DOM XSS sink throws instead of executing. Neither
+# directive falls back to `default-src`, so both are stated.
+#
+# `trusted-types default` is the narrowest exception that lets Mobile Wallet Adapter work.
+# `@solana-mobile/wallet-standard-mobile` builds its permission, connect, spinner and
+# wallet-not-found dialogs by assigning its own template strings to `innerHTML`, and a plain
+# string reaches a sink only through a policy named `default`, so no named policy can help. The
+# one policy (`site/collect/mwa.ts`) admits those templates by SHA-256 and nothing else, turns
+# their Google Fonts links into nothing, and refuses the library's one dynamic error line; no
+# other policy can be created. Dropping `require-trusted-types-for` instead would reopen every
+# sink on the page. The five `style-src` hashes are the same dialogs' `<style>` blocks, without
+# which they render unstyled at the foot of the page; their `style=` attributes stay blocked.
+# `scripts/check-site.ts` recomputes every digest from the installed, pinned package.
 #
 # `ws://localhost:*` is Mobile Wallet Adapter's browser transport: after the `solana-wallet://`
 # hand-off, Chrome on Android talks to the wallet over a WebSocket on a localhost port the wallet
 # chose. Without it a Seeker collector can open the wallet but the page never hears back.
-# `scripts/check-site.ts` extracts every connection origin from the built bundle and checks it here.
+# `http://localhost` is the one request it makes first, to raise Chrome's Local Network Access
+# permission prompt. `scripts/check-site.ts` extracts every connection origin from the built
+# bundle and checks it here.
 /collect/*
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self' ws://localhost:* https://api.devnet.solana.com https://turbo-gateway.com https://arweave.net; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'sha256-tmRbhDKtp/NkzzwS7ghxJMe1VTkenFoPVs4i/8YUH9Y=' 'sha256-sen7ZoAG9PuEEbYrzXrC+mgAQtKbEdz27Vl9VDk22b4=' 'sha256-a3+3UU0WYPDxSAQsmQ2ZP+l7uHX0qqkn0B97M/lHa2Y=' 'sha256-JL4jR/a9x8E6RvQBgmpjIKwquuV9zBrwhVjG11+WErU=' 'sha256-9y+0omBcAXmVSpYuadfUp/k8GxCIDiw2wrEyqM1cQnc='; img-src 'self' blob:; connect-src 'self' http://localhost ws://localhost:* https://api.devnet.solana.com https://turbo-gateway.com https://arweave.net; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; frame-ancestors 'none'
 
 # Digital Asset Links. Android reads `/.well-known/assetlinks.json` as JSON and will not accept it
 # served as anything else; the short max-age keeps a fingerprint rotation from being pinned in a

@@ -35,8 +35,10 @@ export const CLUSTER_NAME: ClusterName = resolveCluster(process.env.EXPO_PUBLIC_
 export const IS_MAINNET = CLUSTER_NAME === "mainnet-beta";
 
 /**
- * Optional HTTPS RPC proxy; public Solana endpoints are the fallback. There is no provider-key
- * variable: Metro inlines EXPO_PUBLIC_* values into the bundle, so credentials belong on the proxy.
+ * HTTPS RPC proxy; public Solana endpoints are the fallback. There is no provider-key variable:
+ * Metro inlines EXPO_PUBLIC_* values into the bundle, so credentials belong on the proxy. A
+ * mainnet release must set it: `npm run release:check` refuses one that is unset or names a
+ * public solana.com endpoint.
  */
 function resolveRpcOverride(raw: string | undefined): string | null {
   if (raw === undefined || raw === "") return null;
@@ -48,8 +50,12 @@ function resolveRpcOverride(raw: string | undefined): string | null {
   return raw;
 }
 
-/** Solana's public mainnet endpoint: rate-limited per IP (https://solana.com/docs/references/clusters). */
-const PUBLIC_MAINNET_ENDPOINT = "https://api.mainnet-beta.solana.com";
+/**
+ * Solana's public mainnet endpoint, as https://solana.com/docs/references/clusters names it:
+ * rate-limited and "not intended for production applications". A checked mainnet release never
+ * uses it; a devnet build reads it for the Seeker lookups (`MAINNET_READ_ENDPOINT`).
+ */
+const PUBLIC_MAINNET_ENDPOINT = "https://api.mainnet.solana.com";
 
 const RPC_OVERRIDE = resolveRpcOverride(process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
 export const RPC_ENDPOINT: string =

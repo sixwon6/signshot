@@ -2,34 +2,32 @@
  * The collector page itself: the screen, not the protocol.
  *
  * `browser.ts` accepts a link and hands the adapter for it to `run()`. This file owns wallet
- * discovery on Android (MWA) and elsewhere (Wallet Standard), quoting, the durable
- * pending-attempt safety, confirmation, availability wording, the device row, the open-in-app
- * control, the share card, the terms agreement, Report and Block, the moderation veil
- * (`src/moderation/core.ts`) and the error panel; it knows nothing about Metaplex Core plugins,
- * PDAs or instruction layouts. The adapter (`core.ts`) supplies the addresses, the reader, the
- * claim and the words that name its own costs, so a page change cannot quietly alter what a
- * collector is told they are paying for.
+ * discovery and signing through Wallet Standard (on Android, Mobile Wallet Adapter's registered
+ * wallet from `mwa.ts`), quoting, the durable pending-attempt safety, confirmation, availability
+ * wording, the device row, the open-in-app control, the share card, the terms agreement, Report
+ * and Block, the moderation veil (`src/moderation/core.ts`) and the error panel; it knows nothing
+ * about Metaplex Core plugins, PDAs or instruction layouts. The adapter (`core.ts`) supplies the
+ * addresses, the reader, the claim and the words that name its own costs, so a page change cannot
+ * quietly alter what a collector is told they are paying for.
  *
  * Rules the page keeps whatever it is showing:
  *   - an RPC endpoint and a program address are NEVER taken from the link, only from the build's
  *     reviewed deployment table;
  *   - success is proven ONLY by the permanent claim receipt, never by a wallet's signature;
- *   - nothing is ever assigned through `innerHTML`; every string from the chain or a gateway lands
- *     as `textContent`, and the CSP's `require-trusted-types-for 'script'` enforces that.
+ *   - nothing here is ever assigned through `innerHTML`; every string from the chain or a gateway
+ *     lands as `textContent`. The CSP's `require-trusted-types-for 'script'` enforces that, and its
+ *     one `default` policy (`mwa.ts`) admits Mobile Wallet Adapter's own dialogs by digest alone.
  */
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet } from "@wallet-standard/base";
 import type { StandardConnectFeature } from "@wallet-standard/features";
 import type { SolanaSignAndSendTransactionFeature } from "@solana/wallet-standard-features";
-import { transact } from "@solana-mobile/mobile-wallet-adapter-protocol-kit";
 import {
   SolanaMobileWalletAdapterProtocolError,
   SolanaMobileWalletAdapterProtocolErrorCode,
 } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import {
   address,
-  getAddressDecoder,
-  getBase64Encoder,
   getBase58Decoder,
   getTransactionEncoder,
   type Instruction,
@@ -55,6 +53,7 @@ import type { DeviceVerdict } from "../../publications/core/attestation";
 
 import { qrMatrix } from "./qr";
 import { DEVICE_LINE, deviceProblem, deviceVerdictRow, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "./summary";
+import { registerMobileWallet, SolanaMobileWalletAdapterWalletName } from "./mwa";
 
 export type { Cluster } from "../../publications/types";
 
@@ -244,17 +243,19 @@ class BrokenAttemptError extends Error {}
 /**
  * Did the wallet explicitly refuse to sign THIS request, so that nothing was sent? Only then may
  * the durable attempt be removed (`src/prints/collect.ts` does the same with `isSigningRefused`).
- * MWA says so with `ERROR_NOT_SIGNED`; a Wallet Standard wallet has no code, so its explicit
- * rejection is recognised by the sentence it throws. A closed association, a timeout or any
- * other failure proves nothing about whether the transaction left the wallet, so the attempt is
- * kept and the chain decides.
+ * MWA says so with `ERROR_NOT_SIGNED`, which its Wallet Standard wallet rethrows as the `cause` of
+ * a plain `Error`; any other wallet has no code, so its explicit rejection is recognised by the
+ * sentence it throws. A closed association, a timeout or any other failure proves nothing about
+ * whether the transaction left the wallet, so the attempt is kept and the chain decides.
  */
-function signingRefused(e: unknown, transport: "mwa" | "standard"): boolean {
-  if (transport === "mwa")
-    return (
-      e instanceof SolanaMobileWalletAdapterProtocolError &&
-      e.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED
-    );
+function signingRefused(e: unknown): boolean {
+  let cause: unknown = e;
+  for (let depth = 0; cause instanceof Error && depth < 4; depth++, cause = cause.cause)
+    if (
+      cause instanceof SolanaMobileWalletAdapterProtocolError &&
+      cause.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED
+    )
+      return true;
   const message = e instanceof Error ? e.message : typeof e === "string" ? e : "";
   return /user (rejected|declined|denied|cancel)/i.test(message);
 }
@@ -342,6 +343,7 @@ function showOpenInApp(url: string) {
 }
 
 export function run(adapter: Adapter) {
+  registerMobileWallet(chain, location.origin);
   const machine = adapter.edition;
   let loaded: Loaded | null = null,
     connection: Connection | null = null;
@@ -612,38 +614,6 @@ export function run(adapter: Adapter) {
       setButton();
     }
   }
-  async function connectMobile(): Promise<Connection> {
-    const identity = { name: "Signshot", uri: location.origin, icon: "/icon.png" };
-    const auth = await transact((wallet) => wallet.authorize({ chain, identity }));
-    const selected = auth.accounts[0];
-    if (!selected) throw new Error("No wallet account was selected.");
-    const walletAddress = getAddressDecoder().decode(getBase64Encoder().encode(selected.address));
-    return {
-      address: walletAddress,
-      send: async (tx, slot) =>
-        transact(async (wallet) => {
-          const next = await wallet.authorize({ chain, identity, auth_token: auth.auth_token });
-          if (
-            !next.accounts[0] ||
-            getAddressDecoder().decode(getBase64Encoder().encode(next.accounts[0].address)) !==
-              walletAddress
-          )
-            throw new WalletConnectionChangedError("Wallet account changed. Reconnect before collecting.");
-          const sigs = await wallet
-            .signAndSendTransactions({
-              transactions: [tx],
-              minContextSlot: Number(slot),
-              skipPreflight: false,
-            })
-            .catch((e: unknown) => {
-              if (signingRefused(e, "mwa")) throw new SigningRefusedError(e);
-              throw e;
-            });
-          // MWA can return null or short signatures; saving one would make the attempt unreadable.
-          return oneSignature(sigs);
-        }),
-    };
-  }
   type SupportedWallet = Wallet & {
     features: StandardConnectFeature & SolanaSignAndSendTransactionFeature;
   };
@@ -654,23 +624,25 @@ export function run(adapter: Adapter) {
       w.chains.includes(chain)
     );
   }
+  /**
+   * Mobile Wallet Adapter's wallet is registered for this page's chain alone and authorizes on
+   * it, so its first account is the one the wallet chose, as MWA's own `authorize` answers; the
+   * per-account chain and feature lists are the wallet's optional hints and are not required.
+   */
+  const usable = (w: Wallet, a: Wallet["accounts"][number]) =>
+    w.name === SolanaMobileWalletAdapterWalletName ||
+    (a.chains.includes(chain) && a.features.includes("solana:signAndSendTransaction"));
   async function connectStandard(w: SupportedWallet): Promise<Connection> {
     if (!w.features["solana:signAndSendTransaction"].supportedTransactionVersions.includes(0))
       throw new Error("This wallet does not support these Solana transactions.");
     const result = await w.features["standard:connect"].connect();
-    const account = result.accounts.find(
-      (a) => a.chains.includes(chain) && a.features.includes("solana:signAndSendTransaction"),
-    );
+    const account = result.accounts.find((a) => usable(w, a));
     if (!account) throw new Error("Choose a Solana account on this network.");
     return {
       address: account.address,
       send: async (tx, slot) => {
         const live = w.accounts.find((a) => a.address === account.address);
-        if (
-          !live ||
-          !live.chains.includes(chain) ||
-          !live.features.includes("solana:signAndSendTransaction")
-        )
+        if (!live || !usable(w, live))
           throw new WalletConnectionChangedError(
             "Wallet disconnected or changed networks. Reconnect to continue.",
           );
@@ -682,9 +654,10 @@ export function run(adapter: Adapter) {
             options: { minContextSlot: Number(slot), skipPreflight: false, commitment: "confirmed" },
           })
           .catch((e: unknown) => {
-            if (signingRefused(e, "standard")) throw new SigningRefusedError(e);
+            if (signingRefused(e)) throw new SigningRefusedError(e);
             throw e;
           });
+        // MWA can return null or short signatures; saving one would make the attempt unreadable.
         return oneSignature(results.map((r) => r.signature));
       },
     };
@@ -699,8 +672,11 @@ export function run(adapter: Adapter) {
       b.onclick = () => void connectAndQuote(connect);
       panel.append(b);
     };
-    if (android) add("Seed Vault / Android wallet", connectMobile);
-    for (const w of getWallets().get().filter(supported)) add(w.name, () => connectStandard(w));
+    for (const w of getWallets().get().filter(supported))
+      add(
+        w.name === SolanaMobileWalletAdapterWalletName ? "Seed Vault / Android wallet" : w.name,
+        () => connectStandard(w),
+      );
     if (!panel.childElementCount)
       message("Open this page in a Solana wallet browser, or use Chrome on your Seeker.");
   }

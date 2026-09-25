@@ -53,17 +53,20 @@ export async function inspectTransfer(
     account(endpoint, keys.print),
     account(endpoint, recipient),
   ]);
-  if (!assetAccount || assetAccount.owner !== MPL_CORE || assetAccount.executable)
-    throw new Error("The published NFT is not available on this network.");
+  // First: a burn whose fees Core has swept leaves a System-owned tombstone, which the ownership
+  // check below would misread as an unavailable asset.
   if (isBurnedPrintAccount(assetAccount))
     throw new Error("This digital print has been burned and cannot be sent.");
+  if (!assetAccount || assetAccount.owner !== MPL_CORE || assetAccount.executable)
+    throw new Error("The published NFT is not available on this network.");
   const asset = verifyPrintAsset(assetAccount.bytes, e, keys.print, 1);
   if (asset.uri !== `https://arweave.net/${metadataId}`)
     throw new Error("The NFT metadata does not match this photograph.");
   if (asset.owner !== owner)
     throw new Error("This wallet does not currently own this photo's NFT.");
   // A freeze is the owner's own doing and does not make the print a forgery — it makes it
-  // unsendable until it is lifted. Say that, rather than calling a valid print invalid.
+  // unsendable until it is lifted. Say that, rather than calling a valid print invalid. Only
+  // `FreezeDelegate` blocks `TransferV1`; `FreezeExecute` does not (`isFrozen`).
   if (isFrozen(asset))
     throw new Error("This NFT is frozen and cannot be sent until the freeze is removed.");
   // A recipient account may not exist at all — that is the normal case for a fresh wallet — but

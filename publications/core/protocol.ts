@@ -901,8 +901,9 @@ function readPlugin(
       type: "OwnerManaged",
       plugin: ownerManaged,
       authority,
-      // Only the two freeze plugins carry a flag we act on. The rest are recorded by type; their
-      // bodies are never interpreted, so a future field cannot change what we believe.
+      // Only the two freeze plugins carry a flag, and only `FreezeDelegate`'s blocks a send
+      // (`isFrozen`). The rest are recorded by type; their bodies are never interpreted, so a
+      // future field cannot change what we believe.
       frozen:
         ownerManaged === "FreezeDelegate" || ownerManaged === "FreezeExecute"
           ? readBool(r)
@@ -943,9 +944,17 @@ function readPlugin(
   }
 }
 
-/** Is this print frozen right now? A frozen print is valid; it just cannot be sent. */
+/**
+ * Is this print frozen against sending right now? Only `FreezeDelegate.frozen` blocks a transfer.
+ * `FreezeExecute` validates the Execute lifecycle event alone and has no transfer check
+ * (mpl-core `plugins/internal/owner_managed/freeze_execute.rs`;
+ * https://metaplex.com/docs/smart-contracts/core/plugins/freeze-execute), so a print it freezes
+ * still sends. A frozen print is valid; it just cannot be sent.
+ */
 export function isFrozen(asset: CoreAsset): boolean {
-  return asset.plugins.some((p) => p.type === "OwnerManaged" && p.frozen === true);
+  return asset.plugins.some(
+    (p) => p.type === "OwnerManaged" && p.plugin === "FreezeDelegate" && p.frozen === true,
+  );
 }
 
 /**
@@ -1353,14 +1362,17 @@ export async function readPublication(
 }
 
 /**
- * Core's burn tombstone: close_program_account keeps Core ownership and resizes to exactly
- * Key::Uninitialized (one zero byte). An absent, empty or differently owned account is NOT
- * burn evidence. https://www.metaplex.com/docs/smart-contracts/core/burn
+ * Core's burn tombstone, in both of its forms: exactly `Key::Uninitialized` (one zero byte). A
+ * burn resizes the asset to it and keeps it Core-owned, holding the uncollected fees; Core's
+ * permissionless `collect` later sweeps those fees and assigns the one-byte account to the System
+ * program (mpl-core `processor/collect.rs`; https://metaplex.com/docs/smart-contracts/core/burn).
+ * Nothing but that sweep can leave one zero byte in a System-owned account at a program's PDA.
+ * An absent, empty or otherwise owned account is NOT burn evidence.
  * Call only for a canonical, already-issued print address; the byte alone proves nothing.
  */
 export function isBurnedPrintAccount(raw: Awaited<ReturnType<typeof account>>): boolean {
   return Boolean(
-    raw && raw.owner === MPL_CORE && raw.executable === false &&
+    raw && (raw.owner === MPL_CORE || raw.owner === SYSTEM) && raw.executable === false &&
       raw.bytes.length === 1 && raw.bytes[0] === 0,
   );
 }

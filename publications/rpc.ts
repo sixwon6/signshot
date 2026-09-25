@@ -206,11 +206,14 @@ const FILE_TOO_LARGE = "Edition file is too large.";
 const FILE_MISMATCH = "The published file does not match its onchain fingerprint.";
 
 /**
- * Gateways in order. `arweave.net` first because it is the only host an on-chain `uri` may name;
- * the Turbo gateway's `/raw/` path returns the exact stored bytes a hash check needs.
+ * Gateways in order, both on `/raw/`, which answers 200 with the exact stored bytes a hash check
+ * needs. `arweave.net` first because it is the only host an on-chain `uri` may name, and that
+ * `uri` stays `https://arweave.net/<id>`; only the read path differs. The bare `arweave.net/<id>`
+ * answers 302 to a per-item sandbox host (`<hash>.arweave.net`), which the collect page's
+ * `connect-src` does not allow, so reading it first failed on every page load.
  */
 const ARWEAVE_GATEWAYS: readonly string[] = [
-  "https://arweave.net/",
+  "https://arweave.net/raw/",
   "https://turbo-gateway.com/raw/",
 ];
 /**

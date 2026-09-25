@@ -47,7 +47,7 @@ const registry = await build({
   format: "esm",
   define: DEFINE,
 });
-const { TRUSTED } = await import(
+const { TRUSTED, PROGRAM_IMAGES } = await import(
   "data:text/javascript;base64," + Buffer.from(registry.outputFiles[0].text, "utf8").toString("base64")
 );
 const clusters = Object.entries(TRUSTED).filter(([, programs]) => programs.length);
@@ -56,6 +56,17 @@ if (!clusters.length)
     "The collector would trust no program on any cluster and would refuse every link. Commit a " +
       "reviewed address to DEPLOYMENTS or HISTORICAL in publications/deployments.ts (see site/README.md).",
   );
+// A trusted program with no reviewed image is refused at every collect and buy
+// (`publications/programImage.ts`), so it is a broken page rather than a stricter one.
+for (const [cluster, programs] of clusters)
+  for (const program of programs) {
+    const image = PROGRAM_IMAGES[cluster]?.[program];
+    if (!image || !/^[0-9a-f]{64}$/.test(image.sha256) || !(image.bytes > 0) || image.upgradeAuthority === undefined)
+      throw new Error(
+        `The ${cluster} program ${program} is trusted but has no PROGRAM_IMAGES record (digest, length ` +
+          "and upgrade authority) in publications/deployments.ts, so the page would refuse every collect.",
+      );
+  }
 
 // A clean output directory: a file removed from `public/` must not linger in the next deploy.
 await rm(dist, { recursive: true, force: true });

@@ -380,12 +380,6 @@ export const publish = {
     "An album already exists at this address. Choose a different name and create a new album; the one that exists is untouched and still holds its photographs.",
   /** The button beside `fallbackWithoutAlbum`. */
   publishWithoutAlbum: "Publish without the album",
-  /**
-   * The deployed program's digest differs from the reviewed one. A warning, never a refusal, so an
-   * unreachable endpoint cannot block publishing.
-   */
-  programReplaced:
-    "The publication program at this address is not the build this app reviewed. You can still publish; check before approving.",
   /** The same fact for `create_album`, whose evidence is the group account rather than an edition. */
   albumReviewMismatch:
     "The transaction your wallet sent is not the one shown in this album review. The album exists and is held by this wallet, but check the transaction in your wallet or an explorer before taking another action.",

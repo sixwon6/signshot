@@ -29,6 +29,7 @@ import {
 } from "../../publications/core/protocol";
 import { verifyGenesisToken } from "../../publications/core/genesisToken";
 import { checkDevice, publicationTime, readRevocationList } from "../../publications/core/attestationCheck";
+import { assertReviewedProgram } from "../../publications/programImage";
 import type { CoreMetadata } from "../../publications/types";
 
 import {
@@ -120,6 +121,9 @@ export function coreAdapter(edition: string): Adapter {
     hasCollected: (wallet) => hasCollected(endpoint, current(), wallet),
     async claim(wallet, number) {
       const e = current();
+      // The collector signs and pays, and a signer's privileges reach every program it calls, so
+      // a program whose bytes or upgrade authority are not the reviewed ones is refused first.
+      await assertReviewedProgram(endpoint, e.program, cluster);
       // The print PDA this claim creates, recorded in the durable attempt before the wallet opens.
       const keys = await addresses(e.program, e.creator, e.nonce, number, wallet);
       // The live offer, read immediately before quoting, never the one loaded with the edition:

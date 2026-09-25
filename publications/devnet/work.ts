@@ -606,7 +606,7 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
     ),
   );
   console.log("DEPLOYED AND BYTE-VERIFIED", c.program.address);
-  printDeploymentsEntry(c.program.address, sha256, binary.length);
+  printDeploymentsEntry(c.program.address, sha256, binary.length, c.payer.address);
 }
 
 /**
@@ -615,7 +615,7 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
  * reviewed allow-list of programs this app will talk to, so a deployment adds itself to it only
  * through a human edit.
  */
-function printDeploymentsEntry(program: string, sha256: string, bytes: number) {
+function printDeploymentsEntry(program: string, sha256: string, bytes: number, authority: string) {
   const grouped = String(bytes).replace(/\B(?=(\d{3})+(?!\d))/g, "_");
   console.log(`
 ================ PASTE INTO publications/deployments.ts ================
@@ -628,12 +628,14 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number) {
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
   ],
 
-2. PROGRAM_IMAGES.devnet — add the reviewed ELF digest of what was just byte-verified:
+2. PROGRAM_IMAGES.devnet — add the reviewed ELF digest and upgrade authority of what was just
+   byte-verified (publish, collect and buy refuse a program without both):
 
     // The devnet acceptance deployment with the Genesis Token accounts (devnet-genesis build).
     "${program}": {
       sha256: "${sha256}",
       bytes: ${grouped},
+      upgradeAuthority: "${authority}",
       source: "devnet acceptance build, publications/devnet session",
     },
 

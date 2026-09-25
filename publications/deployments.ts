@@ -29,7 +29,7 @@ export const PLACEHOLDER_PROGRAMS: readonly string[] = [
  */
 export const HISTORICAL: Record<Cluster, readonly string[]> = {
   // The devnet acceptance deployment. It is still upgradeable, so PROGRAM_IMAGES pins its
-  // reviewed ELF digest. Devnet only: a mainnet override naming it is refused.
+  // reviewed ELF digest and upgrade authority. Devnet only: a mainnet override naming it is refused.
   devnet: [
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
@@ -38,29 +38,38 @@ export const HISTORICAL: Record<Cluster, readonly string[]> = {
 };
 
 /**
- * The reviewed ELF digest per address. An upgradeable program's bytes can change under the same
- * address; `programImage.ts` compares against this pin and only warns on a mismatch.
+ * The reviewed image per address: the ELF digest and who may replace it. An upgradeable program's
+ * bytes can change under the same address, and a signer's privileges reach every program it
+ * calls, so publish, collect and buy refuse unless the deployed bytes hash to `sha256` and the
+ * upgrade authority is `upgradeAuthority` (`programImage.ts`). Every trusted program needs one;
+ * `npm test` and the site build refuse a trusted address without it.
  */
-type ProgramImage = {
-  /** SHA-256 of the deployed ELF. */
+export type ProgramImage = {
+  /** SHA-256 of the deployed ELF: the ProgramData account's bytes after its 45-byte header. */
   sha256: string;
   bytes: number;
+  /** The ProgramData account's upgrade authority, or `null` for an immutable program. */
+  upgradeAuthority: string | null;
   /** Where that digest was written down and by whom. */
   source: string;
 };
 
 export const PROGRAM_IMAGES: Record<Cluster, Record<string, ProgramImage>> = {
   devnet: {
-    // Byte-verified current build with paid sales, deployed 2026-09-16.
+    // Byte-verified current build with paid sales, deployed 2026-09-16. Authority read from its
+    // ProgramData account (BrcFJBrcj18FcPGfFJFZnNJirnaV45LcoRLibm7hqQ2u) on 2026-09-24.
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU": {
       sha256: "aa59dbe513a5628b2c8944e8d36d9a250a723ddbf525d9776b5b290562a1aacf",
       bytes: 438_912,
+      upgradeAuthority: "6r7wvBV2WR8L1GHJ1FV41j4JrqBxYfxQN3Xj7L2dPAuv",
       source: "2026-09-16 devnet acceptance build, publications/devnet session",
     },
-    // The devnet acceptance deployment.
+    // The devnet acceptance deployment. Authority read from its ProgramData account
+    // (3mGafMt6aGVM9Hnxg1zsQ9bVGJKTX5FrwqqQYEPGC11C) on 2026-09-24.
     BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq: {
       sha256: "c3566d45ef4bdd4ad03dc8ee4cf25ebdf74fe83033cdadfc5d16289626deb105",
       bytes: 391_960,
+      upgradeAuthority: "7fuyVC4K1hifTmUJhCzdpzf6BpinehZRwNAKhCdXppPK",
       source: "devnet acceptance build",
     },
   },

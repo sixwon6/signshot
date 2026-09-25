@@ -51,6 +51,7 @@ import {
 } from "../../publications/core/protocol";
 import { reviewedFingerprint } from "../../publications/core/transferReceipt";
 import { isTrustedDeployment } from "../../publications/deployments";
+import { assertReviewedProgram } from "../../publications/programImage";
 import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
 import { safeErrorText } from "../ui/errorText";
 import {
@@ -487,6 +488,9 @@ export async function prepareCollect(c: Collectable, wallet: string): Promise<Co
   // broadcasts to.
   await assertEndpointCluster();
   if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
+  // The collector signs and pays, and a signer's privileges reach every program it calls: the
+  // deployed bytes and upgrade authority must still be the reviewed ones.
+  await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
   // `publish` initialised the creator's receipt at ["claim", edition, creator] and `struct Collect`
   // declares that same account `init`, so the program would reject this before it did anything
   // else. Refused here, with the reason, rather than as a simulation failure.
@@ -584,6 +588,8 @@ export async function sendCollect(
 
     const state = await getCollectState(c, collector);
     if (state.eligibility !== "collect") throw refusal(state);
+    // Again right before the wallet opens: two header reads while the reviewed slot is cached.
+    await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
 
     let attempt: CollectAttempt | undefined;
     onProgress?.("wallet");

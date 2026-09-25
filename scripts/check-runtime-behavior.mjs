@@ -552,5 +552,174 @@ if (!process.argv.includes("--worker")) {
   finishRemote();
   await staged;
   assert.equal(freshShown.length, 0, "late remote results must not overwrite a newer photo selection");
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage");
+
+  // Arweave reads: `/raw/` on arweave.net first (the bare path redirects to a sandbox host the
+  // collect page's CSP refuses), the Turbo gateway second. The on-chain `uri` is untouched.
+  const { sha256: sha256Of } = await import("@noble/hashes/sha2.js");
+  const { bytesToHex: hexOf } = await import("@noble/hashes/utils.js");
+  const { arweaveBytes } = await import("../publications/rpc.ts");
+  const realFetch = globalThis.fetch;
+  const arweaveId = "A".repeat(43);
+  const storedBytes = new TextEncoder().encode('{"name":"x"}');
+  const gatewayRequests = [];
+  try {
+    globalThis.fetch = async url => {
+      gatewayRequests.push(String(url));
+      return new Response(storedBytes, { headers: { "content-length": String(storedBytes.length) } });
+    };
+    assert.deepEqual(await arweaveBytes(arweaveId, hexOf(sha256Of(storedBytes))), storedBytes);
+    assert.deepEqual(gatewayRequests, [`https://arweave.net/raw/${arweaveId}`],
+      "documents and images are read from arweave.net/raw/, which answers without a redirect");
+    gatewayRequests.length = 0;
+    globalThis.fetch = async url => {
+      gatewayRequests.push(String(url));
+      return String(url).startsWith("https://arweave.net/")
+        ? new Response("", { status: 404 })
+        : new Response(storedBytes, { headers: { "content-length": String(storedBytes.length) } });
+    };
+    assert.deepEqual(await arweaveBytes(arweaveId, hexOf(sha256Of(storedBytes))), storedBytes);
+    assert.deepEqual(gatewayRequests, [`https://arweave.net/raw/${arweaveId}`, `https://turbo-gateway.com/raw/${arweaveId}`],
+      "the Turbo gateway's /raw/ stays the fallback");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // The deployed-program check refuses publish, collect and buy unless the ProgramData bytes hash
+  // to the pin and the upgrade authority is the recorded one. Headers every time; bytes per slot.
+  const { assertProgramImage, assertReviewedProgram, PROGRAM_CHANGED } = await import("../publications/programImage.ts");
+  const { CLUSTERS, TRUSTED, pinnedImage } = await import("../publications/deployments.ts");
+  const loader = "BPFLoaderUpgradeab1e11111111111111111111111";
+  const pinnedProgram = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
+  const recordedAuthority = "6r7wvBV2WR8L1GHJ1FV41j4JrqBxYfxQN3Xj7L2dPAuv";
+  const [programDataKey] = await kit.getProgramDerivedAddress({
+    programAddress: kit.address(loader), seeds: [kit.getAddressEncoder().encode(kit.address(pinnedProgram))] });
+  const elf = new Uint8Array(300_000).map((_, i) => (i * 31 + 7) & 255);
+  const image = { sha256: hexOf(sha256Of(elf)), bytes: elf.length, upgradeAuthority: recordedAuthority, source: "test" };
+  const chain = {
+    program: new Uint8Array([2, 0, 0, 0, ...kit.getAddressEncoder().encode(programDataKey)]),
+    programOwner: loader, slot: 100n, authority: recordedAuthority, elf, space: undefined,
+  };
+  const programDataBytes = () => {
+    const header = new Uint8Array(45);
+    const view = new DataView(header.buffer);
+    view.setUint32(0, 3, true);
+    view.setBigUint64(4, chain.slot, true);
+    if (chain.authority) {
+      header[12] = 1;
+      header.set(kit.getAddressEncoder().encode(kit.address(chain.authority)), 13);
+    }
+    return new Uint8Array([...header, ...chain.elf]);
+  };
+  const reads = { header: 0, bytes: 0 };
+  const serveProgram = async (_url, options) => {
+    const { method, params: [key, { dataSlice }] } = JSON.parse(options.body);
+    assert.equal(method, "getAccountInfo");
+    const data = key === pinnedProgram ? chain.program : key === programDataKey ? programDataBytes() : null;
+    if (!data) return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: null } }));
+    if (key === programDataKey) reads[dataSlice.length === 45 ? "header" : "bytes"] += 1;
+    const slice = data.slice(dataSlice.offset, dataSlice.offset + dataSlice.length);
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: {
+      owner: key === pinnedProgram ? chain.programOwner : loader, executable: key === pinnedProgram,
+      lamports: 1, data: [Buffer.from(slice).toString("base64"), "base64"], space: chain.space ?? data.length } } }));
+  };
+  const endpoint = "https://rpc.test";
+  const check = scope => assertProgramImage(endpoint, pinnedProgram, image, scope);
+  const programRefused = new RegExp(PROGRAM_CHANGED.replace(/\./g, "\\."));
+  try {
+    globalThis.fetch = serveProgram;
+    await check("a");
+    assert.deepEqual(reads, { header: 1, bytes: 2 }, "the first check reads the header and the ELF in bounded slices");
+    await check("a");
+    assert.deepEqual(reads, { header: 2, bytes: 2 }, "the same deployment slot is not downloaded twice");
+    chain.slot = 101n;
+    await check("a");
+    assert.deepEqual(reads, { header: 3, bytes: 4 }, "a new deployment slot is hashed again");
+    chain.elf = elf.map((byte, i) => (i === 299_999 ? byte ^ 1 : byte));
+    chain.slot = 102n;
+    await assert.rejects(check("a"), programRefused, "replaced bytes refuse");
+    chain.elf = elf;
+    chain.authority = "11111111111111111111111111111112";
+    const before = reads.bytes;
+    await assert.rejects(check("a"), programRefused, "a different upgrade authority refuses");
+    assert.equal(reads.bytes, before, "an authority mismatch is settled from the header alone");
+    chain.authority = null;
+    chain.slot = 103n;
+    await check("a");
+    chain.authority = recordedAuthority;
+    chain.space = 45 + elf.length + 8;
+    await assert.rejects(check("b"), programRefused, "a reported length that differs refuses without a download");
+    chain.space = undefined;
+    chain.programOwner = "BPFLoader2111111111111111111111111111111111";
+    await assert.rejects(check("c"), programRefused, "a program under another loader refuses");
+    chain.programOwner = loader;
+    chain.program = new Uint8Array([2, 0, 0, 0, ...new Uint8Array(32)]);
+    await assert.rejects(check("d"), programRefused, "a program account pointing elsewhere refuses");
+    await assert.rejects(assertReviewedProgram(endpoint, pinnedProgram, "mainnet-beta"), programRefused,
+      "a program with no record on the cluster refuses");
+    globalThis.fetch = async () => new Response("", { status: 503 });
+    await assert.rejects(check("e"), error => !programRefused.test(error.message),
+      "an unreachable endpoint is a network failure, never a changed program");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  for (const cluster of CLUSTERS)
+    for (const program of TRUSTED[cluster]) {
+      const record = pinnedImage(program, cluster);
+      assert.ok(record && /^[0-9a-f]{64}$/.test(record.sha256) && record.bytes > 0 &&
+        (record.upgradeAuthority === null || kit.isAddress(record.upgradeAuthority)),
+        `${cluster} ${program} is trusted, so it needs a digest, a length and an upgrade authority`);
+    }
+
+  // Send: only FreezeDelegate blocks a transfer. A burn's tombstone reads as burned before and
+  // after Core's `collect` sweeps its fees and hands the one-byte account to the System program.
+  const protocol = await import("../publications/core/protocol.ts");
+  const withPlugin = (plugin, frozen) => ({ plugins: [{ type: "OwnerManaged", plugin, authority: { kind: "Owner" }, frozen }] });
+  assert.equal(protocol.isFrozen(withPlugin("FreezeExecute", true)), false, "FreezeExecute blocks Execute, never Transfer");
+  assert.equal(protocol.isFrozen(withPlugin("FreezeDelegate", true)), true);
+  assert.equal(protocol.isFrozen(withPlugin("FreezeDelegate", false)), false);
+  const tombstone = (owner, bytes) => ({ owner, executable: false, data: ["", "base64"], bytes: new Uint8Array(bytes) });
+  assert.equal(protocol.isBurnedPrintAccount(tombstone(protocol.MPL_CORE, [0])), true);
+  assert.equal(protocol.isBurnedPrintAccount(tombstone(protocol.SYSTEM_PROGRAM, [0])), true, "a swept tombstone is still a burn");
+  for (const [owner, bytes] of [[protocol.SYSTEM_PROGRAM, []], [protocol.SYSTEM_PROGRAM, [1]], [protocol.SYSTEM_PROGRAM, [0, 0]],
+    ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", [0]]])
+    assert.equal(protocol.isBurnedPrintAccount(tombstone(owner, bytes)), false);
+  assert.equal(protocol.isBurnedPrintAccount(null), false);
+  const creator = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+  const nonce = "d2ebdf80988d559aaf5bd5c405f3fd314bee061eaac0add45b50ae6c16147954";
+  const issued = { program: pinnedProgram, state: { creator, nonce, minted: 2, uri: "https://arweave.net/" + arweaveId } };
+  let heldAccount = { owner: protocol.SYSTEM_PROGRAM, bytes: [0] };
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 },
+      value: heldAccount && { owner: heldAccount.owner, executable: false, lamports: 897_840, space: heldAccount.bytes.length,
+        data: [Buffer.from(heldAccount.bytes).toString("base64"), "base64"] } } }));
+    assert.equal((await protocol.readPrintState(endpoint, issued, 2)).status, "burned", "an issued print swept by Core reads as burned");
+    assert.equal((await protocol.readPrintState(endpoint, issued, 3)).status, "unavailable", "an unissued number proves nothing");
+    heldAccount = { owner: protocol.SYSTEM_PROGRAM, bytes: [] };
+    assert.equal((await protocol.readPrintState(endpoint, issued, 2)).status, "unavailable");
+    heldAccount = { owner: protocol.SYSTEM_PROGRAM, bytes: [0] };
+    const { inspectTransfer } = await import("../publications/core/transfer.ts");
+    const keys = await protocol.addresses(pinnedProgram, creator, nonce);
+    await assert.rejects(inspectTransfer(endpoint, { program: pinnedProgram, creator, nonce, edition: keys.edition, collection: keys.collection },
+      arweaveId, recordedAuthority, creator), /burned/, "Send says burned, not unavailable, after the sweep");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // A mainnet release needs its own RPC: unset, or a public solana.com host, fails release:check.
+  const { rpcRefusal } = await import("./check-release-config.ts");
+  for (const value of [undefined, "", " "])
+    assert.match(rpcRefusal("mainnet-beta", value), /not set/);
+  for (const value of ["https://api.mainnet.solana.com", "https://api.mainnet-beta.solana.com/", "https://API.Mainnet.Solana.com./"])
+    assert.match(rpcRefusal("mainnet-beta", value), /public solana\.com endpoint/);
+  assert.match(rpcRefusal("mainnet-beta", "http://rpc.example.com"), /https/);
+  assert.equal(rpcRefusal("mainnet-beta", "https://rpc.example.com/?api-key=1"), null);
+  assert.equal(rpcRefusal("mainnet-beta", "https://notsolana.com"), null);
+  assert.equal(rpcRefusal("devnet", undefined), null, "a devnet build may use the public devnet endpoint");
+  assert.ok(!rpcRefusal("mainnet-beta", "https://api.mainnet.solana.com/?api-key=SECRET").includes("SECRET"),
+    "the refusal never repeats a value that can carry a provider key");
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8"),
+    /PUBLIC_MAINNET_ENDPOINT = "https:\/\/api\.mainnet\.solana\.com"/,
+    "the public fallback is the host https://solana.com/docs/references/clusters names");
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, release RPC");
 }

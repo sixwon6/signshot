@@ -12,7 +12,8 @@ assert.equal(process.env.EXPO_PUBLIC_SOLANA_CLUSTER, "devnet",
   "Set EXPO_PUBLIC_SOLANA_CLUSTER=devnet before checking this test build");
 
 const { configuredProgram, programFeatures } = await import("../publications/deployments.ts");
-const { deploymentStatus } = await import("../publications/programImage.ts");
+const { assertReviewedProgram } = await import("../publications/programImage.ts");
+const { pinnedImage } = await import("../publications/deployments.ts");
 const { request } = await import("../publications/rpc.ts");
 const { MPL_CORE } = await import("../publications/core/protocol.ts");
 const { APP_IDENTITY } = await import("../src/solana/appIdentity.ts");
@@ -46,10 +47,10 @@ if (checks.every(check => check.passed)) {
     const { value } = await request(endpoint, "getAccountInfo",
       [program, { encoding: "base64", commitment: "confirmed" }]);
     assert.equal(value?.executable, true, "Configured program is not executable");
-    const status = await deploymentStatus(endpoint, program, "devnet");
-    assert.equal(status.available, true, "Cannot read deployed program bytes");
-    assert.equal(status.matchesPin, true, "Deployed bytes do not match the reviewed pin");
-    return `${status.bytes} bytes; SHA-256 ${status.sha256}; ${status.upgradeable ? "upgradeable" : "immutable"}`;
+    // The same check publish, collect and buy run: reviewed bytes under the recorded authority.
+    await assertReviewedProgram(endpoint, program, "devnet");
+    const image = pinnedImage(program, "devnet");
+    return `${image.bytes} bytes; SHA-256 ${image.sha256}; ${image.upgradeAuthority ? `upgrade authority ${image.upgradeAuthority}` : "immutable"}`;
   });
   await check("Metaplex Core", async () => {
     const { value } = await request(endpoint, "getAccountInfo",

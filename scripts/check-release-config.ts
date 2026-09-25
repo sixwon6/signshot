@@ -10,9 +10,10 @@
  * them and records them in `.expo/release/config.json`.
  *
  * Refuses when a `.env*.local` file exists, when the cluster is not mainnet-beta without
- * `--allow-cluster devnet`, when no program is configured, or when Google's live attestation root
- * list is not exactly the roots this build pins (a network check, so not part of `npm test`).
- * Never prints the RPC URL, which can carry a provider key.
+ * `--allow-cluster devnet`, when a mainnet build has no RPC override or names a public solana.com
+ * endpoint, when no program is configured, or when Google's live attestation root list is not
+ * exactly the roots this build pins (a network check, so not part of `npm test`). Never prints the
+ * RPC URL, which can carry a provider key.
  *
  * `resolveCluster` is duplicated from `src/solana/cluster.ts`, which cannot load under plain Node.
  */
@@ -97,6 +98,33 @@ function clusterRefusal(cluster: Cluster, allowCluster: Cluster | undefined): st
     `    A store artifact built against a test network is indistinguishable from a real one once it is\n` +
     `    signed. If that is what you mean, say so: npm run release:apk -- --allow-cluster ${cluster}`
   );
+}
+
+/**
+ * The refusal for a mainnet build's RPC endpoint, or `null` when it is allowed. Without
+ * `EXPO_PUBLIC_SOLANA_RPC_URL` the app falls back to Solana's public mainnet endpoint, which
+ * https://solana.com/docs/references/clusters says is "not intended for production applications";
+ * naming a public solana.com host outright is the same thing. The value is never repeated: it can
+ * carry a provider key.
+ */
+export function rpcRefusal(cluster: Cluster, raw: string | undefined): string | null {
+  if (cluster !== "mainnet-beta") return null;
+  const fix =
+    `    Set EXPO_PUBLIC_SOLANA_RPC_URL to the HTTPS proxy of a dedicated RPC provider; Solana's public\n` +
+    `    endpoints are "not intended for production applications" (https://solana.com/docs/references/clusters).`;
+  if (raw === undefined || raw.trim() === "")
+    return `EXPO_PUBLIC_SOLANA_RPC_URL is not set, so this mainnet build would use Solana's public endpoint.\n${fix}`;
+  let host: string;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return `EXPO_PUBLIC_SOLANA_RPC_URL is not an https:// URL.\n${fix}`;
+    host = url.hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return `EXPO_PUBLIC_SOLANA_RPC_URL is not a URL.\n${fix}`;
+  }
+  if (host === "solana.com" || host.endsWith(".solana.com"))
+    return `EXPO_PUBLIC_SOLANA_RPC_URL points at a public solana.com endpoint.\n${fix}`;
+  return null;
 }
 
 /**
@@ -207,11 +235,20 @@ async function main(argv: readonly string[]): Promise<void> {
   const cluster = resolveCluster(process.env.EXPO_PUBLIC_SOLANA_CLUSTER);
   const refusal = clusterRefusal(cluster, allowCluster);
   if (refusal) fail(refusal);
+  const rpc = rpcRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
+  if (rpc) fail(rpc);
 
   // Imported only now: deployments.ts reads the EXPO_PUBLIC_EDITIONS_* overrides at module load.
-  const { configuredProgram } = await import("../publications/deployments");
+  const { configuredProgram, pinnedImage } = await import("../publications/deployments");
   const resolved = resolveProgram(cluster, configuredProgram);
   if ("refusal" in resolved) fail(resolved.refusal);
+  // Publishing refuses a program whose bytes and upgrade authority are not on record
+  // (`publications/programImage.ts`), so a build without that record cannot publish at all.
+  if (!pinnedImage(resolved.program, cluster))
+    fail(
+      `${resolved.program} has no PROGRAM_IMAGES record for "${cluster}" in publications/deployments.ts.\n` +
+        `    Record its ELF digest, length and upgrade authority; without them every publish is refused.`,
+    );
 
   const roots = await attestationRootsRefusal();
   if (roots) fail(roots);

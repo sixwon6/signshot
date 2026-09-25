@@ -68,11 +68,11 @@ import {
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import { deploymentNotice, sessionDeploymentStatus } from "./deploymentNotice";
+import { assertReviewedProgram } from "../../publications/programImage";
 import { useTermsAgreement } from "../moderation/store";
 import { TermsAgreement } from "../moderation/TermsAgreement";
 import { programFallback } from "./programVerdict";
-import { CLUSTER_NAME as cluster, IS_MAINNET } from "../solana/cluster";
+import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT } from "../solana/cluster";
 import {
   isChangedQuote,
   isExpiredQuote,
@@ -81,6 +81,15 @@ import {
 } from "../solana/walletErrors";
 
 /** The chain this build publishes on, and therefore the deployment a fresh publication uses. */
+
+/**
+ * Before a wallet signs anything `era_editions` runs: the draft's program, or the one a fresh
+ * publication uses, must still be the reviewed bytes under the recorded upgrade authority
+ * (`publications/programImage.ts`). Refuses with one line otherwise.
+ */
+async function checkProgram(program?: string) {
+  await assertReviewedProgram(RPC_ENDPOINT, program ?? configuredProgram(cluster), cluster);
+}
 
 export function PrintSheet({
   record,
@@ -141,8 +150,6 @@ export function PrintSheet({
   const [published, setPublished] = useState(false);
   // The action the program's own verdict says would work instead of the failure on screen.
   const [fallback, setFallback] = useState<"publish-without-album" | "new-album" | null>(null);
-  // Warning only, read once per session, and absent whenever there is nothing to say.
-  const [programNotice, setProgramNotice] = useState<string | null>(null);
   const [access, setAccess] = useState<"fresh" | "saved" | "blocked">(
     "blocked",
   );
@@ -222,10 +229,8 @@ export function PrintSheet({
           setCount(String(state.draft.edition.supply));
         }
         if (state.reason) setStatus(state.reason);
-        // This advisory check must not keep local publication fields disabled while offline.
-        void sessionDeploymentStatus().then(deployment => {
-          if (live) setProgramNotice(deploymentNotice(deployment));
-        }).catch(() => {});
+        // Warms the program check while the details are typed; publishing asks again and refuses.
+        void checkProgram(state.draft?.edition.program).catch(() => {});
       } catch (e) {
         if (live) setError(safeErrorText(e));
       } finally {
@@ -249,6 +254,8 @@ export function PrintSheet({
       storage: "Checking image storage…",
       estimate: "Calculating a fresh transaction cost…",
     }[stage]));
+    // Only a quote to sign reaches the program; an edition already on chain needs no check.
+    if (next.step === "sign") await checkProgram(current.edition.program);
     setQuote(next);
     if (next.step === "ready") {
       setPublished(true);
@@ -331,6 +338,7 @@ export function PrintSheet({
     setBusy(true);
     setError("");
     try {
+      if (quote.step === "sign") await checkProgram(draft.edition.program);
       const receipt = await sendSetup(record, draft, session, quote, (phase) =>
         setStatus(
           {
@@ -432,6 +440,7 @@ export function PrintSheet({
       const next = await prepareAlbum(newAlbum, wallet);
       if (next.step === "ready") adoptAlbum(next.record);
       else {
+        await checkProgram(next.record.program);
         setAlbumQuote(next);
         setStatus("Review the album cost below. Nothing has been created by this check.");
       }
@@ -459,6 +468,7 @@ export function PrintSheet({
     setError("");
     try {
       const wallet = albumQuote.record.creator;
+      await checkProgram(albumQuote.record.program);
       const record = await createAlbum(wallet, session, albumQuote, (stage) =>
         setStatus(
           {
@@ -994,17 +1004,6 @@ export function PrintSheet({
               </>
             ) : (
               <>
-                {quote?.step === "sign" && (
-                  <>
-                    {/* The cost is itemised in the receipt; only an unreviewed program image is
-                        flagged at the point of action. */}
-                    {!!programNotice && (
-                      <Text style={sheetStyles.help} accessibilityLiveRegion="polite">
-                        {programNotice}
-                      </Text>
-                    )}
-                  </>
-                )}
                 {!!(error || draft?.storageError?.message || status) && (
                   <Text
                     style={error || draft?.storageError ? sheetStyles.error : sheetStyles.help}

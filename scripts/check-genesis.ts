@@ -230,6 +230,32 @@ ok("an unsealed claim reads as no claim on mainnet, and as the claim on devnet",
 ok("loadPublication reads the claim through that rule",
   /publishedGenesisClaim\(cluster, claimed, sealed\)/.test(readFileSync(resolve(here, "..", "publications", "core", "protocol.ts"), "utf8")));
 
+// The devnet acceptance (`publications/devnet/test.ts`) writes its documents with this `metadata()`
+// and reads them back through `loadTrustedEdition` on a deployment with royalties and Seeker-only
+// editions, where the earlier formats are refused: the harness's own document, built the same way
+// (no attestation, a claim or none), must read back there.
+const harness = readFileSync(resolve(here, "..", "publications", "devnet", "test.ts"), "utf8");
+ok("the devnet acceptance writes metadata() canonicalized, as the app does",
+  harness.includes("const bytes = utf8(canonicalize(metadata(e) as unknown as JcsValue));"));
+{
+  const ROYALTIES_PROGRAM = address("41UayL5qxYF6V8R7BG9aTtVR5nAdhE2iooWoKWB9kQXC");
+  const acceptance: CoreMetadata = {
+    ...e, program: ROYALTIES_PROGRAM, cluster: "devnet",
+    image: "https://arweave.net/" + "C".repeat(43), description: "Devnet acceptance publication: seeker.",
+  };
+  const readsBack = (item: CoreMetadata) => {
+    const text = canonicalize(metadata(item) as unknown as JcsValue);
+    const read = readPhotoMetadata(JSON.parse(text), item, text);
+    return read.image === item.image && read.description === item.description && read.genesisMint === item.genesisMint
+      && readSavedPhotoMetadata(text, item).genesisMint === item.genesisMint;
+  };
+  const { genesisMint: _claim, ...unclaimed } = acceptance;
+  ok("the acceptance's documents, with a claim and without, read back on a royalties deployment",
+    programFeatures(ROYALTIES_PROGRAM).royaltiesAndSeekerOnly && readsBack(acceptance) && readsBack(unclaimed));
+  ok("where the earlier plain document they replaced is refused",
+    throws(() => readPhotoMetadata({ name: acceptance.title, description: acceptance.description, image: acceptance.image }, acceptance)));
+}
+
 const doc = (change: (d: Record<string, any>) => void) => {
   const d = JSON.parse(serialized) as Record<string, any>;
   change(d);

@@ -844,16 +844,32 @@ if (!process.argv.includes("--worker")) {
     const creator = source("../src/prints/creator.ts");
     assert.match(creator, /metadata\(e, attested\.attestation\.bundle, await sealVerdict\(attested\.attestation\.summary\)\)/,
       "the document names the device only on the verdict judged as it is sealed");
-    assert.ok(creator.indexOf("await resealDocument(r, d);") > creator.indexOf("await renewStaleAttestation(r, d);") &&
-      creator.indexOf("await resealDocument(r, d);") < creator.indexOf("const ix = await instruction("),
-      "a draft's document is resealed before its hash goes into the instruction");
+    // The reseal runs where the renewal does: after the attempt is known to be over, before the
+    // album check, the storage quote and the instruction that commits the document's hash.
+    const prepare = creator.slice(creator.indexOf("export async function prepareSetup("));
+    const at = (text) => prepare.indexOf(text);
+    assert.ok(at("await renewStaleAttestation(r, d);") > at("await attemptStanding(d)") &&
+      at("await resealDocument(r, d);") === at("await renewStaleAttestation(r, d);") + "await renewStaleAttestation(r, d);\n  ".length &&
+      at("await resealDocument(r, d);") < at("const storage = await checkStorage(d);") &&
+      at("const storage = await checkStorage(d);") < at("const ix = await instruction("),
+      "a draft's document is resealed beside the renewal, before the storage quote and the transaction");
+    // The royalty and the Seeker-only setting, from the form through the draft into the builder
+    // (the node gates cannot run `creator.ts`, so its path is held here as text).
     const sheet = source("../src/prints/PrintSheet.tsx");
     assert.match(sheet, /setDistribution\(!!features\?\.royaltiesAndSeekerOnly\)/, "the form offers the terms only where the program takes them");
-    assert.match(sheet, /distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined/, "the form's terms reach createDraft");
+    assert.match(sheet, /createDraft\(\s*record,[^;]*?\blamports,\s*(?:\/\/[^\n]*\n\s*)?distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined,\s*\)/,
+      "the form's terms are createDraft's last argument, after the price");
+    assert.match(creator, /priceLamports\?: bigint,\s*\/\*\*[\s\S]*?\*\/\s*sealed\?: SealedTerms,\s*\): Promise<CoreDraft>/,
+      "createDraft takes them as `sealed`, after the price");
+    assert.match(creator, /const chosenTerms = sealedFor\(program, sealed \?\? \(/, "the draft records what the form chose, or the defaults");
+    assert.match(creator, /royaltyBps: chosenTerms\.royaltyBps,\s*seekerOnly: chosenTerms\.seekerOnly,/, "both go into the saved draft");
+    assert.match(prepare, /const ix = await instruction\((?:(?!\n {2}\);)[\s\S])*?\{ royaltyBps: d\.royaltyBps, seekerOnly: d\.seekerOnly \},\s*\);/,
+      "and from the draft into the publish builder's `sealed`");
+    assert.match(creator, /current\.royaltyBps !== d\.royaltyBps \|\| current\.seekerOnly !== d\.seekerOnly/, "a stale screen cannot approve other terms");
     assert.match(sheet, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
     assert.match(sheet, /Math\.max\(0, bps - 100\)/, "down to 0%");
-    assert.match(sheet, /value=\{copy\.royaltyValue\(draft\.royaltyBps \?\? 0\)\}/, "the review reads the royalty back off the draft");
-    assert.match(sheet, /!!draft\.seekerOnly && draft\.edition\.supply > 1/, "and the rule, where there is a copy to collect");
+    assert.match(sheet, /value=\{copy\.royaltyValue\(draft\.royaltyBps\)\}/, "the review reads the royalty back off the draft");
+    assert.match(sheet, /\{draft\.seekerOnly && draft\.edition\.supply > 1 && \(/, "and the rule, where there is a copy to collect");
     const collectFlow = source("../src/prints/collect.ts");
     assert.equal(collectFlow.split("await claimedCopy(").length - 1, 2, "the eligibility and the confirmation both read the claim's own receipt");
     assert.match(collectFlow, /claimGenesis\(RPC_ENDPOINT, cluster, c\.seekerOnly, wallet\)/, "the rule comes off the loaded edition");

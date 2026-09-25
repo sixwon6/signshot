@@ -241,8 +241,8 @@ export function PrintSheet({
           setAlbumMode(state.draft.album ? "existing" : "none");
           setSolo(state.draft.edition.supply === 1);
           setCount(String(state.draft.edition.supply));
-          setRoyaltyBps(state.draft.royaltyBps ?? DEFAULT_ROYALTY_BPS);
-          setSeekerOnly(state.draft.seekerOnly ?? DEFAULT_SEEKER_ONLY);
+          setRoyaltyBps(state.draft.royaltyBps);
+          setSeekerOnly(state.draft.seekerOnly);
         }
         if (state.reason) setStatus(state.reason);
         // Warms the program check while the details are typed; publishing asks again and refuses.
@@ -957,9 +957,9 @@ export function PrintSheet({
                 )}
                 {/* Sealed at publish beside the price, where the deployment takes them. */}
                 {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && (
-                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps ?? 0)} />
+                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
                 )}
-                {!!draft.seekerOnly && draft.edition.supply > 1 && (
+                {draft.seekerOnly && draft.edition.supply > 1 && (
                   <Row label={copy.rowCollectors} value={collectCopy.seekerOnly} />
                 )}
                 {!!draft.edition.description && (

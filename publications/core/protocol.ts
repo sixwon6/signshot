@@ -531,11 +531,10 @@ export async function collectInstruction(
   terms(e.title, e.supply);
   const features = programFeatures(e.program);
   if (genesis && !features.royaltiesAndSeekerOnly) throw new Error(NO_ROYALTIES);
-  // The publisher can never collect with their wallet: `publish` already opened their receipt at
-  // ["claim", edition, creator], so the program would reject a second claim by the same wallet.
-  // Refused before any wallet opens. With a Genesis Token the claim is the token's, and whether
-  // that token already claimed is the program's answer (`AlreadyCollected`).
-  if (collector === e.creator && !genesis)
+  // The publisher can never collect: they hold copy 1 from publication, and the program refuses
+  // `collector == edition.creator` on every edition, with or without a Genesis Token
+  // (`AlreadyCollected`). Refused before any wallet opens.
+  if (collector === e.creator)
     throw new Error("The publisher already holds copy 1 and cannot collect from this edition.");
   // `collect` requires `number == minted + 1` and `publish` leaves `minted = 1`, so a claim is
   // never copy 1; `minted < supply` bounds it above. Both are program rules, restated here so a
@@ -670,7 +669,7 @@ export async function buyInstruction(
   if (genesis && !programFeatures(e.program).royaltiesAndSeekerOnly) throw new Error(NO_ROYALTIES);
   // The same three rules `collect` restates, for the same reason: they are program rules, and
   // failing them locally costs no simulation and opens no wallet.
-  if (collector === e.creator && !genesis)
+  if (collector === e.creator)
     throw new Error("The publisher already holds copy 1 and cannot collect from this edition.");
   if (!Number.isInteger(number) || number < 2 || number > e.supply)
     throw new Error("Invalid print number");

@@ -321,10 +321,10 @@ async function sealedTests() {
     (await failure(collectInstruction(olderItem, collector, 2, GENESIS))) === NO_ROYALTIES &&
     (await failure(buyInstruction(olderItem, collector, 2, 1_000_000n, 1, GENESIS))) === NO_ROYALTIES);
   const current = await item(GENESIS_PROGRAM);
-  ok("the publisher's wallet is refused a claim, their Genesis Token is left to the program",
+  ok("the publisher is refused a claim, with or without a Genesis Token, as the program refuses it",
     (await failure(collectInstruction(current, e.creator, 2))) !== null &&
-    (await failure(collectInstruction(current, e.creator, 2, GENESIS))) === null &&
-    (await failure(buyInstruction(current, e.creator, 2, 1_000_000n, 1, GENESIS))) === null);
+    (await failure(collectInstruction(current, e.creator, 2, GENESIS))) !== null &&
+    (await failure(buyInstruction(current, e.creator, 2, 1_000_000n, 1, GENESIS))) !== null);
 }
 
 // --- The sealed attribute, through the collection reader ---------------------------------------------

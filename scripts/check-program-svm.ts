@@ -948,11 +948,26 @@ async function royaltiesAndSeekers(program: Address, build: string, sgts: Minter
     sealedOutcome.ok && sealedRead?.sealedGenesis === makerSgt.mint && sealedRead.creatorReceiptAddress === makerReceipt &&
     (await read(makerReceipt))?.lamports === receiptRent &&
     (await read(await claimReceiptAddress(program, sealed.e.edition, maker.address))) === null, sealedOutcome);
-  const own = await send(maker, [await collectInstruction(sealed.e, maker.address, 2, makerSgt)]);
-  ok("the creator collecting it again with that token -> AlreadyCollected", refused(own, E.AlreadyCollected), own);
-  const makerWallet = await send(maker, [await collectInstruction(sealed.e, carol.address, 2).then((ix) => ({
-    ...ix, accounts: ix.accounts!.map((a, i) => (i === 0 ? { ...a, address: maker.address } : a)) }))]);
-  ok("the creator collecting it with their wallet alone -> GenesisTokenRequired", refused(makerWallet, E.GenesisTokenRequired), makerWallet);
+  // The client refuses a creator's claim itself, so these are built for another wallet and signed by the creator.
+  const byCreator = (creator: KeyPairSigner) => (ix: Instruction): Instruction => ({
+    ...ix, accounts: ix.accounts!.map((a, i) => (i === 0 ? { ...a, address: creator.address } : a)) });
+  const own = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2, makerSgt))]);
+  ok("the creator collecting it again with the token it was sealed with -> AlreadyCollected", refused(own, E.AlreadyCollected), own);
+  const makerWallet = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2))]);
+  ok("the creator collecting it with their wallet alone -> AlreadyCollected", refused(makerWallet, E.AlreadyCollected), makerWallet);
+  const makerSecond = await sgts.mint(maker);
+  const second = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2, makerSecond))]);
+  ok("the creator collecting it with a second Genesis Token they hold -> AlreadyCollected", refused(second, E.AlreadyCollected), second);
+  // An unsealed Seeker-only edition: copy 1's receipt is on the creator's wallet, so no token
+  // receipt stands in the way; only the creator rule does.
+  const hostSgt = await sgts.mint(host);
+  const unsealed = await send(host, [byCreator(host)(await collectInstruction(seeker.e, carol.address, 6, hostSgt))]);
+  const unsealedBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSgt))]);
+  ok("the creator of an unsealed Seeker-only edition collecting or buying it with a Genesis Token they hold -> AlreadyCollected",
+    hostSgt.made && refused(unsealed, E.AlreadyCollected) && refused(unsealedBuy, E.AlreadyCollected) &&
+    (await read(await claimReceiptAddress(program, seeker.e.edition, hostSgt.mint))) === null, unsealed.ok ? unsealedBuy : unsealed);
+  const openOwn = await send(host, [byCreator(host)(await collectInstruction(open.e, carol.address, 4))]);
+  ok("the creator of an open edition collecting it -> AlreadyCollected", refused(openOwn, E.AlreadyCollected), openOwn);
   const openSealed = await draft(program, maker, 2, makerSgt.mint);
   const openSealedOutcome = await publish(openSealed, { genesis: makerSgt });
   ok("an open edition sealed with the same token keeps the creator's receipt on their wallet",

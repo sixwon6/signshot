@@ -37,9 +37,10 @@ import {
 import { prepareTransaction, confirmTransaction, request } from "../../publications/rpc";
 import { assertAttempt, checkAttempt } from "../../publications/lifecycle";
 import type { Cluster } from "../../publications/types";
+import type { GenesisStanding } from "../../publications/core/genesisToken";
 
 import { qrMatrix } from "./qr";
-import { deviceProblem, NO_DEVICE, sol } from "./summary";
+import { deviceProblem, GENESIS_LINE, NO_DEVICE, sol } from "./summary";
 
 export type { Cluster } from "../../publications/types";
 
@@ -55,10 +56,9 @@ export const cluster: Cluster =
 const chain = cluster === "devnet" ? "solana:devnet" : "solana:mainnet";
 // Same-origin production RPC proxy, optionally configured by the site operator. Never
 // accept RPC endpoints in a shared QR URL, which would let a link author fake chain state.
+export const mainnetEndpoint = new URL("/api/solana", location.origin).href;
 export const endpoint =
-  cluster === "devnet"
-    ? "https://api.devnet.solana.com"
-    : new URL("/api/solana", location.origin).href;
+  cluster === "devnet" ? "https://api.devnet.solana.com" : mainnetEndpoint;
 const android = /Android/i.test(navigator.userAgent);
 
 /** The app's Android package, the target of the App Link and of the `intent://` control. */
@@ -96,6 +96,18 @@ export interface Price {
  */
 export type Device = { line: string } | { problem: string } | null;
 
+/**
+ * The Genesis Token row: the mint the document claims, and the check that says whether the
+ * publishing wallet holds it. The Seeker Genesis Token exists on mainnet only, so `standing`
+ * asks `mainnetEndpoint` whatever network the edition is on. `null` when the document names none.
+ */
+export type Genesis = {
+  mint: string;
+  /** The edition program verified the token and sealed the mint at publish. */
+  sealed: boolean;
+  standing(): Promise<GenesisStanding>;
+} | null;
+
 /** What the page renders, reduced to what a screen needs from a publication. */
 export interface Loaded {
   title: string;
@@ -111,6 +123,7 @@ export interface Loaded {
   /** The price of the remaining copies as loaded, or `null` when they are free. Display only. */
   price: Price | null;
   device: Device;
+  genesis: Genesis;
 }
 
 /**
@@ -429,6 +442,34 @@ export function run(adapter: Adapter) {
     }
     row.hidden = false;
   }
+  /**
+   * The Genesis Token row. The document only claims a mint, so the row says it is checking until
+   * mainnet has answered, and the load never waits for it. A later refresh outruns an earlier
+   * check by `genesisRun`.
+   */
+  let genesisRun = 0;
+  function showGenesis(genesis: Genesis) {
+    const run = ++genesisRun;
+    const row = el("genesis");
+    row.hidden = !genesis;
+    if (!genesis) return;
+    const say = (standing: keyof typeof GENESIS_LINE) => {
+      if (run !== genesisRun) return;
+      el("genesis-text").textContent = GENESIS_LINE[standing];
+      row.classList.remove("device-ok", "device-problem", "device-none");
+      row.classList.add(
+        standing === "held"
+          ? "device-ok"
+          : standing === "checking" || standing === "unavailable"
+            ? "device-none"
+            : "device-problem",
+      );
+    };
+    el("genesis-mint").textContent = genesis.mint;
+    el("genesis-sealed").hidden = !genesis.sealed;
+    say("checking");
+    void genesis.standing().then(say, () => say("unavailable"));
+  }
   async function refresh() {
     busy = true;
     quote = null;
@@ -454,6 +495,7 @@ export function run(adapter: Adapter) {
       showMoment(loaded.description);
       showAvailability();
       showDevice(loaded.device);
+      showGenesis(loaded.genesis);
       showOpenInApp(adapter.collectUrl());
       const links = adapter.links();
       el<HTMLAnchorElement>("source").href = links.source;

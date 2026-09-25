@@ -128,6 +128,21 @@
             </td>
           </tr>
           <tr>
+            <td>Seeker Genesis Token</td>
+            <td>
+              When you publish, Signshot asks Solana mainnet whether your
+              wallet holds a Seeker Genesis Token. If it does, the public
+              metadata permanently carries that token's mint address. The
+              address stays the same if the token moves to another of your
+              wallets, so publications from different wallets that name it can
+              be recognised as coming from the same Seeker owner. Anyone
+              viewing the photograph, in the app or on this website, can ask
+              mainnet whether the publishing wallet still holds it. If your
+              wallet holds none, or mainnet does not answer, the photograph
+              publishes without this.
+            </td>
+          </tr>
+          <tr>
             <td>Send an NFT</td>
             <td>
               Your wallet signs a transfer identifying the NFT, sender and
@@ -136,12 +151,22 @@
             </td>
           </tr>
           <tr>
-            <td>Collect an edition on the website</td>
+            <td>Set or change a price</td>
+            <td>
+              Your wallet signs a transaction that records the price against
+              the edition in a public Solana account. Only the publisher's
+              wallet can set it.
+            </td>
+          </tr>
+          <tr>
+            <td>Collect or buy a copy, in the app or on this website</td>
             <td>
               The wallet you choose supplies its public address and signs the
-              collection transaction. The public edition and claim accounts
-              identify the collection. The page stores pending-operation
-              information locally so it can recover after an interruption.
+              transaction. The public edition and claim accounts identify who
+              collected. When a copy has a price, the payment goes to the
+              publisher's address in that same transaction and is public. The
+              app and the page store pending-operation information locally so
+              they can recover after an interruption.
             </td>
           </tr>
         </tbody>
@@ -150,14 +175,17 @@
       <p>
         The current print format publishes a compressed image, up to 1600 pixels
         on its long edge within the upload budget. It does not upload the
-        full-size clean or styled photograph. The record includes the title,
-        edition count, publisher address, image dimensions and fingerprints; the
-        capture's look, strength, pipeline identifier and time reported by the
-        phone; and edit details when a restyled version is selected. It contains
-        no automatically collected GPS location or device serial number. If you
-        add a story, date or place, that text also becomes public metadata. A
-        place you type can disclose a location. The app does not verify these
-        details as capture evidence.
+        full-size clean or styled photograph. The public record is the name you
+        give the photograph, the text you put in the Moment field and a link to
+        that image. The Solana transaction carries the edition count, the
+        publisher address and the fingerprints of the image and the record. A
+        publication with device attestation also carries what that row above
+        lists, and one from a wallet that holds a Seeker Genesis Token carries
+        the token's mint address. The look, its strength and your edits are not
+        published. The
+        record contains no automatically collected GPS location or device
+        serial number. Text you type can disclose a place or a date. The app
+        does not verify it as capture evidence.
       </p>
       <p>
         The time recorded by the blockchain is publication time. A

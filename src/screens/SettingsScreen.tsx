@@ -236,8 +236,9 @@ export function SettingsScreen() {
             last
           />
           {/* The two rows above are mainnet facts even on a devnet build (`getMainnetReadRpc`), so
-              the section says which network each half is about. They stay display only: a
-              client-side SGT check is cosmetic, never proof of ownership, and gates nothing. */}
+              the section says which network each half is about. Nothing is gated on them; the SGT
+              mint is also what a publication records, and every reader checks it again
+              (`publications/core/genesisToken.ts`). */}
           {devnet && <Text style={s.note}>{copy.seekerSourceDevnet}</Text>}
           {!!identity.error && <Text style={s.error}>{identity.error}</Text>}
           <Pill

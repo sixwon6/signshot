@@ -10,14 +10,16 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { AccountRole, address, type Instruction } from "@solana/kit";
+import { AccountRole, address, generateKeyPairSigner, type Instruction, type KeyPairSigner } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
 import { buildDataItem } from "../../src/arweave/dataItem";
 import { uploadDataItem } from "../../src/arweave/turbo";
 import { base58Encode } from "../../src/arweave/codec";
+import { canonicalize, type JcsValue } from "../../src/jcs";
 import { checkStorageCapacity } from "../storage";
 import {
+  GENESIS_ATTRIBUTE,
   MPL_CORE,
   account,
   addresses,
@@ -33,7 +35,9 @@ import {
   pricedOffer,
   readEdition,
   readOfferAccount,
+  readPublication,
   readReceipt,
+  sealedGenesisMint,
   setOfferInstruction,
   SYSTEM_PROGRAM,
   terms,
@@ -41,6 +45,14 @@ import {
   verifyEditionCollection,
   verifyPrintAsset,
 } from "../core/protocol";
+import {
+  assertMemberDecodes,
+  devnetGenesisKeys,
+  foilInstructions,
+  genesisTokenAccount,
+  groupInstructions,
+  memberInstructions,
+} from "./genesisFixture";
 import { normalizeDescription } from "../core/details";
 import { albumUrl, readAlbum, verifyAlbumGroup, createAlbumInstruction } from "../core/album";
 import { inspectTransfer, transferInstructions } from "../core/transfer";
@@ -59,6 +71,10 @@ interface TestContext extends Context {
   testEditions?: CoreMetadata[];
   testUploads?: { id: string; bytes: Uint8Array; dataHash: string }[];
   uploader?: string;
+  /** The Genesis Token stand-in's member mint; its address is in the sealed edition's document. */
+  genesisMember?: KeyPairSigner;
+  /** A fresh, empty token account of the payer's, for the refusal that needs one. */
+  genesisEmpty?: KeyPairSigner;
 }
 
 /** 0.01 devnet SOL, the acceptance price. Matches `TEST_COSTS.price` in `work.ts`. */
@@ -110,7 +126,8 @@ async function creatorCollect(item: CoreMetadata, number: number): Promise<Instr
  *
  * The supply-3 and supply-1 cases are the original acceptance: a shared run and the sold-out 1/1
  * whose only print is the creator's own. Supply 5 is the free-moment row — one publisher plus four
- * friends. The two album members carry the album acceptance and the last one carries the paid one.
+ * friends. The two album members carry the album acceptance, `offer` carries the paid one and
+ * `genesis` the sealed Genesis Token publish, whose document names the stand-in's member mint.
  */
 function editionPlan() {
   return [
@@ -120,6 +137,7 @@ function editionPlan() {
     { key: "album-a", title: "DEVNET Album One", supply: 2 },
     { key: "album-b", title: "DEVNET Album Two", supply: 2 },
     { key: "offer", title: "DEVNET Offer Test", supply: 3 },
+    { key: "genesis", title: "DEVNET Genesis Test", supply: 1 },
   ];
 }
 
@@ -191,6 +209,8 @@ export async function lifecycle(c: TestContext) {
     try {
       const imageUri = prepareUpload(image, "image/jpeg");
       c.testEditions = [];
+      // Named in the sealed edition's document before anything is uploaded; minted later.
+      c.genesisMember ??= await generateKeyPairSigner();
       for (const item of plan) {
         const nonce = randomBytes(32).toString("hex");
         const keys = await addresses(c.program.address, c.payer.address, nonce);
@@ -208,19 +228,13 @@ export async function lifecycle(c: TestContext) {
           width: 512,
           height: 512,
           description: `Devnet acceptance publication: ${item.key}.`,
+          ...(item.key === "genesis" ? { genesisMint: c.genesisMember.address } : {}),
         };
         // The two gates that decide what may reach permanent storage, run before it does.
         terms(e.title, e.supply);
         normalizeDescription(e.description);
-        // RFC 8785 for the three ASCII-keyed strings the document holds: sorted keys, stringified
-        // values. The same bytes `src/jcs.ts` produces for the app.
-        const document = metadata(e) as unknown as Record<string, string>;
-        const bytes = utf8(
-          `{${Object.keys(document)
-            .sort()
-            .map((key) => `${JSON.stringify(key)}:${JSON.stringify(document[key])}`)
-            .join(",")}}`,
-        );
+        // The document exactly as the app writes it: `metadata()` canonicalized by RFC 8785.
+        const bytes = utf8(canonicalize(metadata(e) as unknown as JcsValue));
         const uri = prepareUpload(bytes, "application/json");
         journal[`metadata-${item.key}`] = uri;
         journal[`metadataHash-${item.key}`] = hash(bytes);
@@ -687,6 +701,97 @@ export async function lifecycle(c: TestContext) {
         { group: read.group, collections: group.collections });
     }
     return `Album ${groupAddress} lists two free editions, both readable`;
+  });
+
+  // ------------------------------------------------------------------ Seeker Genesis Token
+  // The sealed publish. The devnet program build carries this acceptance's test authority in
+  // place of Solana Mobile's, and the fixture mints what that authority would have: a member
+  // mint with an SGT's three properties, held frozen by the publisher. The program must refuse a
+  // mint without those properties, another wallet's account, an empty account of the publisher's
+  // own and a mint handed over without its account, and when the accounts are right it must seal
+  // the mint into the collection's locked attributes, where the app's reader finds it.
+  const keys = await devnetGenesisKeys();
+  const member = c.genesisMember;
+  assert.ok(member, "The Genesis Token member mint was not generated with the test metadata");
+  const sealed = byKey.get("genesis")!;
+  assert.equal(sealed.genesisMint, member.address, "The sealed edition's document names another mint");
+  c.genesisEmpty ??= await generateKeyPairSigner();
+  const empty = c.genesisEmpty;
+  journal["genesis-authority"] = keys.authority.address;
+  journal["genesis-group"] = keys.group.address;
+  journal["genesis-mint"] = member.address;
+  save();
+  await once("genesis-group-mint", async () => {
+    const instructions = await groupInstructions(c, keys);
+    if (!instructions.length) return `${keys.group.address} already exists on devnet`;
+    return send(c, instructions, [c.payer, keys.group, keys.authority]);
+  });
+  await once("genesis-member-mint", async () =>
+    send(c, await memberInstructions(c, keys, member), [c.payer, member, keys.authority]),
+  );
+  await once("genesis-foil-accounts", async () =>
+    send(
+      c,
+      await foilInstructions(c, keys, member.address, bob.address, empty),
+      [c.payer, empty, keys.authority],
+    ),
+  );
+  await once("genesis-member-reads-as-the-stand-in", async () => {
+    await assertMemberDecodes(c, member.address);
+    return "The client's decoder accepts the member mint under the devnet addresses and refuses it under Solana Mobile's";
+  });
+  const held = await genesisTokenAccount(c.payer.address, member.address);
+  const theirs = await genesisTokenAccount(bob.address, member.address);
+  journal["genesis-token-account"] = held;
+  save();
+  // `publish` with its last two accounts replaced: the refusals the client itself never builds.
+  const withGenesis = async (mint: string, token: string | null) => {
+    const template = await publish(sealed, "genesis");
+    const readonly = (a: string) => ({ address: address(a), role: AccountRole.READONLY });
+    return {
+      ...template,
+      accounts: [...template.accounts!.slice(0, -2), readonly(mint), readonly(token ?? c.program.address)],
+    };
+  };
+  await once("genesis-foreign-mint-refused", async () =>
+    send(c, [budget, await withGenesis(keys.group.address, held)], [c.payer], /InvalidGenesisToken/),
+  );
+  await once("genesis-other-wallets-account-refused", async () =>
+    send(c, [budget, await withGenesis(member.address, theirs)], [c.payer], /InvalidGenesisToken/),
+  );
+  await once("genesis-empty-account-refused", async () =>
+    send(c, [budget, await withGenesis(member.address, empty.address)], [c.payer], /InvalidGenesisToken/),
+  );
+  await once("genesis-mint-without-account-refused", async () =>
+    send(c, [budget, await withGenesis(member.address, null)], [c.payer], /InvalidGenesisToken/),
+  );
+  await once("publish-sealed-genesis", async () =>
+    send(c, [
+      budget,
+      await instruction(
+        sealed, c.payer.address, 1, journal["metadata-genesis"], journal["metadataHash-genesis"],
+        undefined, { mint: member.address, token: held },
+      ),
+    ]),
+  );
+  await once("sealed-genesis-attribute", async () => {
+    const state = readEdition((await account(c.endpoint, sealed.edition))!.bytes);
+    const collectionRaw = await account(c.endpoint, sealed.collection);
+    assert.ok(collectionRaw && collectionRaw.owner === MPL_CORE, "The sealed edition has no Core collection");
+    const collection = verifyEditionCollection(collectionRaw.bytes, state, sealed.edition);
+    assert.equal(sealedGenesisMint(collection), member.address, "The collection does not seal the member mint");
+    const attributes = decodeCollection(collectionRaw.bytes).plugins.find((p) => p.type === "Attributes");
+    assert.ok(attributes && attributes.type === "Attributes", "No Attributes plugin");
+    assert.equal(attributes.attributes.length, 6, "The sealed collection carries the five attributes plus one");
+    assert.deepEqual(attributes.attributes[5], { key: GENESIS_ATTRIBUTE, value: member.address });
+    // The editions published without the accounts seal nothing, and read that way.
+    const plainState = readEdition((await account(c.endpoint, e.edition))!.bytes);
+    const plain = verifyEditionCollection((await account(c.endpoint, e.collection))!.bytes, plainState, e.edition);
+    assert.equal(sealedGenesisMint(plain), null, "A plain edition must seal no Genesis Token");
+    const publication = await readPublication(c.endpoint, c.program.address, sealed.edition);
+    assert.equal(publication?.sealedGenesis, member.address, "readPublication does not report the seal");
+    assert.equal(state.minted, 1);
+    return `${sealed.collection} seals ${GENESIS_ATTRIBUTE} = ${member.address}; the plain editions seal none`;
   });
   save();
   console.log("DEVNET LIFECYCLE COMPLETE");

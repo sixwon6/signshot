@@ -20,6 +20,7 @@ import { isTrustedDeployment, programFeatures } from "../deployments";
 import { hasUnsafeText, readDescription } from "./details";
 import { readPhotoMetadata } from "./metadataDocument";
 import { attestationAttributes, readAttestationBundle, type AttestationBundle } from "./attestation";
+import { genesisAttributes, genesisClaim, type GenesisClaim } from "./genesisToken";
 import { albumConformance } from "./albumRules";
 import { safeErrorText } from "../../src/ui/errorText";
 import { CORE_PROTOCOL, type Cluster, type CoreDraft, type CoreMetadata, type PublicationView } from "../types";
@@ -234,20 +235,29 @@ export async function albumAddress(program: string, creator: string, nonce: stri
 // ---------------------------------------------------------------------------
 
 /**
- * The permanent metadata document: exactly `name`, `description` and `image`. Canonicalized
- * (RFC 8785) by the caller; its sha256 is the on-chain `metadata_hash`.
+ * The permanent metadata document: exactly `name`, `description` and `image`, plus the evidence
+ * the publication carries — the keystore's attestation and the publishing wallet's Seeker Genesis
+ * Token (`e.genesisMint`), each independent of the other. Canonicalized (RFC 8785) by the caller;
+ * its sha256 is the on-chain `metadata_hash`.
  */
 export function metadata(e: CoreMetadata, attestation?: AttestationBundle): PublishedDocument {
   const plain = { name: e.title, description: e.description, image: e.image };
-  if (!attestation) return plain;
+  if (!attestation && !e.genesisMint) return plain;
   // The attributes are derived from the certificate, and `readPhotoMetadata` re-derives them.
   // This throws only if the bundle fails the reader; `attestPublication` ran the identical
-  // check on the identical input moments earlier, and `createDraft` falls back to `plain`.
-  const { summary } = readAttestationBundle(attestation, e);
+  // check on the identical input moments earlier, and `createDraft` falls back to no bundle.
+  const summary = attestation ? readAttestationBundle(attestation, e).summary : null;
   return {
     ...plain,
-    attributes: attestationAttributes(summary),
-    properties: { seedshot: attestation },
+    // The Genesis Token entry is always last, which is how the reader tells the two apart.
+    attributes: [
+      ...(summary ? attestationAttributes(summary) : []),
+      ...(e.genesisMint ? genesisAttributes(e.genesisMint) : []),
+    ],
+    properties: {
+      ...(attestation ? { seedshot: attestation } : {}),
+      ...(e.genesisMint ? { genesisToken: genesisClaim(e.genesisMint) } : {}),
+    },
   };
 }
 
@@ -256,9 +266,10 @@ interface PublishedDocument {
   name: string;
   description: string;
   image: string;
-  /** Present, with `properties`, only for a hardware-attested publication. */
+  /** Present, with `properties`, only for a publication that carries evidence. */
   attributes?: { trait_type: string; value: string }[];
-  properties?: { seedshot: AttestationBundle };
+  /** At least one of the two. */
+  properties?: { seedshot?: AttestationBundle; genesisToken?: GenesisClaim };
 }
 
 /**
@@ -316,9 +327,26 @@ export async function coreView(draft: CoreDraft): Promise<PublicationView> {
 // ---------------------------------------------------------------------------
 
 /**
+ * The two accounts the program verifies and seals at publish: the creator's Seeker Genesis Token
+ * mint and the token account through which they hold it (`findGenesisTokenAccount`). Both must
+ * exist on the cluster the edition is on, which is mainnet: the token exists nowhere else.
+ */
+export interface GenesisAccounts {
+  mint: string;
+  token: string;
+}
+
+/** The locked collection attribute the program writes for a verified Genesis Token. */
+export const GENESIS_ATTRIBUTE = "seeker_genesis_token";
+
+/**
  * `publish`: creates the edition and print #1. With `album` it becomes `publish_in_album`: same
  * arguments, different discriminator, plus the group as a writable account. Every created account
  * is a PDA, so the wallet is the only signer.
+ *
+ * A deployment with `programFeatures().genesis` takes two more accounts at the end, both read
+ * only: the Genesis Token accounts, or — Anchor's convention for an absent optional account — the
+ * program's own id in each place. The instruction data is the same either way.
  */
 export async function instruction(
   e: CoreMetadata,
@@ -328,6 +356,8 @@ export async function instruction(
   metadataHash?: string,
   /** An existing Core `GroupV1`. */
   album?: string,
+  /** The creator's Genesis Token, for the program to verify and seal. */
+  genesis?: GenesisAccounts,
 ): Promise<Instruction> {
   const k = await addresses(e.program, e.creator, e.nonce, number, payer);
   terms(e.title, e.supply);
@@ -336,6 +366,13 @@ export async function instruction(
   if (!uri || payer !== e.creator || number !== 1 || !ARWEAVE_URI.test(uri) || !metadataHash ||
     !HEX32.test(metadataHash) || !HEX32.test(e.imageHash))
     throw new Error("Invalid edition creation");
+  const program = address(e.program);
+  const takesGenesis = programFeatures(e.program).genesis;
+  // Refused rather than dropped: the accounts would land in `remaining_accounts` and the
+  // publication would go out unsealed while the caller believed otherwise.
+  if (genesis && !takesGenesis) throw new Error("This network's program cannot seal a Genesis Token.");
+  if (genesis && genesis.mint !== e.genesisMint)
+    throw new Error("The Genesis Token to seal is not the one this edition names.");
   const data = concat(
     disc(album ? "global:publish_in_album" : "global:publish"),
     hexToBytes(e.nonce),
@@ -346,13 +383,18 @@ export async function instruction(
     u16(e.supply),
   );
   return {
-    programAddress: address(e.program),
+    programAddress: program,
     accounts: [
       { address: address(payer), role: AccountRole.WRITABLE_SIGNER },
       ...[k.edition, k.collection, k.print, k.receipt, ...(album ? [address(album)] : [])].map(
         (a) => ({ address: a, role: AccountRole.WRITABLE }),
       ),
       ...[MPL_CORE, SYSTEM].map((a) => ({ address: a, role: AccountRole.READONLY })),
+      ...(takesGenesis
+        ? (genesis ? [address(genesis.mint), address(genesis.token)] : [program, program]).map(
+            (a) => ({ address: a, role: AccountRole.READONLY }),
+          )
+        : []),
     ],
     data,
   };
@@ -1164,6 +1206,9 @@ export function verifyEditionCollection(
     { key: "publisher", value: state.creator },
     { key: "protocol", value: "erashot-core/1" },
   ];
+  // Exactly the five, or the five plus the one the program appends for a verified Genesis Token:
+  // `seeker_genesis_token`, an address. `sealedGenesisMint` reads it; nothing else may follow.
+  const extra = attributes.attributes.slice(expected.length);
   if (
     collection.updateAuthority !== edition ||
     collection.name !== state.title ||
@@ -1174,15 +1219,37 @@ export function verifyEditionCollection(
     master.maxSupply !== state.supply ||
     master.name !== null ||
     master.uri !== null ||
-    attributes.attributes.length !== expected.length ||
+    attributes.attributes.length < expected.length ||
     expected.some(
       (want, index) =>
         attributes.attributes[index].key !== want.key ||
         attributes.attributes[index].value !== want.value,
-    )
+    ) ||
+    extra.length > 1 ||
+    (extra.length === 1 && (extra[0].key !== GENESIS_ATTRIBUTE || !isAddress(extra[0].value)))
   )
     throw new Error(COLLECTION_MESSAGE);
   return collection;
+}
+
+/** A base58 address of 32 bytes, or not. Never throws. */
+function isAddress(value: string): boolean {
+  try {
+    address(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The Genesis Token mint the program verified and sealed at publish, or `null` for a collection
+ * `verifyEditionCollection` accepted without one. Only meaningful on a verified collection.
+ */
+export function sealedGenesisMint(collection: CoreCollection): string | null {
+  const plugin = collection.plugins.find((p) => p.type === "Attributes");
+  const sealed = plugin?.type === "Attributes" ? plugin.attributes[5] : undefined;
+  return sealed?.key === GENESIS_ATTRIBUTE ? sealed.value : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,6 +1279,8 @@ type VerifiedPublication = {
   creatorReceipt: ReturnType<typeof readReceipt>;
   /** `null` when the collection carries no `Groups` plugin. */
   album: EditionAlbum | null;
+  /** The Genesis Token mint the program sealed at publish; `null` when it sealed none. */
+  sealedGenesis: string | null;
 };
 
 async function verifyPublication(
@@ -1262,7 +1331,10 @@ async function verifyPublication(
     creatorReceipt.number !== 1
   )
     throw new Error("The creator publication receipt does not match this edition.");
-  return { program, edition, state, keys, collection, creatorReceipt, album };
+  return {
+    program, edition, state, keys, collection, creatorReceipt, album,
+    sealedGenesis: sealedGenesisMint(collection),
+  };
 }
 
 /**
@@ -1336,7 +1408,7 @@ async function loadPublication(
   // Current and historical document formats are read against verified chain state.
   const text = new TextDecoder().decode(bytes);
   const json: unknown = JSON.parse(text);
-  const { image, description, dimensions, attestation, attestationProblem } =
+  const { image, description, dimensions, attestation, attestationProblem, genesisMint } =
     readPhotoMetadata(json, { ...state, program, edition, cluster }, text);
 
   // Size comes from the JPEG header (which also rejects non-JPEGs) and is bounded before any
@@ -1347,6 +1419,11 @@ async function loadPublication(
     throw new Error("Published photo is larger than Signshot accepts");
   if (dimensions && (dimensions.width !== width || dimensions.height !== height))
     throw new Error("Photo dimensions do not match the published image");
+  // The app writes the document's claim and the program's seal from one value, so a collection
+  // that seals a mint the document does not name is not one of its publications.
+  const sealed = publication.sealedGenesis;
+  if (sealed !== null && sealed !== genesisMint)
+    throw new Error("The sealed Genesis Token does not match the published document.");
   const e: CoreMetadata = {
     cluster,
     program,
@@ -1363,6 +1440,8 @@ async function loadPublication(
     description,
     ...(attestation ? { attestation } : {}),
     ...(attestationProblem ? { attestationProblem } : {}),
+    ...(genesisMint ? { genesisMint } : {}),
+    ...(sealed ? { genesisSealed: true } : {}),
   };
   return {
     edition: e,

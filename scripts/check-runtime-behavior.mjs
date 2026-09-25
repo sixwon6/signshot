@@ -195,7 +195,7 @@ if (!process.argv.includes("--worker")) {
     assert.equal(budget.programData, 2_230_551_800);
     assert.equal(budget.programAccount, 833_120);
     assert.equal(budget.fees, 2_460_000, "488 uploads and two 2-signature transactions exceed the old fixed fee budget");
-    assert.equal(budget.total, 2_394_084_600);
+    assert.equal(budget.total, 2_420_572_480, "the reserve grew by one publish and the Genesis Token fixture");
     assert.equal(budget.reserve, testReserve());
     const short = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 900);
     const overflow = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 901);

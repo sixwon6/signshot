@@ -14,7 +14,8 @@ export type Cluster = "devnet" | "mainnet-beta";
 /**
  * The phone's own record of one publication; never published. The public document is built by
  * `metadata()` in `core/protocol.ts`: `name`, `description` and `image`, plus `attributes` and
- * `properties.seedshot` when the phone attested the publication.
+ * `properties` when the phone attested the publication (`properties.seedshot`) or the publishing
+ * wallet held a Seeker Genesis Token (`properties.genesisToken`).
  */
 export interface CoreMetadata {
   cluster: Cluster;
@@ -48,6 +49,19 @@ export interface CoreMetadata {
   attestation?: AttestationSummary;
   /** Why a recorded attestation was set aside, for the Proof sheet. Never set beside `attestation`. */
   attestationProblem?: string;
+  /**
+   * The Seeker Genesis Token mint the document names (`publications/core/genesisToken.ts`). A
+   * CLAIM, read from the hash-bound document and never from a saved copy: a screen says it is
+   * held only after `verifyGenesisToken` has checked it against mainnet. Absent when the
+   * publishing wallet held none, or none could be found, when the document was made.
+   */
+  genesisMint?: string;
+  /**
+   * The edition program verified that mint at publish — Solana Mobile's three properties and the
+   * creator's balance — and sealed it into the collection's locked attributes. Read from the chain
+   * on every load (`sealedGenesisMint`), never from a saved copy; never set without `genesisMint`.
+   */
+  genesisSealed?: boolean;
 }
 
 /** Mirrors what `core/attestation.ts` derives; repeated here to keep this module runtime-free. */

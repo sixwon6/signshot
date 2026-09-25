@@ -47,7 +47,9 @@ import {
   setOfferInstruction,
   terms,
   utf8,
+  type GenesisAccounts,
 } from "../../publications/core/protocol";
+import { findGenesisTokenAccount } from "../../publications/core/genesisToken";
 import { normalizeDescription, readDescription } from "../../publications/core/details";
 import { readSavedPhotoMetadata } from "../../publications/core/metadataDocument";
 import {
@@ -68,6 +70,7 @@ import {
 import { assertAlbumLabel, confirmedAlbum } from "./albums";
 import { safeErrorText } from "../ui/errorText";
 import { attestPublication } from "../seeker/publicationAttestation";
+import { publisherGenesisMint } from "../seeker/publisherGenesis";
 
 /** ANS-104 tags are public and unhashed, so each upload carries only its media type. */
 const DOCUMENT_TAGS = [{ name: "Content-Type", value: "application/json" }];
@@ -325,6 +328,9 @@ export async function createDraft(
     const deployed = await account(RPC_ENDPOINT, program);
     if (!deployed?.executable)
       throw new Error("The edition program is not deployed on this network.");
+    // Started here so the mainnet lookup runs beside the hashing and the print below. It never
+    // rejects; the answer is read where the document is composed.
+    const genesis = publisherGenesisMint(creator);
     const frames = await SeekerCamera.hashCaptureFrames(r.baseName);
     if (
       frames.clean !== r.clean.sha256 ||
@@ -372,6 +378,10 @@ export async function createDraft(
       height: image.height,
       description: moment,
     };
+    // The publishing wallet's Seeker Genesis Token, by mint address (`seedshot-genesis/1`). Its
+    // own evidence, independent of the attestation below: every reader checks it against mainnet.
+    const genesisMint = await genesis;
+    if (genesisMint) e.genesisMint = genesisMint;
     // The phone's keystore attests this exact publication (the manifest names the edition, the
     // creator, the nonce and the image fingerprint) before the document is sealed, so the
     // evidence is inside the bytes the wallet commits to. A phone that cannot attest publishes
@@ -472,9 +482,14 @@ export async function isSigned(d: CoreDraft) {
     s.nonce !== e.nonce || s.title !== e.title ||
     s.uri !== `https://arweave.net/${d.metadataId}` ||
     // The album is not in the hashed document; this is its only check against chain evidence.
-    (publication.album?.group ?? undefined) !== d.album
+    (publication.album?.group ?? undefined) !== d.album ||
+    // The program seals only what the document names. A seal is optional; a different one is not.
+    (publication.sealedGenesis !== null && publication.sealedGenesis !== e.genesisMint)
   )
     throw new Error("The onchain edition differs from this draft.");
+  // A chain fact, re-read here every time and never taken from the saved draft.
+  if (publication.sealedGenesis) e.genesisSealed = true;
+  else delete e.genesisSealed;
   return true;
 }
 
@@ -518,6 +533,8 @@ export async function getPublicationState(r: CaptureRecord): Promise<Publication
           if (latest?.metadataId === metadataId) {
             latest.confirmedAt ??= Date.now();
             await save(r, latest);
+            // What `isSigned` just read off the chain, carried onto the re-read draft.
+            if (d!.edition.genesisSealed) latest.edition.genesisSealed = true;
             d = latest;
           }
         });
@@ -582,6 +599,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     hash(utf8(d.metadata)),
     // Absent for a plain publication; present turns the same arguments into `publish_in_album`.
     d.album,
+    await genesisAccounts(d.edition),
   );
   /**
    * PUBLISHING WITH A PRICE IS ONE APPROVAL, NOT TWO.
@@ -614,6 +632,25 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     prepared: await prepareTransaction(RPC_ENDPOINT, d.edition.creator, ixs, [], floor),
   } as const;
 }
+/**
+ * The Genesis Token accounts `publish` verifies and seals: the mint the document names and the
+ * creator's token account for it, read from THIS cluster immediately before the quote. The token
+ * exists on mainnet only, so a devnet edition publishes with the document's claim alone (every
+ * reader checks that against mainnet) and the seal is exercised by the acceptance harness
+ * against its stand-in. Refused, not dropped, when the wallet no longer holds the token: the
+ * sealed document already names it, and the program would refuse the transaction anyway.
+ */
+async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undefined> {
+  if (!e.genesisMint || cluster !== "mainnet-beta" || !programFeatures(e.program).genesis)
+    return undefined;
+  const token = await findGenesisTokenAccount(RPC_ENDPOINT, e.genesisMint, e.creator);
+  if (!token)
+    throw new Error(
+      "This wallet no longer holds the Genesis Token this edition names. Discard the draft and publish again.",
+    );
+  return { mint: e.genesisMint, token };
+}
+
 type PublicationQuote = Awaited<ReturnType<typeof prepareSetup>>;
 type PublishProgress = "wallet" | "confirming" | "uploading";
 async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {

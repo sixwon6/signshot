@@ -39,7 +39,7 @@ import {
   getDeployWithMaxDataLenInstruction,
 } from "@solana-program/loader-v3";
 import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
-import { LEGACY_WITHOUT_OFFERS, programFeatures } from "../deployments";
+import { LEGACY_WITHOUT_GENESIS, LEGACY_WITHOUT_OFFERS, programFeatures } from "../deployments";
 import { request, confirmTransaction } from "../rpc";
 import { checkAttempt, type TransactionAttempt } from "../lifecycle";
 
@@ -95,9 +95,16 @@ const hex = (bytes: ArrayLike<number>) =>
  * itself.
  */
 export const TEST_COSTS = {
-  /** Measured `publish`: supply 3, supply 1, supply 5 and the priced supply-3 edition. */
+  /** Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3 and the sealed 1/1. */
   publish: 12_487_880,
-  publishes: 4,
+  publishes: 5,
+  /**
+   * The Genesis Token stand-in the sealed publish needs: the group mint, one member mint, the
+   * payer's frozen token account for it, bob's and an empty one of the payer's. Five Token-2022
+   * accounts of about 320, 380, 170, 170 and 165 bytes, as rent, plus their creation fees. The
+   * group mint is made once per cluster and skipped when it exists, so a later session pays less.
+   */
+  genesisFixture: 14_000_000,
   /** Measured `create_album` (rent-only group plus a one-signature fee). */
   createAlbum: 1_772_840,
   /** Measured `publish_in_album`, for the two free album members. */
@@ -170,6 +177,7 @@ export function testReserve(): number {
     // set_offer 0.01, set_offer 0, set_offer 0.02: one account creation and two rewrites.
     t.firstSetOffer +
     t.laterSetOffer * 2 +
+    t.genesisFixture +
     t.fees +
     t.margin
   );
@@ -400,6 +408,13 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
       programFeatures(c.program.address).offers,
     "This client would treat the session program as a deployment without offers",
   );
+  // Likewise for the two Genesis Token accounts: without them `publish` would be sent short and
+  // the sealed case could not be exercised at all.
+  assert.ok(
+    !LEGACY_WITHOUT_GENESIS.includes(c.program.address) &&
+      programFeatures(c.program.address).genesis,
+    "This client would treat the session program as a deployment without Genesis Token accounts",
+  );
   const source = readFileSync(c.artifact.sourcePath, "utf8");
   assert.ok(
     source.includes(`declare_id!("${c.program.address}")`),
@@ -605,25 +620,27 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number) {
   console.log(`
 ================ PASTE INTO publications/deployments.ts ================
 
-1. HISTORICAL.devnet — add the new address (keep the existing one; its records stay readable):
+1. HISTORICAL.devnet — add the new address (keep the existing ones; their records stay readable):
 
   devnet: [
     "${program}",
+    "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
   ],
 
 2. PROGRAM_IMAGES.devnet — add the reviewed ELF digest of what was just byte-verified:
 
-    // The paid-sales devnet acceptance deployment (set_offer/buy).
+    // The devnet acceptance deployment with the Genesis Token accounts (devnet-genesis build).
     "${program}": {
       sha256: "${sha256}",
       bytes: ${grouped},
       source: "devnet acceptance build, publications/devnet session",
     },
 
-3. Leave LEGACY_WITHOUT_OFFERS exactly as it is: it lists only the OLD build
-   (BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq), and the default for anything
-   else is already offers: true.
+3. Leave LEGACY_WITHOUT_OFFERS and LEGACY_WITHOUT_GENESIS exactly as they are: each lists
+   only the OLD builds, and the default for anything else is already offers: true and
+   genesis: true. This deployment carries the devnet-genesis stand-in addresses, so the
+   sealed publish works only against the fixture the acceptance mints, never a real token.
 
 4. Select it, in .env.local (gitignored):
 

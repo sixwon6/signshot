@@ -60,6 +60,16 @@
             <p id="device-text" class="device-text"></p>
             <p class="fine device-fine">Shows which device signed this, not what was photographed.</p>
           </div>
+          <!--
+            The Genesis Token row. The document names a Seeker Genesis Token mint; the text is what
+            mainnet answered when the page asked whether the publishing wallet holds it.
+          -->
+          <div id="genesis" class="device" hidden>
+            <p class="eyebrow">SEEKER GENESIS TOKEN</p>
+            <p id="genesis-text" class="device-text"></p>
+            <p id="genesis-mint" class="fine device-fine"></p>
+            <p id="genesis-sealed" class="fine device-fine" hidden>Verified and sealed by the edition program at publish.</p>
+          </div>
           <p id="availability" class="availability" aria-live="polite"></p>
           <progress id="supply-progress" aria-label="Copies collected"></progress>
           <p id="price" class="price" hidden></p>

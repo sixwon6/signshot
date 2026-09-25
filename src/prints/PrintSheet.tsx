@@ -898,6 +898,10 @@ export function PrintSheet({
                     value={`${deviceName(draft.edition.attestation)} · ${securityLevelName(draft.edition.attestation)}`}
                   />
                 )}
+                {/* The mint the document names, found on mainnet when the draft was made. */}
+                {!!draft.edition.genesisMint && (
+                  <Row label={copy.rowGenesis} value={shortAddress(draft.edition.genesisMint)} />
+                )}
                 <WalletRow
                   owner={owner}
                   ownerLabel={ownerLabel}

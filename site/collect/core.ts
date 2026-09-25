@@ -26,13 +26,22 @@ import {
   pricedOffer,
   readOfferAccount,
 } from "../../publications/core/protocol";
+import { verifyGenesisToken } from "../../publications/core/genesisToken";
 import type { CoreMetadata } from "../../publications/types";
 
-import { cluster, endpoint, type Adapter, type Loaded } from "./page";
+import { cluster, endpoint, mainnetEndpoint, type Adapter, type Genesis, type Loaded } from "./page";
 import { deviceLine } from "./summary";
 
 /** Metaplex Core's flat `CREATE_FEE`, quoted in the fine print only; the estimate is measured. */
 const CORE_CREATE_FEE_SOL = "0.0015";
+
+/** The document's Seeker Genesis Token claim and its mainnet check (`seedshot-genesis/1`). */
+function genesisRow(e: CoreMetadata): Genesis {
+  const mint = e.genesisMint;
+  return mint
+    ? { mint, sealed: !!e.genesisSealed, standing: () => verifyGenesisToken(mainnetEndpoint, mint, e.creator) }
+    : null;
+}
 
 export function coreAdapter(edition: string): Adapter {
   let meta: CoreMetadata | null = null;
@@ -76,6 +85,8 @@ export function coreAdapter(edition: string): Adapter {
           : result.edition.attestationProblem
             ? { problem: result.edition.attestationProblem }
             : null,
+        // A claim until `standing()` has asked mainnet, which the page does after it has rendered.
+        genesis: genesisRow(result.edition),
       };
     },
     hasCollected: (wallet) => hasCollected(endpoint, current(), wallet),

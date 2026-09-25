@@ -1,7 +1,7 @@
 # Signshot
 
 Formerly Seedshot. The repository, the Android package `app.seekershot`, the `erashot.app` domain and
-the on-chain and metadata identifiers (`seedshot-attestation/1`, `properties.seedshot`, `erashot-core/1`)
+the on-chain and metadata identifiers (`seedshot-attestation/1`, `seedshot-genesis/1`, `properties.seedshot`, `erashot-core/1`)
 keep their old names, because published editions and verified App Links depend on them.
 
 Signshot is a photographer's toolkit for the Solana Seeker phone. It has its own Camera2/OpenGL
@@ -15,9 +15,9 @@ and sent on to another wallet.
 The camera has one layout under a mode dial, AUTO, P and M, and one grammar in every mode: the
 bottom row chooses, the row above it adjusts, the shutter shoots. All of it is in the sheet under
 the thumb, and the picture carries nothing at rest. AUTO is the point-and-shoot: tap the picture
-to focus and meter there, choose a look, set its strength, and set brightness in whole stops;
-nothing else can be left set. P puts the readout up as a row of cells, ISO, shutter, brightness,
-colour, focus and the look, in one fixed order, and the row above is the live cell's dial: rulers
+to focus and meter there, choose a look, set its strength, and set brightness two stops either
+way, by dragging up or down on the picture or on a slider; nothing else can be left set. P puts
+the readout up as a row of cells, ISO, shutter, brightness, colour, focus and the look, in one fixed order, and the row above is the live cell's dial: rulers
 with detents for ISO in third stops, shutter in full stops, brightness in the device's own steps,
 Kelvin by the hundred and fine focus, each ending in a key that hands the control back to the
 camera. A cell shows what the camera is doing in auto and, in the accent colour, what you are
@@ -32,17 +32,29 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
 
 ## Before release
 
-- **On the Seeker:** send a copy; buy a priced copy from a second wallet; cancel, time out and
-  background the wallet mid-publish and mid-upload, and recover. Judge the looks in daylight with a
+- **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; send a copy; buy
+  a priced copy from a second wallet; collect from the link in a browser wallet; cancel, time out
+  and background the wallet mid-publish and mid-upload, and recover. Judge the looks in daylight with a
   face and something red in frame; check Camcorder's smear in both landscapes; save one photograph
   per look and compare it with the preview. Open the wallet screen's grid and a print with a wallet
-  that holds copies, and connect a wallet from that screen.
-- **Site:** redeploy `site/`; its copy changed after the 2026-09-18 deploy.
+  that holds copies, and connect a wallet from that screen. Publish from the wallet that holds the
+  Genesis Token and read its row on the review, the Proof sheet and the collect page.
+- **Site:** redeploy `site/`, page and `/api/solana` together: the live page refuses a document
+  that names a Genesis Token, and the live proxy refuses the check's `getTokenAccountsByOwner`.
+  The live home page still says "Simple controls", and the privacy page was corrected on
+  2026-09-21.
+- **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`): the
+  listed devnet programs predate the Genesis Token accounts, so the sealed publish and its
+  refusals have not run on a cluster yet; then list the new address and digest.
 - **Mainnet:** `programs/editions/MAINNET.md`, then the program address and digest in
-  `publications/deployments.ts`, production RPC and storage.
+  `publications/deployments.ts`, production RPC and storage. The mainnet build is the plain
+  one, never `-Features devnet-genesis`.
 - **Final APK:** `npm run release:check`, `npm run release:apk` with the upload key, a fresh
   install, an offline capture, one small mainnet publication.
-- **Submission:** `SUBMISSION_DRAFT.md`.
+- **dApp Store:** the mainnet build above; the Publisher Policy's terms for user content (report,
+  block, user terms) against the collect view; screenshots of 1080 px or more a side and a short
+  description of 30 characters or fewer.
+- **Submission:** `SUBMISSION_DRAFT.md`. CLOCK IN closes 2026-10-08 23:59 US Pacific.
 
 ## The edition lifecycle
 
@@ -107,6 +119,47 @@ publishes the plain three-field document, exactly as before; the Proof sheet say
 native path was exercised on a Seeker on 2026-09-16
 (`dapp-store/attestation-device-check-2026-09-16.json`).
 
+## Seeker Genesis Token
+
+A publication from a wallet that holds a Seeker Genesis Token records the token's mint address in
+the metadata document (`seedshot-genesis/1`, in `publications/core/genesisToken.ts`): under
+`properties.genesisToken`, and as a Metaplex attribute (`Seeker Genesis Token: <mint>`) that wallets
+and explorers show as it is. It follows Solana Mobile's
+[recipe](https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token) and answers its
+three checks from the chain alone: the wallet owns an SGT (any reader can ask mainnet), the user
+proved ownership of the wallet (it signed the transaction that commits the document's hash), and
+the mint address is kept, because it stays the same when the token moves and so identifies the
+Seeker across wallets.
+
+The document only claims the mint. The Proof sheet and the collect page check it on mainnet when
+they open: the mint account must be owned by Token-2022 and carry Solana Mobile's mint authority,
+metadata pointer and group membership, all three, and the publishing wallet must hold it now with
+a non-zero balance. They say held, not held now (an SGT can move between a user's own Seed Vault
+accounts), not a Genesis Token, or couldn't check; an unreachable mainnet never reads as not held.
+The SGT exists on mainnet only, so the check reads mainnet whatever network the edition is on. It
+is independent of the device attestation: one names the owner's token, the other the phone that
+signed. A wallet with no SGT publishes without the claim. `npm test` holds the hand-written mint
+decoder to the official `@solana-program/token-2022` encoder (`scripts/check-genesis.ts`), and
+the check was run against live mainnet tokens on 2026-09-21.
+
+The program seals it too. `publish` and `publish_in_album` take two more accounts at the end,
+the Genesis Token mint and the creator's token account for it, or the program id in each place
+for a publication without one (`programs/editions/README.md`, "The Seeker Genesis Token
+accounts"). With both, the program reads the two accounts by hand — Token-2022 owner, Solana
+Mobile's mint authority, metadata pointer and group membership, and a non-zero balance owned by
+the creator — refuses anything else with `InvalidGenesisToken`, and appends
+`seeker_genesis_token: <mint>` to the collection's locked attributes, so "held at publish" is
+on chain with no document to trust and no RPC to ask. The app passes the accounts on mainnet,
+where the token exists; a devnet edition carries the document's claim only. The reader
+(`sealedGenesisMint`) accepts the five attributes or the five plus that one, refuses a
+collection whose seal disagrees with the document, and the Proof sheet and the collect page say
+when an edition was sealed. The devnet program is built with `--features devnet-genesis`, which
+swaps Solana Mobile's addresses for the acceptance's stand-ins so the seal and its refusals run
+against a mock the session mints (`programs/editions/DEVNET.md`); a mainnet build never carries
+the feature. This needs the next deployment: the two devnet programs listed in
+`publications/deployments.ts` predate the accounts (`LEGACY_WITHOUT_GENESIS`) and are sent
+neither.
+
 The public collect page at erashot.app now lives in this repository (`site/`, see
 `site/README.md`) and is bundled from the same reader the app uses, so it accepts the attested
 document, shows the Device row, and offers `collect` or `buy` by the live `Offer` account.
@@ -138,7 +191,18 @@ require replacing the key. The four local Gradle properties use the `SEEDSHOT_UP
 - JDK 17 and the Android SDK, with `ANDROID_HOME` set
 - A Solana Seeker over USB with developer mode on
 
-There is no iOS or web target, and Expo Go cannot load the native camera module.
+There is no iOS or web target, and Expo Go cannot load the native camera module. The camera and
+the hardware attestation need the phone itself; an emulator runs neither.
+
+Without a Seeker, two things still run. `npm test` needs only Node. A published edition can be
+checked from any machine, and opened in a browser:
+
+```sh
+npm ci
+npm run verify:attestation -- --edition 7XCv1U3MxaJKzAC2oiVBvrRAcfoDimEVjhYGDW4hFF41 --cluster devnet
+```
+
+https://erashot.app/collect/?core=7XCv1U3MxaJKzAC2oiVBvrRAcfoDimEVjhYGDW4hFF41&cluster=devnet
 
 ## Run it on a Seeker
 

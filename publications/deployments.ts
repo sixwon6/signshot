@@ -194,7 +194,24 @@ export const LEGACY_WITHOUT_OFFERS: readonly string[] = [
   "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
 ];
 
-/** What a given `era_editions` deployment can do. Garbage input answers `offers: true`, never throws. */
-export function programFeatures(program: string): { offers: boolean } {
-  return { offers: !LEGACY_WITHOUT_OFFERS.includes(program) };
+/**
+ * Deployments that predate the Seeker Genesis Token accounts on `publish` and `publish_in_album`.
+ *
+ * The build after these takes two more accounts at the END of both instructions — the creator's
+ * Genesis Token mint and their token account for it, or the program id in each place — verifies
+ * them and seals the mint into the collection's locked attributes (`seeker_genesis_token`). The
+ * instruction data and the accounts before them are unchanged. Like `LEGACY_WITHOUT_OFFERS`, this
+ * lists only what was deployed before, so a deployment added later needs no entry.
+ */
+export const LEGACY_WITHOUT_GENESIS: readonly string[] = [
+  "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
+  "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
+];
+
+/** What a given `era_editions` deployment can do. Garbage input answers all `true`, never throws. */
+export function programFeatures(program: string): { offers: boolean; genesis: boolean } {
+  return {
+    offers: !LEGACY_WITHOUT_OFFERS.includes(program),
+    genesis: !LEGACY_WITHOUT_GENESIS.includes(program),
+  };
 }

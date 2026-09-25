@@ -17,8 +17,9 @@ import { safeErrorText } from "../ui/errorText";
  *
  * Both facts exist on mainnet only, so they are always read from mainnet (`getMainnetReadRpc`),
  * whatever cluster this build publishes on: the wallet address is the same keypair on every
- * cluster, so no wallet interaction is involved. Display only. A failure here is a line in
- * Settings and never reaches the camera, publishing or collecting.
+ * cluster, so no wallet interaction is involved. A failure here is a line in Settings and never
+ * reaches the camera, publishing or collecting; the one thing publishing takes from this store is
+ * the last SGT it found, when mainnet cannot be asked (`lastKnownGenesisMint`).
  */
 
 interface SeekerIdentity {
@@ -197,6 +198,16 @@ async function setWallet(wallet: string | null): Promise<void> {
   if (state.wallet !== wallet) return; // switched again while reading
   if (cached?.wallet === wallet) setState({ entry: cached });
   void lookup(wallet, false);
+}
+
+/**
+ * The SGT mint last found for `wallet`, however old, or undefined. For a publication made while
+ * mainnet cannot be asked (`publisherGenesisMint`): every reader checks the recorded mint again,
+ * so a stale answer can never read as held.
+ */
+export async function lastKnownGenesisMint(wallet: string): Promise<string | undefined> {
+  const entry = state.entry?.wallet === wallet ? state.entry : await readCache();
+  return entry?.wallet === wallet && typeof entry.sgtMint === "string" ? entry.sgtMint : undefined;
 }
 
 // ---- hook ----------------------------------------------------------------------------------

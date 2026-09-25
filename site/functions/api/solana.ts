@@ -1,6 +1,6 @@
 // Cloudflare Pages Function. Set SOLANA_RPC_URL as a server-side environment secret.
 // Read-only method allowlist: wallet submission goes through the wallet's own RPC, and the list
-// is exactly the eight methods `site/collect/` calls — nothing wider gets to spend the
+// is exactly the nine methods `site/collect/` calls — nothing wider gets to spend the
 // operator's provider budget. It is exported so a test can assert that it
 // EQUALS the set of methods the page was observed using; Cloudflare routes only `onRequest*`
 // exports, so exporting a constant adds no endpoint.
@@ -16,7 +16,10 @@
 // compute-budget price from it (audit B-8) and the collector page shares that code path. It is
 // read-only, takes one empty-array param and answers ~150 small entries; leaving it off the list
 // would make every collect send a request this Function refuses.
-export const ALLOWED=new Set(['getAccountInfo','getLatestBlockhash','simulateTransaction','getFeeForMessage','getBalance','getSignatureStatuses','getBlockHeight','getRecentPrioritizationFees']);
+// `getTokenAccountsByOwner` is the Seeker Genesis Token check (`verifyGenesisToken`): one wallet,
+// filtered to one mint, so it answers at most a couple of token accounts. It runs against this
+// proxy for devnet editions too, because the SGT exists on mainnet only.
+export const ALLOWED=new Set(['getAccountInfo','getLatestBlockhash','simulateTransaction','getFeeForMessage','getBalance','getSignatureStatuses','getBlockHeight','getRecentPrioritizationFees','getTokenAccountsByOwner']);
 const MAX_BODY=16000;      // bytes, not UTF-16 code units: 16 000 astral characters is 64 000 bytes.
 const MAX_UPSTREAM=1000000;// bytes of provider response this Function will buffer and re-serialise.
 const MAX_PARAMS=8;        // the widest call the collector makes passes two.

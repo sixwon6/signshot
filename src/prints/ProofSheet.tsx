@@ -15,6 +15,7 @@ import {
   securityLevelName,
   type AttestationSummary,
 } from "../../publications/core/attestation";
+import { useGenesisStanding } from "../seeker/useGenesisStanding";
 
 export function ProofSheet({
   proof,
@@ -26,6 +27,7 @@ export function ProofSheet({
   const insets = useSafeAreaInsets(),
     [error, setError] = useState("");
   const draft = proof.kind === "core" ? proof.draft : null;
+  const genesis = useGenesisStanding(draft?.edition.genesisMint, draft?.edition.creator);
   const published = proof.confirmation === "confirmed";
   const cached = proof.confirmation === "cached";
   // `safeErrorText`: Android's `Linking`/`Clipboard` errors quote the URL they were given.
@@ -132,6 +134,18 @@ export function ProofSheet({
                 </Row>
                 {draft.edition.attestation && (
                   <Text style={sheetStyles.help}>{copy.attestationBody}</Text>
+                )}
+                {/* The document's claim, checked on mainnet when this sheet opens. */}
+                <Row label={copy.genesisLabel}>
+                  {genesis ? copy.genesisStanding[genesis] : copy.genesisNone}
+                </Row>
+                {!!draft.edition.genesisMint && (
+                  <Text style={s.value} selectable>
+                    {draft.edition.genesisMint}
+                  </Text>
+                )}
+                {draft.edition.genesisSealed && (
+                  <Text style={sheetStyles.help}>{copy.genesisSealed}</Text>
                 )}
               </>
             )}

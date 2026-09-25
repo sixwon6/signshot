@@ -1,38 +1,29 @@
 import {
-  address,
   getBase64Encoder,
-  unwrapOption,
   type Address,
   type Rpc,
   type SolanaRpcApi,
 } from "@solana/kit";
-import {
-  TOKEN_2022_PROGRAM_ADDRESS,
-  getMintDecoder,
-  isExtension,
-} from "@solana-program/token-2022";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { isSeekerGenesisMint } from "../../publications/core/genesisToken";
 
 /**
  * Seeker Genesis Token (SGT) detection, per Solana Mobile's recipe
  * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token). A mint is an SGT only
- * when its mint authority, metadata pointer and group membership all match; any one alone can be forged.
+ * when its mint authority, metadata pointer and group membership all match; any one alone can be
+ * forged. That check is `isSeekerGenesisMint`, the same one every reader of a published document
+ * runs (`publications/core/genesisToken.ts`).
  *
  * Zero-balance accounts are skipped (an SGT sent away leaves an open, empty ATA); frozen accounts
- * are accepted (a held SGT is always frozen). Client-side and mainnet only: fine for a cosmetic
- * unlock, never a guarantee of ownership.
+ * are accepted (a held SGT is always frozen). Mainnet only. The mint found here is what a
+ * publication records; whoever reads it checks it again, so nothing trusts this lookup.
  *
  * Import the package root only: its `confidential` entry point pulls in WASM that Hermes cannot load.
  */
 
-const SGT_MINT_AUTHORITY = address("GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4");
-/** Metadata address and group address are intentionally the same account. */
-const SGT_METADATA_ADDRESS = address("GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te");
-const SGT_GROUP_ADDRESS = SGT_METADATA_ADDRESS;
-
 const MINT_BATCH = 100;
 
 const base64Encoder = getBase64Encoder();
-const mintDecoder = getMintDecoder();
 
 /**
  * The mint address of an SGT currently held by `owner`, or null. Throws on RPC failure so a
@@ -72,41 +63,10 @@ export async function findSeekerGenesisToken(
       .send({ abortSignal });
     for (let j = 0; j < batch.length; j++) {
       const raw = infos[j];
-      if (!raw) continue;
-      if (isSeekerGenesisMint(raw.data[0])) return batch[j];
+      // The owner as well as the data: only the Token-2022 program can have written the extensions.
+      if (!raw || raw.owner !== TOKEN_2022_PROGRAM_ADDRESS) continue;
+      if (isSeekerGenesisMint(new Uint8Array(base64Encoder.encode(raw.data[0])))) return batch[j];
     }
   }
   return null;
-}
-
-/**
- * All three properties of the mint account, from its raw base64 data. A decode failure means
- * "not a Token-2022 mint we can read", which is certainly not an SGT — never a throw, so one
- * odd account in the wallet cannot make the whole lookup look like an RPC outage.
- */
-function isSeekerGenesisMint(dataBase64: string): boolean {
-  let mint: ReturnType<typeof mintDecoder.decode>;
-  try {
-    mint = mintDecoder.decode(base64Encoder.encode(dataBase64));
-  } catch {
-    return false;
-  }
-
-  if (unwrapOption(mint.mintAuthority) !== SGT_MINT_AUTHORITY) return false;
-
-  const extensions = unwrapOption(mint.extensions);
-  if (extensions === null) return false;
-
-  let pointerOk = false;
-  let memberOk = false;
-  for (const ext of extensions) {
-    if (isExtension("MetadataPointer", ext)) {
-      pointerOk =
-        unwrapOption(ext.authority) === SGT_MINT_AUTHORITY &&
-        unwrapOption(ext.metadataAddress) === SGT_METADATA_ADDRESS;
-    } else if (isExtension("TokenGroupMember", ext)) {
-      memberOk = ext.group === SGT_GROUP_ADDRESS;
-    }
-  }
-  return pointerOk && memberOk;
 }

@@ -1,6 +1,7 @@
 import { CORE_PROTOCOL, type AttestationSummary, type Cluster, type CoreMetadata } from "../types";
 import { readDescription } from "./details";
 import { checkAttributes, exactKeys, object, readAttestationBundle } from "./attestation";
+import { genesisAttributes, readGenesisClaim } from "./genesisToken";
 import { canonicalize, type JcsValue } from "../../src/jcs";
 
 const MISMATCH = "Photo metadata does not match the published edition";
@@ -20,6 +21,8 @@ type PhotoDocument = {
   attestation?: AttestationSummary;
   /** An attested-format document whose evidence did not check out: the photo still loads. */
   attestationProblem?: string;
+  /** The Seeker Genesis Token mint the document claims. Unchecked: see `verifyGenesisToken`. */
+  genesisMint?: string;
 };
 /**
  * Published documents also require checking their bytes against the on-chain metadata hash.
@@ -35,8 +38,9 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   catch { throw new Error(MISMATCH); }
   if (exactKeys(doc, ["name", "description", "image"])) return { image: doc.image, description };
 
-  // The attested document: the plain three fields plus Metaplex `attributes` and the evidence
-  // under `properties.seedshot`. The bundle's manifest must name THIS publication, its challenge
+  // The document with evidence: the plain three fields plus Metaplex `attributes` and, under
+  // `properties`, the keystore's attestation (`seedshot`), the publishing wallet's Seeker Genesis
+  // Token (`genesisToken`), or both. The bundle's manifest must name THIS publication, its challenge
   // must be the manifest's hash, its signature must verify, its chain must reach a Google root,
   // and the attributes must be exactly what the certificate supports. Evidence that fails any of
   // that is SET ASIDE, not fatal: the photograph is still a valid, hash-bound publication, it just
@@ -45,21 +49,44 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   // ever outgrew this reader.)
   if (exactKeys(doc, ["name", "description", "image", "attributes", "properties"])) {
     const properties = object(doc.properties);
-    if (!properties || !exactKeys(properties, ["seedshot"])) throw new Error(MISMATCH);
+    const evidence = properties ? Object.keys(properties) : [];
+    if (!properties || evidence.length === 0 || evidence.some((k) => k !== "seedshot" && k !== "genesisToken"))
+      throw new Error(MISMATCH);
     if (serialized !== undefined && canonicalize(json as JcsValue) !== serialized)
       throw new Error(MISMATCH);
+
+    // The Seeker Genesis Token claim (`genesisToken.ts`): a mint address and the one attribute
+    // that repeats it, always the document's last. The format is this app's own, so a claim that
+    // is not exactly it is a mismatch. It is only a claim here; holding it is checked on mainnet.
+    let genesisMint: string | undefined;
+    let attributes: unknown = doc.attributes;
+    if (Object.hasOwn(properties, "genesisToken")) {
+      try {
+        genesisMint = readGenesisClaim(properties.genesisToken);
+        const last = Array.isArray(attributes) ? attributes.slice(-1) : [];
+        if (canonicalize(last as JcsValue) !== canonicalize(genesisAttributes(genesisMint)))
+          throw new Error(MISMATCH);
+      } catch { throw new Error(MISMATCH); }
+      attributes = (attributes as unknown[]).slice(0, -1);
+    }
+    const genesis = genesisMint ? { genesisMint } : {};
+    if (!Object.hasOwn(properties, "seedshot")) {
+      if (!Array.isArray(attributes) || attributes.length !== 0) throw new Error(MISMATCH);
+      return { image: doc.image, description, ...genesis };
+    }
     try {
       const read = readAttestationBundle(properties.seedshot, expected);
-      checkAttributes(doc.attributes, read.summary);
+      checkAttributes(attributes, read.summary);
       return {
         image: doc.image,
         description,
         dimensions: { width: read.bundle.manifest.width, height: read.bundle.manifest.height },
         attestation: read.summary,
+        ...genesis,
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message.replace(/^attestation: /, "") : "unreadable";
-      return { image: doc.image, description, attestationProblem: reason };
+      return { image: doc.image, description, attestationProblem: reason, ...genesis };
     }
   }
 
@@ -97,8 +124,11 @@ export function readSavedPhotoMetadata(serialized: string, edition: CoreMetadata
     if (parsed.image !== edition.image || parsed.description !== description ||
         (parsed.dimensions && (parsed.dimensions.width !== edition.width || parsed.dimensions.height !== edition.height)))
       throw new Error(MISMATCH);
-    // The attestation summary is whatever the hash-bound document supports, never the saved copy.
-    const { attestation: _saved, attestationProblem: _problem, ...rest } = edition;
+    // The attestation summary and the Genesis Token claim are whatever the hash-bound document
+    // supports, never the saved copy.
+    // `genesisSealed` is a chain fact `isSigned` re-reads; a saved copy of it means nothing.
+    const { attestation: _saved, attestationProblem: _problem, genesisMint: _mint, genesisSealed: _sealed, ...saved } = edition;
+    const rest = parsed.genesisMint ? { ...saved, genesisMint: parsed.genesisMint } : saved;
     return parsed.attestation
       ? { ...rest, description, attestation: parsed.attestation }
       : parsed.attestationProblem

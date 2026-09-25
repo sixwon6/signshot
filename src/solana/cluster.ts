@@ -73,6 +73,9 @@ export function getRpc(): Rpc<SolanaRpcApi> {
 
 let mainnetReadRpc: Rpc<SolanaRpcApi> | null = null;
 
+/** The endpoint `getMainnetReadRpc` reads, for the raw JSON-RPC reader (`verifyGenesisToken`). */
+export const MAINNET_READ_ENDPOINT: string = IS_MAINNET ? RPC_ENDPOINT : PUBLIC_MAINNET_ENDPOINT;
+
 /**
  * Read-only mainnet client for the Seeker facts (SGT, `.skr`), which exist on mainnet only. A
  * mainnet build reuses the app client, so its proxy still applies; any other build reads the public
@@ -81,7 +84,7 @@ let mainnetReadRpc: Rpc<SolanaRpcApi> | null = null;
  */
 export function getMainnetReadRpc(): Rpc<SolanaRpcApi> {
   if (IS_MAINNET) return getRpc();
-  if (mainnetReadRpc === null) mainnetReadRpc = createSolanaRpc(PUBLIC_MAINNET_ENDPOINT);
+  if (mainnetReadRpc === null) mainnetReadRpc = createSolanaRpc(MAINNET_READ_ENDPOINT);
   return mainnetReadRpc;
 }
 

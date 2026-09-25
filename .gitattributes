@@ -3,7 +3,7 @@
 # git from touching a file that is not text at all.
 * text=auto eol=lf
 
-# ShaderGen.kt raw strings contribute to published capture_pipeline_id hashes.
+# ShaderGen.kt raw strings contribute to capture_pipeline_id hashes.
 # Preserve LF on every platform so a checkout cannot change those identifiers.
 *.kt text eol=lf
 

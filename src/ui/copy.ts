@@ -347,6 +347,7 @@ export const publish = {
   rowAlbum: "Album",
   rowImage: "Image",
   rowDevice: "Device",
+  rowGenesis: "Genesis Token",
   rowWallet: "Wallet",
   needTitle: "Add a title to publish.",
   needAlbum:
@@ -408,6 +409,21 @@ export const proof = {
    * checked off-device, at publication time.
    */
   attestationBody: "Shows which device signed this, not what was photographed.",
+  /**
+   * The document's Seeker Genesis Token claim, as `useGenesisStanding` found it on mainnet. The
+   * mint address is shown under the row whatever the answer.
+   */
+  genesisLabel: "Seeker Genesis Token",
+  genesisNone: "Not recorded.",
+  genesisStanding: {
+    checking: "Checking…",
+    held: "Held by the publishing wallet.",
+    moved: "Not held by the publishing wallet now.",
+    "not-genesis": "Not a Seeker Genesis Token.",
+    unavailable: "Couldn’t check.",
+  },
+  /** Under the row when the edition program verified the token at publish (`genesisSealed`). */
+  genesisSealed: "Verified and sealed by the edition program at publish.",
   /** "edition of 5 numbered copies" — the person's word, beside the record's own address. */
   editionSize: (supply: number): string =>
     supply === 1 ? "edition of 1" : `edition of ${supply} numbered copies`,

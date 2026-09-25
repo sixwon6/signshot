@@ -204,7 +204,7 @@ if (!process.argv.includes("--worker")) {
   } finally {
     globalThis.fetch = originalFetch;
   }
-  const { DEFAULT_CAPTURE_SETTINGS, settingsFromEffective, clampSettings } =
+  const { DEFAULT_CAPTURE_SETTINGS, settingsFromEffective, clampSettings, autoEvSpan } =
     await import("../src/capture/model.ts");
   const { captureModeOf, heldBeyondAuto, autoModeSettings, programSettings, manualSettings, displayIn, nextDisplay,
     settingsLeavingAuto, withBrightnessCarried, parseCaptureChrome, chromeHolding, DEFAULT_CAPTURE_CHROME,
@@ -331,6 +331,13 @@ if (!process.argv.includes("--worker")) {
   assert.equal(holdsExposure({ ...captureCaps, manualSensor: false }), false);
   assert.equal(holdsExposure({ ...captureCaps, shutterNs: "unavailable" }), false);
   assert.equal(holdsExposure({ ...captureCaps, iso: "unavailable" }), false);
+  // AUTO's brightness: two stops either way in device steps, never past what the camera offers.
+  const spanOf = (ev) => autoEvSpan({ ...captureCaps, ev });
+  assert.deepEqual(spanOf({ min: -9, max: 12, step: 1 / 3 }), { min: -6, max: 6 });
+  assert.deepEqual(spanOf({ min: -4, max: 4, step: 1 / 3 }), { min: -4, max: 4 });
+  assert.deepEqual(spanOf({ min: -24, max: 24, step: 1 / 6 }), { min: -12, max: 12 });
+  for (const none of ["unavailable", { min: 0, max: 0, step: 1 / 3 }, { min: -6, max: 6, step: 0 }])
+    assert.equal(spanOf(none), null);
 
   {
     // The dial as the photographer turns it. `turn` is the hook's own composition: the turn, then

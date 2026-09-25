@@ -51,10 +51,13 @@ export function readValue(spec: ParamSpec, value: number): string {
 
 /**
  * The one slider shape: rail, fill and thumb, dragged directly; screen readers step it through
- * its accessibility actions. Also used by `CaptureControls.tsx`.
+ * its accessibility actions. Also used by `CaptureAdjust.tsx` and `RecipeControls.tsx`.
  */
 export function Track({
   fraction,
+  origin = 0,
+  marks,
+  height,
   disabled,
   accessibilityLabel,
   accessibilityValue,
@@ -65,6 +68,12 @@ export function Track({
   testID,
 }: {
   fraction: number;
+  /** Where the fill starts, 0..1: the left end, or the zero of a value that runs both ways. */
+  origin?: number;
+  /** Points marked on the rail, 0..1 each. */
+  marks?: readonly number[];
+  /** The touch target's height where the row has more to give than the track's own 32. */
+  height?: number;
   disabled?: boolean;
   accessibilityLabel: string;
   accessibilityValue: { min: number; max: number; now: number };
@@ -77,7 +86,9 @@ export function Track({
   testID?: string;
 }) {
   const touch = useRef<{ x: number; y: number; left: number; axis: "horizontal" | "vertical" | null } | null>(null);
-  const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+  // Unrounded, so the thumb sits exactly on a mark when the value does.
+  const percent = Math.max(0, Math.min(100, fraction * 100));
+  const from = Math.max(0, Math.min(100, origin * 100));
   const at = (x: number) => {
     const width = widths.current[widthKey] ?? 0;
     if (disabled || width <= 0) return;
@@ -86,7 +97,7 @@ export function Track({
   return (
     <View
       testID={testID}
-      style={s.track}
+      style={[s.track, height !== undefined && { height }]}
       onLayout={(event) => {
         widths.current[widthKey] = event.nativeEvent.layout.width;
       }}
@@ -123,7 +134,13 @@ export function Track({
       }}
     >
       <View pointerEvents="none" style={s.rail} />
-      <View pointerEvents="none" style={[s.fill, { width: `${percent}%` as `${number}%` }]} />
+      <View
+        pointerEvents="none"
+        style={[s.fill, { left: `${Math.min(from, percent)}%`, width: `${Math.abs(percent - from)}%` }]}
+      />
+      {marks?.map((mark) => (
+        <View key={mark} pointerEvents="none" style={[s.mark, { left: `${mark * 100}%` }]} />
+      ))}
       <View pointerEvents="none" style={[s.thumb, { left: `${percent}%` }]} />
     </View>
   );
@@ -321,10 +338,18 @@ const s = StyleSheet.create({
   rail: { height: 3, borderRadius: radius.pill, backgroundColor: colors.line },
   fill: {
     position: "absolute",
-    left: 0,
     height: 3,
     borderRadius: radius.pill,
     backgroundColor: colors.teal,
+  },
+  /** A point on the rail, in the ruler's tick colour: wider than the rail, smaller than the thumb. */
+  mark: {
+    position: "absolute",
+    marginLeft: -3,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(245,244,240,0.7)",
   },
   thumb: {
     position: "absolute",

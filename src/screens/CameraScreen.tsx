@@ -16,6 +16,7 @@ import {
   Animated,
   AppState,
   Linking,
+  PanResponder,
   PermissionsAndroid,
   Pressable,
   StyleSheet,
@@ -34,12 +35,13 @@ import { typeScale as type } from "../ui/type";
 import { Chip, CHROME_FONT_SCALE, Pill, Screen, TextKey } from "../ui/primitives";
 import { actions, camera as cameraCopy, recipes as recipeCopy, captureControls as controlsCopy } from "../ui/copy";
 import type { CaptureMode } from "../capture/mode";
+import { autoEvSpan, formatEv } from "../capture/model";
 import { RecipePicker } from "./RecipePicker";
 import { RecipeOptions, RecipeSheet, Track, type SheetMode } from "./RecipeSheet";
 import { StagePanel } from "./RecipeBar";
 import {
   Histogram,
-  LightCell,
+  BrightCell,
   ReadoutCells,
   controlsOf,
   firstLive,
@@ -57,6 +59,11 @@ import { useAppActive } from "../useAppActive";
  */
 const PICTURE_ASPECT = 3 / 4;
 const FOCUS_RING = 72;
+/** A finger's travel on the picture for one stop of brightness, and how far it moves before it is a drag. */
+const DP_PER_STOP = 80;
+const DRAG_SLOP = 10;
+/** The brightness readout, drawn clear of the finger while it drags. */
+const BRIGHT_READOUT = { width: 84, height: 44, above: 96 };
 /** The dial's positions, in the order a camera prints them. */
 const MODES: readonly CaptureMode[] = ["auto", "program", "manual"];
 /** DISP's grid: the picture in thirds. */
@@ -96,7 +103,7 @@ export function CameraScreen() {
   const [confirming, setConfirming] = useState(false);
   /**
    * The cell the photographer made live, or null for the mode's own: brightness in P, the shutter
-   * in M, nothing in AUTO (its adjust row is the look's strength until LIGHT is tapped).
+   * in M, nothing in AUTO (its adjust row is the look's strength until BRIGHT is tapped).
    */
   const [chosenCell, setChosenCell] = useState<LiveKey | null>(null);
   /** With the look live: its row of looks, or, after a second tap on the one in force, its strength. */
@@ -115,6 +122,60 @@ export function CameraScreen() {
       if (finished) setFocusRing((now) => (now?.at === focusRing.at ? null : now));
     });
   }, [focusRing, ring]);
+  /**
+   * The picture answers two touches, as a phone's camera does: a tap focuses and meters there, and
+   * a drag up or down is brightness, in the camera's own steps. What the handlers need changes
+   * with every render, so they read it from `pictureTouch`, set just before the screen is drawn.
+   */
+  const [brightDrag, setBrightDrag] = useState<{ x: number; y: number; steps: number } | null>(null);
+  const brightFade = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (brightFade.current) clearTimeout(brightFade.current); }, []);
+  const pictureTouch = useRef<{
+    tap: (x: number, y: number) => void;
+    /** Null where brightness is not the photographer's to set: M, a capture in flight, no control. */
+    bright: ((steps: number) => void) | null;
+    range: { min: number; max: number; step: number } | null;
+    steps: number;
+  }>({ tap: () => {}, bright: null, range: null, steps: 0 });
+  const drag = useRef({ x: 0, y: 0, from: 0, last: 0, on: false });
+  const picturePan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: (event) => {
+        const { locationX, locationY } = event.nativeEvent;
+        const steps = pictureTouch.current.steps;
+        drag.current = { x: locationX, y: locationY, from: steps, last: steps, on: false };
+      },
+      onPanResponderMove: (_event, gesture) => {
+        const now = pictureTouch.current;
+        const d = drag.current;
+        if (!now.bright || !now.range) return;
+        if (!d.on) {
+          // Up or down, and far enough that it is not a tap that slipped.
+          if (Math.abs(gesture.dy) < DRAG_SLOP || Math.abs(gesture.dy) < Math.abs(gesture.dx)) return;
+          d.on = true;
+          if (brightFade.current) clearTimeout(brightFade.current);
+          setBrightDrag({ x: d.x, y: d.y, steps: d.last });
+        }
+        const moved = Math.round(-gesture.dy / DP_PER_STOP / now.range.step);
+        // A value from beyond the range (P's, carried into AUTO) comes in from where it is, not with a jump.
+        const low = Math.min(now.range.min, d.from), high = Math.max(now.range.max, d.from);
+        const steps = Math.max(low, Math.min(high, d.from + moved));
+        if (steps === d.last) return;
+        d.last = steps;
+        now.bright(steps);
+        setBrightDrag({ x: d.x, y: d.y, steps });
+      },
+      onPanResponderRelease: () => {
+        const d = drag.current;
+        if (!d.on) pictureTouch.current.tap(d.x, d.y);
+        else brightFade.current = setTimeout(() => setBrightDrag(null), 700);
+      },
+      onPanResponderTerminate: () => {
+        if (drag.current.on) brightFade.current = setTimeout(() => setBrightDrag(null), 700);
+      },
+    }),
+  ).current;
   const captureInFlight = useRef(false);
   /** Measured track widths, so `Track` stays hook-free. */
   const widths = useRef<Record<string, number>>({});
@@ -126,7 +187,7 @@ export function CameraScreen() {
   const readout = capture.mode !== "auto";
   /**
    * The live cell, read off the mode rather than kept in step with it: when the dial turns to M by
-   * itself (a ruler moved in P) a live LIGHT is forbidden, and the shutter is live in its place.
+   * itself (a ruler moved in P) a live BRIGHT is forbidden, and the shutter is live in its place.
    */
   const liveCell: LiveKey | null =
     capture.caps === null
@@ -278,6 +339,33 @@ export function CameraScreen() {
   const openSettings = () =>
     Linking.openSettings().catch(() => setError(cameraCopy.settingsOpenError));
 
+  const picture = frame ? pictureRect(frame) : null;
+  const evRange = capture.caps !== null && typeof capture.caps.ev === "object" ? capture.caps.ev : null;
+  // In AUTO the drag goes as far as the slider does; P has the camera's whole range.
+  const autoSpan = capture.caps !== null && capture.mode === "auto" ? autoEvSpan(capture.caps) : null;
+  // M holds the exposure, so brightness there is not the photographer's to move.
+  const canBright =
+    !busy && capture.caps !== null && controlsOf(capture.caps, capture.mode).includes("ev") && !forbiddenIn("ev", capture.mode);
+  // After every render, so the handlers always act on the settings now in force. A hook, so it
+  // stays above the permission screen's early return.
+  useEffect(() => {
+    pictureTouch.current = {
+      tap: (x, y) => {
+        if (!picture) return;
+        setOpenStage(null);
+        // AUTO's adjust row goes back to the look's strength; P and M always have a dial up.
+        if (!readout) setChosenCell(null);
+        // A held lens cannot follow a tap; the tap hands focus back to the camera first.
+        if (capture.settings.focus !== "auto") capture.change({ ...capture.settings, focus: "auto" });
+        setFocusRing({ x, y, at: Date.now() });
+        void SeekerCamera.focusAt(x / picture.width, y / picture.height).catch(() => {});
+      },
+      bright: canBright ? (steps) => capture.change({ ...capture.settings, ev: steps }) : null,
+      range: evRange && autoSpan ? { ...evRange, ...autoSpan } : evRange,
+      steps: capture.settings.ev,
+    };
+  });
+
   if (!hasPermission)
     return (
       <Screen>
@@ -336,7 +424,6 @@ export function CameraScreen() {
   // What looks unavailable, as against what merely holds a tap for a moment (see slowApply).
   const dimmed = busy || recipes.slowApply || !!notice || recipe === null;
   const strengthDimmed = busy || recipes.slowApply || recipes.isClean;
-  const picture = frame ? pictureRect(frame) : null;
   const points = Math.round(recipes.strength * 100);
   const dialDisabled = busy || !live || capture.caps === null;
 
@@ -353,6 +440,7 @@ export function CameraScreen() {
           testID="camera-strength"
           widths={widths}
           widthKey="strength"
+          height={ADJUST_HEIGHT}
           fraction={recipes.strength}
           disabled={strengthDisabled}
           accessibilityLabel={recipeCopy.strength}
@@ -467,9 +555,11 @@ export function CameraScreen() {
                 />
               </React.Fragment>
             ))}
-          {/* Tap to focus: the whole picture is the target, under whatever is drawn over it. */}
+          {/* The whole picture is the target, under whatever is drawn over it: a tap focuses and
+              meters there, a drag up or down is brightness (`picturePan`). */}
           {picture && live && (
-            <Pressable
+            <View
+              accessible
               accessibilityRole="button"
               accessibilityLabel={cameraCopy.tapToFocus}
               testID="camera-tap-focus"
@@ -480,18 +570,29 @@ export function CameraScreen() {
                 width: picture.width,
                 height: picture.height,
               }}
-              onPress={(event) => {
-                const { locationX: x, locationY: y } = event.nativeEvent;
-                setOpenStage(null);
-                // AUTO's adjust row goes back to the look's strength; P and M always have a dial up.
-                if (!readout) setChosenCell(null);
-                // A held lens cannot follow a tap; the tap hands focus back to the camera first.
-                if (capture.settings.focus !== "auto")
-                  capture.change({ ...capture.settings, focus: "auto" });
-                setFocusRing({ x, y, at: Date.now() });
-                void SeekerCamera.focusAt(x / picture.width, y / picture.height).catch(() => {});
-              }}
+              {...picturePan.panHandlers}
             />
+          )}
+          {picture && brightDrag && capture.caps !== null && (
+            <View
+              pointerEvents="none"
+              style={[
+                s.brightReadout,
+                {
+                  left: picture.left + Math.max(0, Math.min(picture.width - BRIGHT_READOUT.width, brightDrag.x - BRIGHT_READOUT.width / 2)),
+                  top: picture.top + Math.max(0, brightDrag.y - BRIGHT_READOUT.above),
+                },
+              ]}
+            >
+              <Text maxFontSizeMultiplier={CHROME_FONT_SCALE} style={[type.imprint, s.brightTag]}>{controlsCopy.tag.ev}</Text>
+              <Text
+                maxFontSizeMultiplier={CHROME_FONT_SCALE}
+                style={[type.readout, { color: brightDrag.steps === 0 ? colors.ink : colors.tealText }]}
+                testID="camera-bright-value"
+              >
+                {formatEv(brightDrag.steps, capture.caps)}
+              </Text>
+            </View>
           )}
           {picture && focusRing && (
             <Animated.View
@@ -600,10 +701,12 @@ export function CameraScreen() {
           ) : (
             <View style={s.chooseRow}>
               <View style={s.grow}>{lookRow({ left: space.gutter, right: 0 })}</View>
-              {capture.caps !== null && (
+              {/* Brightness is set on the picture. Its key is here only while it is off zero, or
+                  open: a held value is never hidden, and at rest the row is the looks alone. */}
+              {capture.caps !== null && (capture.settings.ev !== 0 || liveCell === "ev") && (
                 <>
                   <View style={s.divider} />
-                  <LightCell
+                  <BrightCell
                     caps={capture.caps}
                     settings={capture.settings}
                     meter={capture.meter}
@@ -722,6 +825,17 @@ const s = StyleSheet.create({
     borderColor: colors.teal,
     borderRadius: radius.small,
   },
+  /** Brightness while it is dragged: a tag over its value, on the histogram's backing. */
+  brightReadout: {
+    position: "absolute",
+    width: BRIGHT_READOUT.width,
+    height: BRIGHT_READOUT.height,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.small,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  brightTag: { color: colors.muted },
   /** Over the foot of the picture, so an error never resizes the viewfinder. */
   notice: {
     position: "absolute",

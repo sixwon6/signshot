@@ -129,6 +129,18 @@ function evStops(steps: number, caps: CaptureCapabilities): number {
   return range ? steps * range.step : 0;
 }
 
+/**
+ * AUTO's brightness, in device steps: two stops either way, inside what the camera offers. The
+ * span a point-and-shoot's +/- key has; P has the camera's whole range.
+ */
+export function autoEvSpan(caps: CaptureCapabilities): { min: number; max: number } | null {
+  const range = caps.ev === UNAVAILABLE ? null : caps.ev;
+  if (!range || range.step <= 0) return null;
+  const two = Math.round(2 / range.step);
+  const span = { min: Math.max(range.min, -two), max: Math.min(range.max, two) };
+  return span.max > span.min ? span : null;
+}
+
 function clampKelvin(kelvin: number, caps: CaptureCapabilities): number {
   const range = rangeOf(caps.kelvin);
   if (!range) return Math.round(finite(kelvin, 6500));

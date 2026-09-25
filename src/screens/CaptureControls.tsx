@@ -248,7 +248,7 @@ export function ReadoutCells({
 }
 
 /** AUTO's one cell, pinned beside its looks. */
-export function LightCell({
+export function BrightCell({
   caps,
   settings,
   meter,

@@ -255,7 +255,7 @@ export const captureControls = {
   tag: {
     iso: "ISO",
     shutter: "Shutter",
-    ev: "Light",
+    ev: "Bright",
     whiteBalance: "Colour",
     focus: "Focus",
     look: "Look",

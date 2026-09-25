@@ -8,7 +8,9 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
   MAINNET_GENESIS_HASH,
   MINT_SLICE_BYTES,
+  chooseGenesis,
   seekerGenesisMember,
+  singleUnitMint,
 } from "../../publications/core/genesisToken";
 
 /**
@@ -76,13 +78,11 @@ export async function findSeekerGenesisToken(
   const mints: Address[] = [];
   const seen = new Set<string>();
   for (const { account } of tokenAccounts) {
-    const info = account.data.parsed?.info;
     // One unit of a 0-decimal mint, as a held SGT is. Zero = a token account the SGT has left.
-    if (!info || info.tokenAmount?.decimals !== 0 || info.tokenAmount.amount !== "1") continue;
-    const mint = info.mint;
-    if (typeof mint !== "string" || seen.has(mint)) continue;
+    const mint = singleUnitMint(account.data.parsed?.info);
+    if (mint === null || seen.has(mint)) continue;
     seen.add(mint);
-    mints.push(mint);
+    mints.push(mint as Address);
   }
 
   const found: { mint: Address; member: bigint }[] = [];
@@ -102,8 +102,5 @@ export async function findSeekerGenesisToken(
       if (member !== null) found.push({ mint: batch[j], member });
     }
   }
-  if (found.length === 0) return null;
-  const kept = found.find(({ mint }) => mint === preferred);
-  if (kept) return kept.mint;
-  return found.reduce((a, b) => (b.member < a.member ? b : a)).mint;
+  return chooseGenesis(found, preferred)?.mint ?? null;
 }

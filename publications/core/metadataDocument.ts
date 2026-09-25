@@ -2,6 +2,8 @@ import { CORE_PROTOCOL, type AttestationSummary, type Cluster, type CoreMetadata
 import { readDescription } from "./details";
 import { checkAttributes, exactKeys, object, readAttestationBundle } from "./attestation";
 import { genesisAttributes, readGenesisClaim } from "./genesisToken";
+import { collectUrl } from "./links";
+import { programFeatures } from "../deployments";
 import { canonicalize, type JcsValue } from "../../src/jcs";
 
 const MISMATCH = "Photo metadata does not match the published edition";
@@ -36,22 +38,38 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   let description: string;
   try { description = readDescription(doc.description); }
   catch { throw new Error(MISMATCH); }
-  if (exactKeys(doc, ["name", "description", "image"])) return { image: doc.image, description };
+  // The formats `metadata()` wrote before the collect link and the file list: read on the
+  // deployments they were published on, and on no program deployed after them.
+  const earlier = !programFeatures(expected.program).royaltiesAndSeekerOnly;
+  if (exactKeys(doc, ["name", "description", "image"])) {
+    if (!earlier) throw new Error(MISMATCH);
+    return { image: doc.image, description };
+  }
 
-  // The document with evidence: the plain three fields plus Metaplex `attributes` and, under
-  // `properties`, the keystore's attestation (`seedshot`), the publishing wallet's Seeker Genesis
-  // Token (`genesisToken`), or both. The bundle's manifest must name THIS publication, its challenge
-  // must be the manifest's hash, its signature must verify, its chain must reach a Google root,
-  // and the attributes must be exactly what the certificate supports. Evidence that fails any of
-  // that is SET ASIDE, not fatal: the photograph is still a valid, hash-bound publication, it just
-  // carries no device claim here, and the Proof sheet says why. (Refusing the whole photo would
-  // add no safety and would make an immutable document unviewable if a future keystore format
-  // ever outgrew this reader.)
-  if (exactKeys(doc, ["name", "description", "image", "attributes", "properties"])) {
+  // The current document (`metadata()`): the plain three fields, the edition's collect link as
+  // `external_url`, Metaplex `attributes`, and `properties` holding exactly the one image file and
+  // its category. The earlier one with evidence had neither the link nor the file list. Under
+  // `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
+  // Seeker Genesis Token (`genesisToken`), or both. The bundle's manifest must name THIS
+  // publication, its challenge must be the manifest's hash, its signature must verify, its chain
+  // must reach a Google root, and the attributes must be what the certificate supports. Evidence
+  // that fails any of that is SET ASIDE, not fatal: the photograph is still a valid, hash-bound
+  // publication, it just carries no device claim here, and the Proof sheet says why. (Refusing
+  // the whole photo would add no safety and would make an immutable document unviewable if a
+  // future keystore format ever outgrew this reader.)
+  const current = exactKeys(doc, ["name", "description", "image", "external_url", "attributes", "properties"]);
+  if (current || (earlier && exactKeys(doc, ["name", "description", "image", "attributes", "properties"]))) {
     const properties = object(doc.properties);
-    const evidence = properties ? Object.keys(properties) : [];
-    if (!properties || evidence.length === 0 || evidence.some((k) => k !== "seedshot" && k !== "genesisToken"))
+    const keys = properties ? Object.keys(properties) : [];
+    const evidence = keys.filter((k) => k === "seedshot" || k === "genesisToken");
+    if (!properties || keys.length !== evidence.length + (current ? 2 : 0) || (!current && evidence.length === 0))
       throw new Error(MISMATCH);
+    if (current) {
+      const files = Array.isArray(properties.files) && properties.files.length === 1 ? object(properties.files[0]) : null;
+      if (doc.external_url !== collectUrl(expected.edition, expected.cluster) || properties.category !== "image" ||
+          !files || !exactKeys(files, ["uri", "type"]) || files.uri !== doc.image || files.type !== "image/jpeg")
+        throw new Error(MISMATCH);
+    }
     if (serialized !== undefined && canonicalize(json as JcsValue) !== serialized)
       throw new Error(MISMATCH);
 
@@ -76,7 +94,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
     }
     try {
       const read = readAttestationBundle(properties.seedshot, expected);
-      checkAttributes(attributes, read.summary);
+      checkAttributes(attributes, read.summary, current ? "current" : "earlier");
       return {
         image: doc.image,
         description,
@@ -109,6 +127,22 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
     throw new Error(MISMATCH);
   // Capture/source annotations are historical metadata, not proof of ownership or provenance.
   return { image: doc.image, description, dimensions: { width: legacy.width, height: legacy.height } };
+}
+
+/**
+ * What a draft's own document already carries, for resealing it before it is sent: whether it is
+ * in the current format, the attestation bundle it holds, and whether it names the device. Only
+ * for a document `readSavedPhotoMetadata` accepted.
+ */
+export function sealedEvidence(serialized: string): { current: boolean; bundle?: unknown; namesDevice: boolean } {
+  const doc = object(JSON.parse(serialized));
+  const attributes: unknown[] = Array.isArray(doc?.attributes) ? doc.attributes : [];
+  const bundle = object(doc?.properties)?.seedshot;
+  return {
+    current: !!doc && Object.hasOwn(doc, "external_url"),
+    ...(bundle === undefined ? {} : { bundle }),
+    namesDevice: attributes.some((a) => object(a)?.trait_type === "Device"),
+  };
 }
 
 /** Validate a saved intent without regenerating the immutable document in today's format. */

@@ -113,10 +113,17 @@ export function securityLevelName(s: AttestationSummary): string {
 
 /**
  * The Metaplex-standard `attributes` a document carries beside the evidence, so a wallet or
- * explorer shows the device without parsing certificates. Derived, and re-derived on read: a
- * document whose attributes disagree with its certificate is refused.
+ * explorer shows the device without parsing certificates: the Device trait, and only when the full
+ * device verdict passed as the document was sealed (`deviceVerdict`: the release app and signer,
+ * verified boot on a locked bootloader, no certificate revoked, every one valid then). A wallet
+ * shows its traits as fact, so otherwise there are none. Re-derived on read (`checkAttributes`).
  */
-export function attestationAttributes(s: AttestationSummary): { trait_type: string; value: string }[] {
+export function attestationAttributes(s: AttestationSummary, verified: boolean): { trait_type: string; value: string }[] {
+  return verified ? [{ trait_type: "Device", value: deviceName(s) }] : [];
+}
+
+/** What documents sealed before the verdict carried: the device and the key, unconditionally. */
+function earlierAttestationAttributes(s: AttestationSummary): { trait_type: string; value: string }[] {
   return [
     { trait_type: "Device", value: deviceName(s) },
     { trait_type: "Attestation", value: securityLevelName(s) },
@@ -213,10 +220,21 @@ export function readAttestationBundle(
   };
 }
 
-/** The `attributes` a document must carry for this summary, or a refusal. */
-export function checkAttributes(value: unknown, summary: AttestationSummary) {
-  const expected = attestationAttributes(summary);
-  if (!Array.isArray(value) || canonicalize(value as JcsValue) !== canonicalize(expected as unknown as JcsValue))
+/**
+ * The `attributes` a document may carry for this summary, or a refusal. A current document
+ * (`metadata()`) carries none, or the Device trait; the reader cannot re-run the network half of
+ * the verdict, so it holds the trait to the half it can: a chain from another app, or from a
+ * phone without verified boot and a locked bootloader, never names a device. An `earlier`
+ * document carries the two traits it always did.
+ */
+export function checkAttributes(value: unknown, summary: AttestationSummary, format: "current" | "earlier") {
+  const allowed = format === "earlier"
+    ? [earlierAttestationAttributes(summary)]
+    : deviceVerdict(summary, null, null).status === "refused"
+      ? [attestationAttributes(summary, false)]
+      : [attestationAttributes(summary, false), attestationAttributes(summary, true)];
+  if (!Array.isArray(value) ||
+      !allowed.some((expected) => canonicalize(value as JcsValue) === canonicalize(expected as unknown as JcsValue)))
     fail("attributes do not match the certificate");
 }
 

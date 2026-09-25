@@ -105,12 +105,14 @@ refuses("a chain with a non-CA issuer", () => verifyChain([ca, leaf], [leaf.spki
 const { summary } = readAttestationBundle(bundle, commitment, synthetic);
 ok("summary names the Seeker", summary.manufacturer === "Solana Mobile Inc." && summary.model === "Seeker" && summary.securityLevel === "strongbox");
 ok("summary carries the whole package and signer sets", summary.packageNames.join() === "app.seekershot" && summary.signerDigests.join() === "ab".repeat(32));
-const attributes = attestationAttributes(summary);
-ok("attributes are the device and the key level",
-  canonicalize(attributes as unknown as JcsValue) === canonicalize([
-    { trait_type: "Device", value: "Solana Seeker" },
-    { trait_type: "Attestation", value: "StrongBox hardware key" },
-  ]));
+ok("the Device trait is written only for a verified verdict, and the key level never",
+  canonicalize(attestationAttributes(summary, true) as unknown as JcsValue) === canonicalize([{ trait_type: "Device", value: "Solana Seeker" }])
+    && attestationAttributes(summary, false).length === 0);
+// What documents sealed before the verdict carried, which stay readable.
+const attributes = [
+  { trait_type: "Device", value: "Solana Seeker" },
+  { trait_type: "Attestation", value: "StrongBox hardware key" },
+];
 
 refuses("the bundle under Google's roots (a forged chain)", () => readAttestationBundle(bundle, commitment), /Google attestation root/);
 refuses("a manifest with one changed field (signature and challenge both break)", () => {
@@ -151,9 +153,26 @@ refuses("a manifest with an extra key", () => {
   readAttestationBundle(b, commitment, synthetic);
 });
 refuses("attributes that overclaim", () =>
-  checkAttributes([{ trait_type: "Device", value: "Solana Seeker" }, { trait_type: "Attestation", value: "Camera sensor" }], summary));
+  checkAttributes([{ trait_type: "Device", value: "Solana Seeker" }, { trait_type: "Attestation", value: "Camera sensor" }], summary, "earlier"));
 refuses("attributes with an extra trait", () =>
-  checkAttributes([...attributes, { trait_type: "Verified", value: "yes" }], summary));
+  checkAttributes([...attributes, { trait_type: "Verified", value: "yes" }], summary, "earlier"));
+ok("an earlier document's two traits still read", (() => { checkAttributes(attributes, summary, "earlier"); return true; })());
+// The current document: no trait, or the Device trait, and the latter only for a chain from the
+// release app on a locked, verified-boot phone (the half of the verdict a reader can re-run).
+const releaseSummary: AttestationSummary = { ...summary, signerDigests: [RELEASE_APP.signerDigest] };
+const deviceTrait = [{ trait_type: "Device", value: "Solana Seeker" }];
+ok("a current document may carry no trait", (() => { checkAttributes([], summary, "current"); return true; })());
+ok("a current document may name the release app's device", (() => { checkAttributes(deviceTrait, releaseSummary, "current"); return true; })());
+refuses("a current document naming the device of another app", () => checkAttributes(deviceTrait, summary, "current"));
+refuses("a current document naming the device of an unlocked phone", () =>
+  checkAttributes(deviceTrait, { ...releaseSummary, deviceLocked: false }, "current"));
+refuses("a current document naming the device of a phone without verified boot", () =>
+  checkAttributes(deviceTrait, { ...releaseSummary, verifiedBoot: "unverified" }, "current"));
+refuses("a current document naming another device", () =>
+  checkAttributes([{ trait_type: "Device", value: "iPhone" }], releaseSummary, "current"));
+refuses("a current document with the key level trait", () => checkAttributes(attributes, releaseSummary, "current"));
+refuses("a current document with the key level alone", () =>
+  checkAttributes([{ trait_type: "Attestation", value: "StrongBox hardware key" }], releaseSummary, "current"));
 refuses("a short TBS certificate, with an attestation error not a TypeError", () =>
   parseCertificate(new Uint8Array([0x30, 0x06, 0x30, 0x00, 0x30, 0x00, 0x30, 0x00])));
 
@@ -192,6 +211,52 @@ ok("a document whose attributes disagree with its certificate is set aside", (()
   // (The synthetic chain fails the root check first; the attribute check is covered above.)
   return r.attestation === undefined && !!r.attestationProblem;
 })());
+
+// The current document: the collect link, the Metaplex file list and category, and the traits.
+const link = `https://erashot.app/collect/?core=${e.edition}&cluster=devnet`;
+const files = [{ uri: e.image, type: "image/jpeg" }];
+const currentDoc = {
+  name: e.title, description: e.description, image: e.image, external_url: link, attributes: deviceTrait,
+  properties: { files, category: "image", seedshot: bundle },
+};
+const current = canonicalize(currentDoc as unknown as JcsValue);
+const currentRead = readPhotoMetadata(JSON.parse(current), e, current);
+ok("a current attested document loads, its forged chain set aside with a reason",
+  currentRead.attestation === undefined && /Google attestation root/.test(currentRead.attestationProblem ?? "") && currentRead.image === e.image);
+const plainCurrent = metadata(e);
+ok("metadata() writes the collect link, the one JPEG file and the image category, and no trait",
+  canonicalize(plainCurrent as unknown as JcsValue) === canonicalize({
+    name: e.title, description: e.description, image: e.image, external_url: link, attributes: [],
+    properties: { files, category: "image" },
+  }));
+const mismatch = (doc: unknown, at: CoreMetadata = e) => {
+  try { readPhotoMetadata(doc, at); return false; } catch (error) { return /does not match/.test((error as Error).message); }
+};
+const withProperties = (patch: Record<string, unknown>) => ({ ...plainCurrent, properties: { ...plainCurrent.properties, ...patch } });
+for (const [name, doc] of [
+  ["another edition's link", { ...plainCurrent, external_url: `https://erashot.app/collect/?core=${e.collection}&cluster=devnet` }],
+  ["the mainnet link for a devnet edition", { ...plainCurrent, external_url: `https://erashot.app/collect/?core=${e.edition}` }],
+  ["no link beside the file list", (({ external_url: _link, ...rest }) => rest)(plainCurrent)],
+  ["a second file", withProperties({ files: [...files, ...files] })],
+  ["a file at another address", withProperties({ files: [{ uri: "https://arweave.net/" + "B".repeat(43), type: "image/jpeg" }] })],
+  ["a file of another type", withProperties({ files: [{ uri: e.image, type: "image/png" }] })],
+  ["a file with an extra key", withProperties({ files: [{ ...files[0], cdn: true }] })],
+  ["another category", withProperties({ category: "video" })],
+  ["no category", (({ category: _c, ...rest }) => ({ ...plainCurrent, properties: rest }))(plainCurrent.properties)],
+  ["an unknown property", withProperties({ note: "x" })],
+  ["a trait without evidence", { ...plainCurrent, attributes: deviceTrait }],
+  ["no attributes", (({ attributes: _a, ...rest }) => rest)(plainCurrent)],
+] as const)
+  ok(`a current document with ${name} is refused`, mismatch(doc));
+ok("a non-canonical current document is refused on the network path", (() => {
+  try { readPhotoMetadata(JSON.parse(current), e, current + " "); return false; } catch { return true; }
+})());
+// The earlier formats are read on the deployments they were written for, and nowhere after.
+const later: CoreMetadata = { ...e, program: getAddressDecoder().decode(new Uint8Array(32).fill(7)) };
+ok("on a deployment after them, the earlier plain and attested documents are refused",
+  mismatch({ name: e.title, description: e.description, image: e.image }, later) && mismatch(JSON.parse(serialized), later));
+ok("on a deployment after them, the current document reads",
+  readPhotoMetadata(JSON.parse(canonicalize(metadata(later) as unknown as JcsValue)), later).image === e.image);
 
 // --- The device verdict: what a screen may say about a chain the reader accepted ------------------
 const signing = JSON.parse(readFileSync(resolve(here, "..", "dapp-store", "signing-certificate.json"), "utf8")) as { packageName: string; sha256: string };

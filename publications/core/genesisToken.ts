@@ -99,6 +99,23 @@ export interface GenesisAddresses {
 const SOLANA_MOBILE: GenesisAddresses = { metadataAddress: SGT_METADATA_ADDRESS, groupAddress: SGT_GROUP_ADDRESS };
 
 /**
+ * The devnet acceptance's group mint (`DEVNET_GENESIS_GROUP` in `publications/devnet/genesisFixture.ts`,
+ * which `scripts/check-genesis.ts` holds this equal to). It is its own metadata address, as Solana
+ * Mobile's is, and the devnet program build accepts its members in place of real SGTs.
+ */
+export const DEVNET_GENESIS_GROUP = "CmJzRVDQjrj8NjAcN4qKuLNKwhWJVcPKsngfAWfu88WB";
+
+/**
+ * Whose Genesis Tokens the edition program on `cluster` accepts: Solana Mobile's on mainnet, the
+ * acceptance's stand-in on devnet, where no real SGT exists. A stand-in never reads as an SGT.
+ */
+export function genesisAddresses(cluster: Cluster): GenesisAddresses {
+  return cluster === "mainnet-beta"
+    ? SOLANA_MOBILE
+    : { metadataAddress: DEVNET_GENESIS_GROUP, groupAddress: DEVNET_GENESIS_GROUP };
+}
+
+/**
  * The SGT's number in Solana Mobile's group, or `null` when the mint account at `mint` is not a
  * Seeker Genesis Token. Solana Mobile's recipe: the `MetadataPointer` names their metadata
  * address and the `TokenGroupMember` names their group.
@@ -223,29 +240,9 @@ async function genesisHolding(
 ): Promise<{ standing: "held"; tokenAccount: string } | { standing: Exclude<GenesisStanding, "held"> }> {
   address(mint);
   address(holder);
-  const [, { value: account }] = await Promise.all([
-    assertMainnet(endpoint),
-    request<{ value: unknown }>(endpoint, "getAccountInfo", [
-      mint,
-      { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } },
-    ]),
-  ]);
-  if (account === null) return { standing: "no-account" };
-  const info = object(account);
-  if (!info || typeof info.owner !== "string") throw new Error(INVALID);
-  // The owner first: only the Token-2022 program can have written these extensions, and an
-  // account of any other program's is not an SGT, whatever its size.
-  if (info.owner !== TOKEN_2022_PROGRAM) return { standing: "not-genesis" };
-  const data = info.data;
-  if (!Array.isArray(data) || data[1] !== "base64" || typeof data[0] !== "string") throw new Error(INVALID);
-  let bytes: Uint8Array;
-  try {
-    bytes = new Uint8Array(getBase64Encoder().encode(data[0]));
-  } catch {
-    throw new Error(INVALID);
-  }
-  // The slice asked for, even from an endpoint that sent more.
-  if (!isSeekerGenesisMint(bytes.subarray(0, MINT_SLICE_BYTES), mint)) return { standing: "not-genesis" };
+  const [, bytes] = await Promise.all([assertMainnet(endpoint), mintSlice(endpoint, mint)]);
+  if (bytes === null) return { standing: "no-account" };
+  if (bytes === "other" || !isSeekerGenesisMint(bytes, mint)) return { standing: "not-genesis" };
 
   const { value: accounts } = await request<{ value: unknown }>(endpoint, "getTokenAccountsByOwner", [
     holder,
@@ -266,9 +263,125 @@ async function genesisHolding(
   return { standing: "moved" };
 }
 
+/**
+ * The first `MINT_SLICE_BYTES` of the account at `mint`: `null` when nothing is there, `"other"`
+ * when it is not a Token-2022 account. The owner first: only the Token-2022 program can have
+ * written the extensions, and an account of any other program's is not an SGT, whatever its size.
+ */
+async function mintSlice(endpoint: string, mint: string): Promise<Uint8Array | "other" | null> {
+  const { value: account } = await request<{ value: unknown }>(endpoint, "getAccountInfo", [
+    mint,
+    { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } },
+  ]);
+  if (account === null) return null;
+  const info = object(account);
+  if (!info || typeof info.owner !== "string") throw new Error(INVALID);
+  if (info.owner !== TOKEN_2022_PROGRAM) return "other";
+  const data = info.data;
+  if (!Array.isArray(data) || data[1] !== "base64" || typeof data[0] !== "string") throw new Error(INVALID);
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(getBase64Encoder().encode(data[0]));
+  } catch {
+    throw new Error(INVALID);
+  }
+  // The slice asked for, even from an endpoint that sent more.
+  return bytes.subarray(0, MINT_SLICE_BYTES);
+}
+
+// ---------------------------------------------------------------------------
+// Finding a wallet's token
+// ---------------------------------------------------------------------------
+
+/**
+ * The mint of a parsed token account (`jsonParsed`'s `account.data.parsed.info`) that holds exactly
+ * one unit of a 0-decimal mint, as a held SGT does, or `null`. Zero is a token account an SGT has
+ * left; frozen is how a held SGT always is, and is accepted.
+ */
+export function singleUnitMint(info: unknown): string | null {
+  const parsed = object(info);
+  const amount = object(parsed?.tokenAmount);
+  if (!parsed || !amount || amount.decimals !== 0 || amount.amount !== "1" || typeof parsed.mint !== "string")
+    return null;
+  return parsed.mint;
+}
+
+/**
+ * Of a wallet's SGTs, the one it is known by: `preferred` (the one found last time) while it is
+ * still among them, so the Seeker a wallet names stays the same; otherwise the lowest member number.
+ */
+export function chooseGenesis<T extends { mint: string; member: bigint }>(found: readonly T[], preferred?: string): T | null {
+  if (found.length === 0) return null;
+  return found.find(({ mint }) => mint === preferred) ?? found.reduce((a, b) => (b.member < a.member ? b : a));
+}
+
+/** Mint reads one lookup may make: a wallet with more single-unit Token-2022 holdings is not checked. */
+export const MAX_GENESIS_CANDIDATES = 32;
+
+/**
+ * The Genesis Token `holder` holds on `cluster` now, and the token account it sits in: what a
+ * seeker-only claim hands the edition program, which keys the claim on the mint (one copy per
+ * token) and checks both accounts itself. Mainnet reads Solana Mobile's SGTs and first confirms
+ * the endpoint is mainnet; devnet reads the acceptance's stand-ins (`genesisAddresses`), the only
+ * members the devnet program build accepts. `null` when it holds none. Throws on RPC failure and
+ * past `MAX_GENESIS_CANDIDATES`, so neither is mistaken for "holds none".
+ */
+export async function findHeldGenesisToken(
+  endpoint: string,
+  holder: string,
+  cluster: Cluster,
+  preferred?: string,
+): Promise<{ mint: string; token: string } | null> {
+  address(holder);
+  const [, { value: rows }] = await Promise.all([
+    cluster === "mainnet-beta" ? assertMainnet(endpoint) : undefined,
+    request<{ value: unknown }>(endpoint, "getTokenAccountsByOwner", [
+      holder,
+      { programId: TOKEN_2022_PROGRAM },
+      { encoding: "jsonParsed", commitment: "confirmed" },
+    ]),
+  ]);
+  if (!Array.isArray(rows)) throw new Error(INVALID);
+  const held = new Map<string, string>();
+  for (const entry of rows) {
+    const row = object(entry);
+    const info = object(object(object(row?.account)?.data)?.parsed)?.info;
+    const mint = singleUnitMint(info);
+    // The account must be the holder's own, and an address: it goes into the claim as it is.
+    if (!mint || held.has(mint) || typeof row?.pubkey !== "string" || object(info)?.owner !== holder) continue;
+    try {
+      held.set(address(mint), address(row.pubkey));
+    } catch {
+      continue;
+    }
+  }
+  if (held.size > MAX_GENESIS_CANDIDATES) throw new Error("This wallet holds too many tokens to check.");
+  const expected = genesisAddresses(cluster);
+  const found = (
+    await Promise.all(
+      [...held].map(async ([mint, token]) => {
+        const bytes = await mintSlice(endpoint, mint);
+        const member = bytes && bytes !== "other" ? seekerGenesisMember(bytes, mint, expected) : null;
+        return member === null ? null : { mint, token, member };
+      }),
+    )
+  ).filter((entry) => entry !== null);
+  const chosen = chooseGenesis(found, preferred);
+  return chosen && { mint: chosen.mint, token: chosen.token };
+}
+
 // ---------------------------------------------------------------------------
 // What a screen says
 // ---------------------------------------------------------------------------
+
+/**
+ * The claim a published edition carries: the document's mint (already required to equal any
+ * seal). On mainnet every publication the app makes with a Genesis Token has the program verify
+ * and seal it, so there a claim the program did not seal is no claim: nobody checked it at publish.
+ */
+export function publishedGenesisClaim(cluster: Cluster, claimed: string | undefined, sealed: string | null): string | undefined {
+  return cluster === "mainnet-beta" && sealed === null ? undefined : claimed;
+}
 
 /** A claim's check as a screen holds it. `unavailable`: mainnet could not be asked. */
 export type GenesisCheck = GenesisStanding | "checking" | "unavailable";

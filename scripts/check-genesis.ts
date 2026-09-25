@@ -20,24 +20,32 @@ import { AccountRole, address, createSolanaRpc, getAddressDecoder, getAddressEnc
 import { extension, getMintEncoder, getTokenEncoder, AccountState, type ExtensionArgs } from "@solana-program/token-2022";
 import { canonicalize, type JcsValue } from "../src/jcs";
 import {
+  DEVNET_GENESIS_GROUP,
   GENESIS_SCHEMA,
   MAINNET_GENESIS_HASH,
+  MAX_GENESIS_CANDIDATES,
   SGT_GROUP_ADDRESS,
   SGT_METADATA_ADDRESS,
+  findHeldGenesisToken,
+  genesisAddresses,
   genesisAttributes,
   genesisDisplay,
   isSeekerGenesisMint,
+  publishedGenesisClaim,
   readGenesisClaim,
   seekerGenesisMember,
   verifyGenesisToken,
   type GenesisCheck,
   type GenesisLine,
 } from "../publications/core/genesisToken";
+import { DEVNET_GENESIS_GROUP as FIXTURE_GROUP } from "../publications/devnet/genesisFixture";
+import { claimGenesis, claimedCopy } from "../publications/core/seekerClaim";
 import { findSeekerGenesisToken } from "../src/seeker/genesisToken";
 import { proof } from "../src/ui/copy";
 import { GENESIS_LINE } from "../site/collect/summary";
 import type { AttestationBundle } from "../publications/core/attestation";
 import { readPhotoMetadata, readSavedPhotoMetadata } from "../publications/core/metadataDocument";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   GENESIS_ATTRIBUTE,
   NO_ROYALTIES,
@@ -144,6 +152,12 @@ const lib = readFileSync(resolve(here, "..", "programs", "editions", "src", "lib
 const mainnetGenesis = /#\[cfg\(not\(feature\s*=\s*"devnet-genesis"\)\)\]\s*mod genesis\s*\{([\s\S]*?)\n\}/.exec(lib)?.[1] ?? "";
 ok("the mainnet program's METADATA_ADDRESS is the readers'",
   /METADATA_ADDRESS\s*:\s*Pubkey\s*=\s*pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\)/.exec(mainnetGenesis)?.[1] === SGT_METADATA_ADDRESS);
+const devnetGenesis = /#\[cfg\(feature\s*=\s*"devnet-genesis"\)\]\s*mod genesis\s*\{([\s\S]*?)\n\}/.exec(lib)?.[1] ?? "";
+ok("the devnet stand-in the readers accept is the devnet program build's and the acceptance fixture's",
+  DEVNET_GENESIS_GROUP === FIXTURE_GROUP
+    && /METADATA_ADDRESS\s*:\s*Pubkey\s*=\s*pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\)/.exec(devnetGenesis)?.[1] === DEVNET_GENESIS_GROUP
+    && genesisAddresses("devnet").groupAddress === DEVNET_GENESIS_GROUP && genesisAddresses("devnet").metadataAddress === DEVNET_GENESIS_GROUP
+    && genesisAddresses("mainnet-beta").groupAddress === SGT_GROUP_ADDRESS && genesisAddresses("mainnet-beta").metadataAddress === SGT_METADATA_ADDRESS);
 ok("the app's own cluster check knows the same mainnet genesis hash",
   readFileSync(resolve(here, "..", "src", "solana", "cluster.ts"), "utf8").includes(`"mainnet-beta": "${MAINNET_GENESIS_HASH}"`));
 
@@ -159,11 +173,15 @@ const e: CoreMetadata = {
 };
 const written = metadata(e);
 const serialized = canonicalize(written as unknown as JcsValue);
-ok("metadata() writes the claim and its one attribute",
+ok("metadata() writes the claim and its one attribute beside the link and the file list",
   serialized === canonicalize({
     name: "Sample", description: "", image: e.image,
+    external_url: `https://erashot.app/collect/?core=${e.edition}&cluster=devnet`,
     attributes: [{ trait_type: "Seeker Genesis Token", value: MINT }],
-    properties: { genesisToken: { schema: GENESIS_SCHEMA, mint: MINT } },
+    properties: {
+      files: [{ uri: e.image, type: "image/jpeg" }], category: "image",
+      genesisToken: { schema: GENESIS_SCHEMA, mint: MINT },
+    },
   }));
 const read = readPhotoMetadata(JSON.parse(serialized), e, serialized);
 ok("a Genesis Token document reads back with the claimed mint and no device claim",
@@ -195,6 +213,22 @@ const both = {
 const bothRead = readPhotoMetadata(JSON.parse(canonicalize(both as unknown as JcsValue)), e);
 ok("the claim is independent of an attestation that was set aside",
   bothRead.genesisMint === MINT && bothRead.attestation === undefined && !!bothRead.attestationProblem);
+// The same in the current document, where a Device trait may precede the claim.
+const bothCurrent = {
+  ...written,
+  attributes: [{ trait_type: "Device", value: "Solana Seeker" }, ...genesisAttributes(MINT)],
+  properties: { ...written.properties, seedshot: bundle },
+};
+const bothCurrentRead = readPhotoMetadata(JSON.parse(canonicalize(bothCurrent as unknown as JcsValue)), e);
+ok("in the current document too, the claim survives an attestation that was set aside",
+  bothCurrentRead.genesisMint === MINT && bothCurrentRead.attestation === undefined && !!bothCurrentRead.attestationProblem);
+
+// On mainnet the program seals every claim the app publishes, so an unsealed one reads as none.
+ok("an unsealed claim reads as no claim on mainnet, and as the claim on devnet",
+  publishedGenesisClaim("mainnet-beta", MINT, null) === undefined && publishedGenesisClaim("mainnet-beta", MINT, MINT) === MINT
+    && publishedGenesisClaim("devnet", MINT, null) === MINT && publishedGenesisClaim("mainnet-beta", undefined, null) === undefined);
+ok("loadPublication reads the claim through that rule",
+  /publishedGenesisClaim\(cluster, claimed, sealed\)/.test(readFileSync(resolve(here, "..", "publications", "core", "protocol.ts"), "utf8")));
 
 const doc = (change: (d: Record<string, any>) => void) => {
   const d = JSON.parse(serialized) as Record<string, any>;
@@ -563,6 +597,88 @@ stub({ genesisHash: DEVNET_HASH, ...lookupChain() });
 ok("lookup: a client on another cluster throws", await rejects(findSeekerGenesisToken(createSolanaRpc("https://devnet.invalid"), HOLDER)));
 stub({ ...lookupChain(), fail: true });
 ok("lookup: an RPC failure throws", await rejects(findSeekerGenesisToken(createSolanaRpc("https://down.invalid"), HOLDER)));
+await collectorChecks();
+}
+
+// --- A collector's token, for a seeker-only claim (`findHeldGenesisToken`, `seekerClaim.ts`) -------
+const STAND_IN = address(DEVNET_GENESIS_GROUP);
+const standInAt = (mint: Address, memberNumber: bigint): Held =>
+  ({ owner: TOKEN_2022, data: mintBytes(null, [pointer(STAND_IN), member(STAND_IN, mint, memberNumber)]) });
+const heldIn = (mint: string, token: string, owner: string = HOLDER, amount = "1") => {
+  const row = walletRow(mint, amount);
+  return { ...row, pubkey: token, account: { ...row.account, data: { ...row.account.data, parsed: { ...row.account.data.parsed, info: { ...row.account.data.parsed.info, owner } } } } };
+};
+async function collectorChecks() {
+  const [A, B, N, TA, TB] = [31, 32, 33, 34, 35].map(key);
+  const both = (): Chain => ({
+    wallet: [heldIn(A, TA), heldIn(B, TB), heldIn(N, key(36)), heldIn(key(37), key(38), HOLDER, "0")],
+    accounts: { [A]: standInAt(A, 5n), [B]: sgtAt(B, 3n), [N]: plainAt() },
+  });
+  stub(both());
+  const found = await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta");
+  ok("collector: on mainnet, the real SGT and the account it sits in, once mainnet says it is mainnet",
+    found?.mint === B && found.token === TB && calls[0] === "getGenesisHash"
+      && asked() === "getTokenAccountsByOwner,getAccountInfo,getAccountInfo,getAccountInfo");
+  stub(both());
+  const standIn = await findHeldGenesisToken("https://devnet-collector.invalid", HOLDER, "devnet");
+  ok("collector: on devnet, the acceptance's stand-in and never a real SGT, with no mainnet check",
+    standIn?.mint === A && standIn.token === TA && !calls.includes("getGenesisHash"));
+  stub({ wallet: [heldIn(A, TA)], accounts: { [A]: standInAt(A, 5n) } });
+  ok("collector: a stand-in is no SGT on mainnet", (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) === null);
+  stub({ wallet: [heldIn(B, TB), heldIn(A, TA)], accounts: { [A]: sgtAt(A, 9n), [B]: sgtAt(B, 3n) } });
+  ok("collector: the lowest member number, or the one known by the wallet while it is still held",
+    (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta"))?.mint === B
+      && (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta", A))?.mint === A);
+  stub({ wallet: [heldIn(B, TB, OTHER)], accounts: { [B]: sgtAt(B, 3n) } });
+  ok("collector: an account of another owner's is not a holding, and costs no mint read",
+    (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) === null && asked() === "getTokenAccountsByOwner");
+  stub({ wallet: [heldIn(key(37), key(38), HOLDER, "0")], accounts: {} });
+  ok("collector: nothing held, no mint reads", (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) === null
+    && asked() === "getTokenAccountsByOwner");
+  const crowd = Array.from({ length: MAX_GENESIS_CANDIDATES + 1 }, (_, i) => key(60 + i));
+  stub({ wallet: crowd.map((mint) => heldIn(mint, mint)), accounts: {} });
+  ok(`collector: more than ${MAX_GENESIS_CANDIDATES} candidates throws, never reads as none`,
+    await rejects(findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) && asked() === "getTokenAccountsByOwner");
+  stub({ ...both(), fail: true });
+  ok("collector: an RPC failure throws", await rejects(findHeldGenesisToken("https://collector-down.invalid", HOLDER, "devnet")));
+  stub({ genesisHash: DEVNET_HASH, ...both() });
+  ok("collector: a mainnet lookup on another cluster throws", await rejects(findHeldGenesisToken("https://wrong.invalid", HOLDER, "mainnet-beta")));
+
+  // The claim: keyed on the token for a seeker-only edition, on the wallet otherwise.
+  const PROGRAM = key(40);
+  const keys = await addresses(PROGRAM, e.creator, e.nonce);
+  const open: CoreMetadata = { ...e, program: PROGRAM, edition: keys.edition, collection: keys.collection };
+  const seekerOnly: CoreMetadata = { ...open, cluster: "devnet", seekerOnly: true };
+  stub(both());
+  ok("an open edition's claim carries no token and asks nothing", (await claimGenesis("https://devnet-collector.invalid", open, HOLDER)) === undefined && calls.length === 0);
+  stub(both());
+  const token = await claimGenesis("https://devnet-collector.invalid", seekerOnly, HOLDER);
+  ok("a seeker-only claim carries the collector's token", token?.mint === A && token.token === TA);
+  stub({ wallet: [], accounts: {} });
+  ok("a seeker-only claim without a token is null", (await claimGenesis("https://devnet-collector.invalid", seekerOnly, HOLDER)) === null);
+  const disc = sha256(new TextEncoder().encode("account:Receipt")).slice(0, 8);
+  const u16 = (n: number) => new Uint8Array([n & 255, n >> 8]);
+  const print2 = (await addresses(PROGRAM, e.creator, e.nonce, 2)).print;
+  const receipt = (edition: string, collector: string, asset: string) => ({ owner: PROGRAM, data: concatBytes(disc,
+    getAddressEncoder().encode(address(edition)) as Uint8Array, getAddressEncoder().encode(address(collector)) as Uint8Array,
+    getAddressEncoder().encode(address(asset)) as Uint8Array, u16(2)) });
+  const byToken = await claimReceiptAddress(PROGRAM, keys.edition, A);
+  const byWallet = await claimReceiptAddress(PROGRAM, keys.edition, HOLDER);
+  stub({ accounts: { [byToken]: receipt(keys.edition, OTHER, print2) } });
+  ok("a seeker-only edition's claim is the token's receipt, whichever wallet made it",
+    (await claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, token))?.number === 2);
+  stub({ accounts: { [byWallet]: receipt(keys.edition, HOLDER, print2) } });
+  ok("on a seeker-only edition the wallet's own receipt is not the token's claim, and no token is no claim",
+    (await claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, token)) === null
+      && (await claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, null)) === null);
+  stub({ accounts: { [byToken]: receipt(OTHER, OTHER, print2) } });
+  ok("a token's receipt naming another edition throws", await rejects(claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, token)));
+  stub({ accounts: { [byToken]: receipt(keys.edition, OTHER, OTHER) } });
+  ok("a token's receipt naming a print that is not the canonical one throws", await rejects(claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, token)));
+  stub({ accounts: { [byToken]: { ...receipt(keys.edition, OTHER, print2), owner: OTHER } } });
+  ok("a token's receipt owned by another program throws", await rejects(claimedCopy("https://devnet-collector.invalid", seekerOnly, HOLDER, token)));
+  stub({ accounts: { [byWallet]: receipt(keys.edition, HOLDER, print2) } });
+  ok("an open edition's claim is still the wallet's", (await claimedCopy("https://devnet-collector.invalid", open, HOLDER, undefined))?.number === 2);
 }
 
 void verifier().then(

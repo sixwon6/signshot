@@ -25,8 +25,9 @@ import {
 import { isTrustedDeployment, programFeatures } from "../deployments";
 import { hasUnsafeText, readDescription } from "./details";
 import { readPhotoMetadata } from "./metadataDocument";
-import { attestationAttributes, readAttestationBundle, type AttestationBundle } from "./attestation";
-import { genesisAttributes, genesisClaim, type GenesisClaim } from "./genesisToken";
+import { attestationAttributes, readAttestationBundle, type AttestationBundle, type DeviceVerdict } from "./attestation";
+import { genesisAttributes, genesisClaim, publishedGenesisClaim, type GenesisClaim } from "./genesisToken";
+import { collectUrl } from "./links";
 import { albumConformance } from "./albumRules";
 import { safeErrorText } from "../../src/ui/errorText";
 import {
@@ -271,26 +272,33 @@ export function publisherClaimant(creator: string, seekerOnly: boolean, sealedGe
 // ---------------------------------------------------------------------------
 
 /**
- * The permanent metadata document: exactly `name`, `description` and `image`, plus the evidence
- * the publication carries — the keystore's attestation and the publishing wallet's Seeker Genesis
- * Token (`e.genesisMint`), each independent of the other. Canonicalized (RFC 8785) by the caller;
- * its sha256 is the on-chain `metadata_hash`.
+ * The permanent metadata document, in the Metaplex JSON standard
+ * (https://metaplex.com/docs/token-metadata/token-standard): `name`, `description`, `image`, the
+ * edition's collect link as `external_url`, `attributes`, and `properties` with the one image file
+ * and its category, plus the evidence the publication carries — the keystore's attestation and the
+ * publishing wallet's Seeker Genesis Token (`e.genesisMint`), each independent of the other.
+ * `device` is the full device verdict on the attestation as the document is sealed
+ * (`deviceVerdict`); the Device trait is written only when it is "verified". Canonicalized (RFC
+ * 8785) by the caller; its sha256 is the on-chain `metadata_hash`.
  */
-export function metadata(e: CoreMetadata, attestation?: AttestationBundle): PublishedDocument {
-  const plain = { name: e.title, description: e.description, image: e.image };
-  if (!attestation && !e.genesisMint) return plain;
-  // The attributes are derived from the certificate, and `readPhotoMetadata` re-derives them.
+export function metadata(e: CoreMetadata, attestation?: AttestationBundle, device?: DeviceVerdict): PublishedDocument {
   // This throws only if the bundle fails the reader; `attestPublication` ran the identical
   // check on the identical input moments earlier, and `createDraft` falls back to no bundle.
   const summary = attestation ? readAttestationBundle(attestation, e).summary : null;
   return {
-    ...plain,
-    // The Genesis Token entry is always last, which is how the reader tells the two apart.
+    name: e.title,
+    description: e.description,
+    image: e.image,
+    external_url: collectUrl(e.edition, e.cluster),
+    // Derived, and re-derived by `readPhotoMetadata`. The Genesis Token entry is always last,
+    // which is how the reader tells the two apart.
     attributes: [
-      ...(summary ? attestationAttributes(summary) : []),
+      ...(summary ? attestationAttributes(summary, device?.status === "verified") : []),
       ...(e.genesisMint ? genesisAttributes(e.genesisMint) : []),
     ],
     properties: {
+      files: [{ uri: e.image, type: "image/jpeg" }],
+      category: "image",
       ...(attestation ? { seedshot: attestation } : {}),
       ...(e.genesisMint ? { genesisToken: genesisClaim(e.genesisMint) } : {}),
     },
@@ -302,20 +310,17 @@ interface PublishedDocument {
   name: string;
   description: string;
   image: string;
-  /** Present, with `properties`, only for a publication that carries evidence. */
-  attributes?: { trait_type: string; value: string }[];
-  /** At least one of the two. */
-  properties?: { seedshot?: AttestationBundle; genesisToken?: GenesisClaim };
+  external_url: string;
+  attributes: { trait_type: string; value: string }[];
+  properties: {
+    files: [{ uri: string; type: "image/jpeg" }];
+    category: "image";
+    seedshot?: AttestationBundle;
+    genesisToken?: GenesisClaim;
+  };
 }
 
-/**
- * The public link: an edition address and a cluster only, never an RPC endpoint or program.
- * `?core=` names the protocol so an unknown parameter set is an error.
- */
-export function collectUrl(edition: string, cluster: Cluster, origin = "https://erashot.app") {
-  address(edition);
-  return `${origin}/collect/?core=${edition}${cluster === "devnet" ? "&cluster=devnet" : ""}`;
-}
+export { collectUrl };
 
 export function explorerUrl(key: string, cluster: Cluster) {
   address(key);
@@ -1660,7 +1665,7 @@ async function loadPublication(
   // Current and historical document formats are read against verified chain state.
   const text = new TextDecoder().decode(bytes);
   const json: unknown = JSON.parse(text);
-  const { image, description, dimensions, attestation, attestationProblem, genesisMint } =
+  const { image, description, dimensions, attestation, attestationProblem, genesisMint: claimed } =
     readPhotoMetadata(json, { ...state, program, edition, cluster }, text);
 
   // Size comes from the JPEG header (which also rejects non-JPEGs) and is bounded before any
@@ -1674,8 +1679,10 @@ async function loadPublication(
   // The app writes the document's claim and the program's seal from one value, so a collection
   // that seals a mint the document does not name is not one of its publications.
   const sealed = publication.sealedGenesis;
-  if (sealed !== null && sealed !== genesisMint)
+  if (sealed !== null && sealed !== claimed)
     throw new Error("The sealed Genesis Token does not match the published document.");
+  // On mainnet a claim the program did not seal reads as none.
+  const genesisMint = publishedGenesisClaim(cluster, claimed, sealed);
   const e: CoreMetadata = {
     cluster,
     program,

@@ -17,6 +17,7 @@ import {
 } from "../../publications/core/attestation";
 import { useGenesisStanding } from "../seeker/useGenesisStanding";
 import { genesisDisplay } from "../../publications/core/genesisToken";
+import { deviceValue, useDeviceVerdict } from "../seeker/useDeviceVerdict";
 
 export function ProofSheet({
   proof,
@@ -34,6 +35,8 @@ export function ProofSheet({
     : null;
   const published = proof.confirmation === "confirmed";
   const cached = proof.confirmation === "cached";
+  // Judged at the publication's block time once it is on chain, otherwise now.
+  const device = useDeviceVerdict(draft?.edition, published || cached);
   // `safeErrorText`: Android's `Linking`/`Clipboard` errors quote the URL they were given.
   function open(url: string) {
     void Linking.openURL(url).catch((e) => setError(safeErrorText(e)));
@@ -130,13 +133,9 @@ export function ProofSheet({
                 )}
                 <Text style={sheetStyles.help}>{copy.standard}</Text>
                 <Row label={copy.attestationLabel}>
-                  {draft.edition.attestation
-                    ? attestationLine(draft.edition.attestation)
-                    : draft.edition.attestationProblem
-                      ? copy.attestationProblem(draft.edition.attestationProblem)
-                      : copy.attestationNone}
+                  {deviceValue(draft.edition, device, attestationLine)}
                 </Row>
-                {draft.edition.attestation && (
+                {device?.status === "verified" && (
                   <Text style={sheetStyles.help}>{copy.attestationBody}</Text>
                 )}
                 {/* The document's claim, checked on mainnet when this sheet opens. */}
@@ -219,7 +218,8 @@ export function ProofSheet({
 
 /**
  * The attested facts in one line: device, key security level, boot state. Every word is derived
- * from the certificate inside the document, by `publications/core/attestation.ts`.
+ * from the certificate inside the document, by `publications/core/attestation.ts`, and it is
+ * said only after `deviceVerdict` accepted it.
  */
 function attestationLine(a: AttestationSummary): string {
   const boot = a.verifiedBoot === "verified" && a.deviceLocked

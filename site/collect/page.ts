@@ -51,9 +51,10 @@ import {
   type ModerationList,
   type Veil,
 } from "../../src/moderation/core";
+import type { DeviceVerdict } from "../../publications/core/attestation";
 
 import { qrMatrix } from "./qr";
-import { deviceProblem, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "./summary";
+import { DEVICE_LINE, deviceProblem, deviceVerdictRow, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "./summary";
 
 export type { Cluster } from "../../publications/types";
 
@@ -72,6 +73,11 @@ const chain = cluster === "devnet" ? "solana:devnet" : "solana:mainnet";
 export const mainnetEndpoint = new URL("/api/solana", location.origin).href;
 export const endpoint =
   cluster === "devnet" ? "https://api.devnet.solana.com" : mainnetEndpoint;
+/**
+ * Google's attestation revocation list, through the same-origin Function
+ * (`functions/api/attestation-status.ts`): Google's endpoint sends no CORS header.
+ */
+export const attestationStatusUrl = new URL("/api/attestation-status", location.origin).href;
 const android = /Android/i.test(navigator.userAgent);
 
 /** The app's Android package, the target of the App Link and of the `intent://` control. */
@@ -127,11 +133,12 @@ export interface Price {
 
 /**
  * The device row, derived from the certificate chain inside the document after the app's reader
- * verified it down to Google's pinned roots. `line` when it checked out; `problem` when the
- * document carries evidence that did not (the photograph still loads); `null` for a plain
- * document that carries none.
+ * verified it down to Google's pinned roots. `line` is what the row says once `check()` (the
+ * release app, the boot state, the publication time and Google's revocation list) answers
+ * "verified"; `problem` when the document carries evidence the reader set aside (the photograph
+ * still loads); `null` for a plain document that carries none.
  */
-export type Device = { line: string } | { problem: string } | null;
+export type Device = { line: string; check(): Promise<DeviceVerdict> } | { problem: string } | null;
 
 /**
  * The Genesis Token row: the mint the document claims, and the check that says whether the
@@ -495,25 +502,33 @@ export function run(adapter: Adapter) {
     el("about").textContent = adapter.copy.details(loaded);
   }
   /**
-   * The device row. Three states, and the words are the app's own (`ProofSheet.tsx`): the
-   * certificate names the device, the key and the boot state; it does not say what was in front
-   * of the lens, and the fine print under the row says so.
+   * The device row, in the app's own words (`ProofSheet.tsx`): the certificate names the device,
+   * the key and the boot state; it does not say what was in front of the lens, and the fine print
+   * under the row says so. The device is named only after `check()` says "verified"; until then
+   * the row is checking, and a check that could not finish says so. A later refresh outruns an
+   * earlier check by `deviceRun`.
    */
+  let deviceRun = 0;
   function showDevice(device: Device) {
+    const run = ++deviceRun;
     const row = el("device");
-    const text = el("device-text");
-    row.classList.remove("device-ok", "device-problem", "device-none");
-    if (!device) {
-      text.textContent = NO_DEVICE;
-      row.classList.add("device-none");
-    } else if ("line" in device) {
-      text.textContent = device.line;
-      row.classList.add("device-ok");
-    } else {
-      text.textContent = deviceProblem(device.problem);
-      row.classList.add("device-problem");
-    }
+    const say = (text: string, state: "device-ok" | "device-problem" | "device-none") => {
+      if (run !== deviceRun) return;
+      el("device-text").textContent = text;
+      row.classList.remove("device-ok", "device-problem", "device-none");
+      row.classList.add(state);
+    };
     row.hidden = false;
+    if (!device) return say(NO_DEVICE, "device-none");
+    if ("problem" in device) return say(deviceProblem(device.problem), "device-problem");
+    say(DEVICE_LINE.checking, "device-none");
+    void device.check().then(
+      (verdict) => {
+        const shown = deviceVerdictRow(device.line, verdict);
+        say(shown.text, shown.state);
+      },
+      () => say(DEVICE_LINE.unavailable, "device-none"),
+    );
   }
   /**
    * The Genesis Token row. The document only claims a mint, so the row says it is checking until

@@ -26,7 +26,7 @@ import {
   OPERATION_FLOOR_LAMPORTS,
   type PublicationOperation,
 } from "../../publications/rpc";
-import { refreshedQuote } from "./quoteRefresh";
+import { ExpiredQuoteError, refreshedQuote } from "./quoteRefresh";
 import {
   checkReviewedReceipt,
   reviewedQuoteId,
@@ -78,6 +78,7 @@ import {
 import { assertAlbumLabel, confirmedAlbum } from "./albums";
 import { safeErrorText } from "../ui/errorText";
 import { attestPublication } from "../seeker/publicationAttestation";
+import { attestationExpiring } from "../../publications/core/attestation";
 import { publisherGenesisMint } from "../seeker/publisherGenesis";
 
 /** ANS-104 tags are public and unhashed, so each upload carries only its media type. */
@@ -391,33 +392,7 @@ export async function createDraft(
     // `undefined`: mainnet could not be asked, so the document names none and the review says so.
     const genesisMint = await genesis;
     if (genesisMint) e.genesisMint = genesisMint;
-    // The phone's keystore attests this exact publication (the manifest names the edition, the
-    // creator, the nonce and the image fingerprint) before the document is sealed, so the
-    // evidence is inside the bytes the wallet commits to. A phone that cannot attest publishes
-    // the plain document; that is a state, not a failure.
-    const attested = await attestPublication(e, r, {
-      sourceHash,
-      width: image.width,
-      height: image.height,
-    });
-    if (attested.status === "attested") e.attestation = attested.attestation.summary;
-    else console.warn(`publication attestation unavailable: ${attested.reason}`);
-    // The attested document, or the plain one if building it fails for any reason (an oversized
-    // data item, a reader that refuses the bundle): evidence must never make a photograph
-    // unpublishable. Note the attested document is NOT byte-identical across retries (a fresh
-    // key each time); the deterministic nonce and the photo lock are what prevent a second edition.
-    let json: string, meta: ReturnType<typeof buildDataItem>;
-    try {
-      if (attested.status !== "attested") throw new Error("plain");
-      json = canonicalize(metadata(e, attested.attestation.bundle) as unknown as JcsValue);
-      meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
-    } catch (error) {
-      if (attested.status === "attested")
-        console.warn(`publishing without attestation: ${error instanceof Error ? error.message : String(error)}`);
-      delete e.attestation;
-      json = canonicalize(metadata(e) as unknown as JcsValue);
-      meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
-    }
+    const { json, meta } = await sealDocument(e, r, sourceHash, signer);
     const d: CoreDraft = {
       version: 1,
       protocol: CORE_PROTOCOL,
@@ -437,6 +412,72 @@ export async function createDraft(
     return d;
   });
 }
+/**
+ * The metadata document for `e`, and `e.attestation` set to match it.
+ *
+ * The phone's keystore attests this exact publication (the manifest names the edition, the
+ * creator, the nonce and the image fingerprint) before the document is sealed, so the evidence is
+ * inside the bytes the wallet commits to. A phone that cannot attest publishes the plain
+ * document; that is a state, not a failure, and the review's Device row says "Not recorded.".
+ * The attested document, or the plain one if building it fails for any reason (an oversized data
+ * item, a reader that refuses the bundle): evidence must never make a photograph unpublishable.
+ * The attested document is NOT byte-identical across calls (a fresh key each time); the
+ * deterministic nonce and the photo lock are what prevent a second edition.
+ */
+async function sealDocument(
+  e: CoreMetadata,
+  r: CaptureRecord,
+  sourceHash: string,
+  signer: Awaited<ReturnType<typeof getUploadKey>>,
+) {
+  const attested = await attestPublication(e, r, { sourceHash, width: e.width, height: e.height });
+  if (attested.status === "attested") e.attestation = attested.attestation.summary;
+  else {
+    delete e.attestation;
+    console.warn(`publication attestation unavailable: ${attested.reason}`);
+  }
+  let json: string, meta: ReturnType<typeof buildDataItem>;
+  try {
+    if (attested.status !== "attested") throw new Error("plain");
+    json = canonicalize(metadata(e, attested.attestation.bundle) as unknown as JcsValue);
+    meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
+  } catch (error) {
+    if (attested.status === "attested")
+      console.warn(`publishing without attestation: ${error instanceof Error ? error.message : String(error)}`);
+    delete e.attestation;
+    json = canonicalize(metadata(e) as unknown as JcsValue);
+    meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
+  }
+  return { json, meta };
+}
+
+/**
+ * A draft's attestation is made when the draft is built, and drafts are reused for days, while
+ * the chain's device and intermediate certificates live days to weeks. A document whose chain has
+ * expired by the time it is published fails every reader forever. So before the document's hash
+ * goes into a transaction, a chain that has expired or will within `ATTESTATION_RENEW_MS` is
+ * attested again and the document and its data item rebuilt; the draft is changed in place, so the
+ * review, the quote and the one wallet approval that follow all carry the new one.
+ *
+ * Only for a draft no transaction can still land for (`prepareSetup` has checked the attempt). If
+ * the phone cannot attest now, a chain still valid is kept for the few minutes to publication, and
+ * an expired one gives way to the plain document.
+ */
+async function renewStaleAttestation(r: CaptureRecord, d: CoreDraft) {
+  const stale = d.edition.attestation;
+  if (!stale || !attestationExpiring(stale)) return;
+  await exclusive(lock(r), async () => {
+    await assertCurrent(r, d);
+    const e: CoreMetadata = { ...d.edition };
+    const { json, meta } = await sealDocument(e, r, d.sourceHash, await getUploadKey(e.creator));
+    if (!e.attestation && !attestationExpiring(stale, Date.now(), 0)) return;
+    d.edition = e;
+    d.metadata = json;
+    d.metadataId = meta.id;
+    await save(r, d);
+  });
+}
+
 async function publicationItems(d: CoreDraft) {
   const signer = await getUploadKey(d.edition.creator),
     bytes = new Uint8Array(
@@ -617,6 +658,8 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     if (standing === "terminal") throw new Error(ATTEMPT_TERMINAL);
     if (standing !== "retryable") throw new Error(ATTEMPT_PENDING);
   }
+  // Before the document's hash goes into the instruction below.
+  await renewStaleAttestation(r, d);
   // Checked before the estimate, so a doomed `publish_in_album` never reaches a wallet prompt.
   if (d.album) await confirmedAlbum(d.album, d.edition.creator);
   // Quote only. Public upload begins only after an approved, confirmed transaction.
@@ -688,6 +731,8 @@ async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undef
 }
 
 type PublicationQuote = Awaited<ReturnType<typeof prepareSetup>>;
+/** Wallet approval and confirmation, with room to spare: the chain must outlive the block. */
+const SEND_MARGIN_MS = 15 * 60 * 1000;
 type PublishProgress = "wallet" | "confirming" | "uploading";
 async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
   if (d.storage === "available") return;
@@ -737,6 +782,10 @@ export async function sendSetup(
     }
     if (quote.step === "ready" || quote.metadataId !== d.metadataId)
       throw new Error("The publication review changed. Refresh before approving.");
+    // A review left open until the chain nears expiry goes back through `prepareSetup`, which
+    // renews it (`renewStaleAttestation`); the document must still verify when it lands.
+    if (d.edition.attestation && attestationExpiring(d.edition.attestation, Date.now(), SEND_MARGIN_MS))
+      throw new ExpiredQuoteError("Estimate expired. Refresh before publishing.", false);
     if (!isTrustedDeployment(cluster, d.edition.program)) throw new Error(UNTRUSTED);
     {
       const standing = await attemptStanding(d);

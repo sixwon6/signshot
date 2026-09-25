@@ -249,8 +249,15 @@
           uploaded files are public and may be served by other Arweave gateways.
         </li>
         <li>
-          <strong>This website:</strong> static pages and a read-only Solana
-          proxy hosted with Cloudflare Pages. The proxy sends permitted RPC
+          <strong>Google:</strong> to check a publication's device attestation,
+          the app downloads Google's list of revoked Android attestation
+          certificates from <code>android.googleapis.com</code>. The request
+          names no photograph, wallet or device.
+        </li>
+        <li>
+          <strong>This website:</strong> static pages, a read-only Solana
+          proxy and a copy of Google's attestation revocation list, hosted with
+          Cloudflare Pages. The proxy sends permitted RPC
           requests to its configured Solana provider. A collection link that carries <code>&amp;cluster=devnet</code> does not
           use the proxy: your browser reads the test network directly from
           <code>api.devnet.solana.com</code>, which then sees your IP address

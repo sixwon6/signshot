@@ -2,9 +2,13 @@
  * Gate for the public collect page (`site/`). Runs in `npm test`, needs no network.
  *
  * What it holds still:
- *   - the page's wording for the device row, derived through the SAME reader the app uses, on the
- *     synthetic attestation fixture: the verified line, the set-aside line and the plain-document
- *     line, so a wording change is a reviewed change;
+ *   - the page's wording for the device row, derived through the SAME reader and verdict the app
+ *     uses, on the synthetic attestation fixture: the verified line only when the release app,
+ *     the boot state, revocation and the dates at publication all hold, the refusal for each, the
+ *     "Couldn't check." line, the set-aside line and the plain-document line, so a wording change
+ *     is a reviewed change;
+ *   - `functions/api/attestation-status.ts`, against a stubbed Google and Cache API: the list is
+ *     re-served same-origin, bounded, reshaped and cached, and anything else is a 502;
  *   - the two copies of the collect page's Content-Security-Policy (`_headers` and the <meta>)
  *     say the same thing, so a hosting change cannot leave the page with no policy;
  *   - `.well-known/assetlinks.json` is byte-identical to the file Android verified the App Link
@@ -24,15 +28,32 @@ import { spawnSync } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalize, type JcsValue } from "../src/jcs";
-import { readAttestationBundle, type AttestationBundle } from "../publications/core/attestation";
+import {
+  deviceVerdict,
+  readAttestationBundle,
+  RELEASE_APP,
+  type AttestationBundle,
+  type AttestationSummary,
+  type RevocationList,
+} from "../publications/core/attestation";
 import { readPhotoMetadata } from "../publications/core/metadataDocument";
 import { metadata } from "../publications/core/protocol";
 import type { CoreMetadata } from "../publications/types";
-import { deviceLine, deviceProblem, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "../site/collect/summary";
+import {
+  DEVICE_LINE,
+  deviceLine,
+  deviceProblem,
+  deviceVerdictRow,
+  GENESIS_LINE,
+  MODERATION_WORDS,
+  NO_DEVICE,
+  sol,
+} from "../site/collect/summary";
 import {
   MAX_BLOCKED, MODERATION_MAX_BYTES, MODERATION_MAX_ENTRIES, MODERATION_URL, TERMS_URL, TERMS_VERSION,
   fetchModerationList, parseModerationList, readBlockList, reportMailto, termsAgreed, veilOf, withBlocked,
 } from "../src/moderation/core";
+import { MAX_UPSTREAM, onRequestGet as attestationStatus, UPSTREAM } from "../site/functions/api/attestation-status";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -52,10 +73,33 @@ const commitment = bundle.manifest;
 const { summary } = readAttestationBundle(bundle, commitment, [syntheticRootKey]);
 ok("verified attestation renders the app's Proof sheet line",
   deviceLine(summary) === "Signed on a Solana Seeker · StrongBox hardware key · verified boot, bootloader locked");
-ok("an unlocked bootloader is said, never hidden",
-  deviceLine({ ...summary, deviceLocked: false }) === "Signed on a Solana Seeker · StrongBox hardware key · boot verified, bootloader unlocked");
 ok("a TEE key on another device is named as such",
   deviceLine({ ...summary, securityLevel: "tee", manufacturer: "Google", model: "Pixel 9" }) === "Signed on a Google Pixel 9 · TEE hardware key · verified boot, bootloader locked");
+
+// The row for each gating path, as `showDevice` renders it: `deviceVerdictRow` over `deviceVerdict`.
+// The release build's summary is the fixture's with the release signer; its chain is dated
+// 2026-09-16 to 2046, so a publication on 2026-09-20 is in date.
+const release: AttestationSummary = { ...summary, signerDigests: [RELEASE_APP.signerDigest] };
+const publishedAt = new Date("2026-09-20T12:00:00Z");
+const listed: RevocationList = new Map([[summary.certificates[1].serial, { status: "REVOKED", reason: "KEY_COMPROMISE" }]]);
+const row = (s: AttestationSummary, at: Date | null, list: RevocationList | null) => deviceVerdictRow(deviceLine(s), deviceVerdict(s, at, list));
+const seekerLine = "Signed on a Solana Seeker · StrongBox hardware key · verified boot, bootloader locked";
+ok("release app, locked, in date, not revoked: the Seeker line",
+  row(release, publishedAt, new Map()).text === seekerLine && row(release, publishedAt, new Map()).state === "device-ok");
+ok("the 2026-09-16 test app with a debug signer no longer gets the Seeker line",
+  row({ ...summary, packageNames: ["expo.modules.seekercamera.test"] }, publishedAt, new Map()).text === "Device attestation not accepted: another app");
+ok("a build signed by another key: another app", row(summary, publishedAt, new Map()).text === "Device attestation not accepted: another app");
+ok("an unlocked bootloader is said, never hidden, and never with the device line",
+  row({ ...release, deviceLocked: false }, publishedAt, new Map()).text === "Device attestation not accepted: bootloader unlocked");
+ok("a certificate on Google's list: revoked", row(release, publishedAt, listed).text === "Device attestation not accepted: revoked"
+  && row(release, publishedAt, listed).state === "device-problem");
+ok("the list out of reach: Couldn't check.", row(release, publishedAt, null).text === "Couldn’t check." && row(release, publishedAt, null).state === "device-none");
+ok("published after the chain expired: expired at publication",
+  row(release, new Date("2047-01-01T00:00:00Z"), new Map()).text === "Device attestation not accepted: expired at publication");
+ok("no publication time: Couldn't check.", row(release, null, new Map()).text === "Couldn’t check.");
+const appCopySource = readFileSync(resolve(root, "src", "ui", "copy.ts"), "utf8");
+ok("the checking and couldn't-check lines are the app's own",
+  appCopySource.includes(`attestationChecking: "${DEVICE_LINE.checking}"`) && appCopySource.includes(`attestationUnchecked: "${DEVICE_LINE.unavailable}"`));
 
 const e: CoreMetadata = {
   cluster: commitment.cluster, program: commitment.program, edition: commitment.edition,
@@ -114,8 +158,8 @@ const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const throws = (run: () => unknown) => { try { run(); return false; } catch { return true; } };
 const served = parseModerationList(readFileSync(resolve(site, "public", "moderation.json"), "utf8"));
 ok("the served moderation list parses and hides nothing", served.hiddenEditions.size === 0 && served.hiddenCreators.size === 0);
-const listed = parseModerationList(JSON.stringify({ version: 1, hiddenEditions: [A], hiddenCreators: [B] }));
-ok("a moderation list names editions and creators", listed.hiddenEditions.has(A) && listed.hiddenCreators.has(B));
+const moderated = parseModerationList(JSON.stringify({ version: 1, hiddenEditions: [A], hiddenCreators: [B] }));
+ok("a moderation list names editions and creators", moderated.hiddenEditions.has(A) && moderated.hiddenCreators.has(B));
 ok("the moderation list parse is strict: three keys, version 1, addresses, bounded", [
   "[]", "null", "{}", "{\"version\":1,\"hiddenEditions\":[]}",
   JSON.stringify({ version: 2, hiddenEditions: [], hiddenCreators: [] }),
@@ -129,9 +173,9 @@ ok("the moderation list parse is strict: three keys, version 1, addresses, bound
   " ".repeat(MODERATION_MAX_BYTES + 1),
 ].every((text) => throws(() => parseModerationList(text))));
 ok("the list's edition or creator is Hidden, a blocked publisher is Blocked, and the list wins",
-  veilOf(A, B, listed, new Set()) === "hidden" && veilOf(B, B, listed, new Set()) === "hidden"
-  && veilOf(B, A, null, new Set([A])) === "blocked" && veilOf(A, B, listed, new Set([B])) === "hidden"
-  && veilOf(B, A, listed, new Set()) === null && veilOf(A, B, null, new Set()) === null);
+  veilOf(A, B, moderated, new Set()) === "hidden" && veilOf(B, B, moderated, new Set()) === "hidden"
+  && veilOf(B, A, null, new Set([A])) === "blocked" && veilOf(A, B, moderated, new Set([B])) === "hidden"
+  && veilOf(B, A, moderated, new Set()) === null && veilOf(A, B, null, new Set()) === null);
 // tsx runs this file as CommonJS, which has no top-level await; the tail awaits this.
 async function moderationFetch() {
   const answer = (body: string, init?: ResponseInit) => (async () => new Response(body, init)) as unknown as typeof fetch;
@@ -248,6 +292,10 @@ ok("bundle carries the moderation list's address and the Blocked and Hidden word
 const proxy = readFileSync(resolve(site, "functions", "api", "solana.ts"), "utf8");
 ok("the mainnet proxy allows the three methods the Genesis Token check calls",
   ["getGenesisHash", "getAccountInfo", "getTokenAccountsByOwner"].every((method) => new RegExp(`ALLOWED=new Set\\(\\[[^\\]]*'${method}'`).test(proxy)));
+ok("the mainnet proxy allows the two reads the device row's publication time makes",
+  /ALLOWED=new Set\(\[[^\]]*'getSignaturesForAddress'[^\]]*'getTransaction'[^\]]*\]\)/.test(proxy));
+ok("the bundle reads the revocation list same-origin, never from Google (no CORS there)",
+  bundled.includes("/api/attestation-status") && !bundled.includes("android.googleapis.com"));
 
 /**
  * Every origin the bundle could open a connection to must be allowed by `connect-src`, or the
@@ -295,13 +343,74 @@ ok("dist ships no preview gate", (() => { try { statSync(resolve(dist, "function
   && (() => { try { statSync(resolve(site, "functions", "_middleware.ts")); return false; } catch { return true; } })());
 ok("dist assetlinks.json is the verified file", build.status === 0 && sha256(readFileSync(resolve(dist, ".well-known", "assetlinks.json"))) === sha256(assetlinks));
 
-void moderationFetch().then(
-  () => {
-    console.log(failures ? `\n${failures} site check(s) failed.` : "\nsite check passed.");
-    process.exit(failures ? 1 : 0);
-  },
-  (error) => {
-    console.error(error);
-    process.exit(1);
-  },
-);
+// --- /api/attestation-status, against a stubbed Google and Cache API -------------------------------
+async function attestationStatusChecks() {
+  const realFetch = globalThis.fetch;
+  const store = new Map<string, Response>();
+  (globalThis as { caches?: unknown }).caches = {
+    default: {
+      match: async (request: Request) => store.get(request.url)?.clone(),
+      put: async (request: Request, response: Response) => { store.set(request.url, response); },
+    },
+  };
+  let upstream = 0;
+  const google = (body: string, init?: ResponseInit) => {
+    globalThis.fetch = (async (url: unknown) => {
+      upstream += 1;
+      if (String(url) !== UPSTREAM) throw new Error(`unexpected fetch ${String(url)}`);
+      return new Response(body, init);
+    }) as typeof fetch;
+  };
+  const pending: Promise<unknown>[] = [];
+  const call = (path = "/api/attestation-status") =>
+    attestationStatus({ request: new Request(`https://erashot.app${path}`), waitUntil: (p) => { pending.push(p); } });
+  try {
+    google(JSON.stringify({ entries: {
+      "2c8cdddfd5e03bfc": { status: "REVOKED", reason: "KEY_COMPROMISE", comment: "leaked keybox" },
+      "1234567890": { status: "SUSPENDED" },
+    } }));
+    const first = await call();
+    await Promise.all(pending);
+    const text = await first.text();
+    ok("the Function re-serves Google's list same-origin, reduced to status and reason",
+      first.status === 200 && text === JSON.stringify({ entries: {
+        "2c8cdddfd5e03bfc": { status: "REVOKED", reason: "KEY_COMPROMISE" },
+        "1234567890": { status: "SUSPENDED" },
+      } }) && first.headers.get("Content-Type") === "application/json"
+        && first.headers.get("X-Content-Type-Options") === "nosniff" && first.headers.get("Cache-Control") === "public, max-age=3600");
+    const again = await call("/api/attestation-status?bust=1");
+    ok("a second request, with a query string or not, is served from the cache", again.status === 200 && upstream === 1);
+    store.clear();
+    const refusals: [string, string, ResponseInit | undefined][] = [
+      ["unavailable at Google", "unavailable", { status: 503 }],
+      ["declared larger than the bound", "{}", { headers: { "Content-Length": String(MAX_UPSTREAM + 1) } }],
+      ["not JSON", "<html></html>", undefined],
+      ["not the documented shape", JSON.stringify({ entries: { AB: { status: "REVOKED" } } }), undefined],
+    ];
+    for (const [name, body, init] of refusals) {
+      google(body, init);
+      const response = await call();
+      ok(`the Function answers 502, uncached, when the list is ${name}`,
+        response.status === 502 && response.headers.get("Cache-Control") === "no-store" && store.size === 0);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+void moderationFetch()
+  .then(() =>
+    attestationStatusChecks().catch((error: unknown) =>
+      ok(`attestation-status checks ran (${error instanceof Error ? error.message : String(error)})`, false),
+    ),
+  )
+  .then(
+    () => {
+      console.log(failures ? `\n${failures} site check(s) failed.` : "\nsite check passed.");
+      process.exit(failures ? 1 : 0);
+    },
+    (error) => {
+      console.error(error);
+      process.exit(1);
+    },
+  );

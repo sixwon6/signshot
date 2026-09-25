@@ -44,7 +44,9 @@ export interface CoreMetadata {
    * chain inside the document (`publications/core/attestation.ts`) after that chain verified down
    * to a Google attestation root; never copied from a claim. Absent for a publication made without
    * hardware attestation, for every earlier document, and when the recorded evidence did not
-   * check out (then `attestationProblem` says why).
+   * check out (then `attestationProblem` says why). Not yet a device claim: a screen names the
+   * device only after `deviceVerdict` has checked the app, the boot state, revocation and the
+   * certificates' dates at publication.
    */
   attestation?: AttestationSummary;
   /** Why a recorded attestation was set aside, for the Proof sheet. Never set beside `attestation`. */
@@ -76,6 +78,12 @@ export interface AttestationSummary {
   /** Every package the keystore daemon attested for the calling UID, and every signer digest. */
   packageNames: string[];
   signerDigests: string[];
+  /**
+   * Every certificate in the chain, leaf first: serial as lowercase hex without leading zeros and
+   * the validity window in epoch milliseconds. What the revocation list and the publish-time
+   * validity check (`deviceVerdict`) are asked about.
+   */
+  certificates: { serial: string; notBefore: number; notAfter: number }[];
 }
 
 /**

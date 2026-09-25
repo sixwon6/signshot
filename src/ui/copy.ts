@@ -404,13 +404,20 @@ export const proof = {
   standard: "Metaplex Core edition",
   attestationLabel: "Device attestation",
   attestationNone: "Not recorded.",
-  /** Said when the document carries evidence this app set aside. `reason` is the reader's own text. */
+  /**
+   * Said when the document carries evidence this app set aside, or `deviceVerdict` refused it.
+   * `reason` is the reader's own text or a `DEVICE_REFUSAL`.
+   */
   attestationProblem: (reason: string): string => `Not accepted: ${reason}.`,
+  /** While Google's revocation list and the publication time are fetched. */
+  attestationChecking: "Checking…",
+  /** Either could not be fetched: nothing is claimed. The collect page says the same. */
+  attestationUnchecked: "Couldn’t check.",
   /**
    * Said beside an accepted attestation. The claim is the key and the device the keystore
-   * attested, never the camera or the scene. This app checked the manifest binding and that the
-   * certificate chain is signed down from Google's attestation roots; dates and revocation are
-   * checked off-device, at publication time.
+   * attested, never the camera or the scene. Shown only after the manifest binding, the chain to
+   * Google's roots, the release app, the boot state, revocation and the certificates' dates at
+   * publication all checked out.
    */
   attestationBody: "Shows which device signed this, not what was photographed.",
   /**

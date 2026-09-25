@@ -3,7 +3,7 @@
  * network: this module must stay importable under Node so the gate can assert the exact strings
  * the page renders.
  */
-import { deviceName, securityLevelName } from "../../publications/core/attestation";
+import { deviceName, securityLevelName, type DeviceVerdict } from "../../publications/core/attestation";
 import type { GenesisLine } from "../../publications/core/genesisToken";
 import type { AttestationSummary } from "../../publications/types";
 
@@ -17,7 +17,8 @@ export function sol(lamports: bigint): string {
 /**
  * The one sentence the page says about the device, in the app's own words (`ProofSheet.tsx`).
  * The certificate names the device, the key's security level and the boot state. It says
- * nothing about what was in front of the lens, and the page never claims otherwise.
+ * nothing about what was in front of the lens, and the page never claims otherwise. Shown only
+ * once `deviceVerdict` says "verified"; until then the row says `DEVICE_LINE`.
  */
 export function deviceLine(a: AttestationSummary): string {
   const boot =
@@ -61,5 +62,25 @@ export const MODERATION_WORDS = {
 
 /** What the device row says for a plain document that carries no attestation. */
 export const NO_DEVICE = "No device attestation.";
-/** The device row when the document carries evidence the reader set aside. */
+/** The device row when the reader set the evidence aside or `deviceVerdict` refused it. */
 export const deviceProblem = (problem: string) => `Device attestation not accepted: ${problem}`;
+/**
+ * The device row while the revocation list and the publication time are fetched, and when either
+ * could not be: the app's own words (`proof.attestationChecking` / `attestationUnchecked`).
+ */
+export const DEVICE_LINE = {
+  checking: "Checking…",
+  unavailable: "Couldn’t check.",
+} as const;
+
+/** The device row for a verdict: the device only when verified, the reason when refused. */
+export function deviceVerdictRow(
+  line: string,
+  verdict: DeviceVerdict,
+): { text: string; state: "device-ok" | "device-problem" | "device-none" } {
+  return verdict.status === "verified"
+    ? { text: line, state: "device-ok" }
+    : verdict.status === "refused"
+      ? { text: deviceProblem(verdict.reason), state: "device-problem" }
+      : { text: DEVICE_LINE.unavailable, state: "device-none" };
+}

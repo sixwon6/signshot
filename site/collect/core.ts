@@ -8,8 +8,9 @@
  * The reader is the app's own (`publications/core/protocol.ts`): the edition account's actual
  * owner is checked against the reviewed deployments for this network, the metadata document is
  * hash-checked against the edition, and a `seedshot-attestation/1` certificate chain inside the
- * document is verified down to Google's pinned roots before the page may say which device signed
- * it. Neither the link nor the metadata grants trust.
+ * document is verified down to Google's pinned roots, then checked for the release app, the boot
+ * state, revocation and its dates at publication, before the page may say which device signed it.
+ * Neither the link nor the metadata grants trust.
  *
  * Costs are named honestly. A claim creates a Core asset and a receipt account, so the collector
  * pays rent, the network fee AND Metaplex Core's flat protocol fee for creating an asset; a
@@ -27,9 +28,19 @@ import {
   readOfferAccount,
 } from "../../publications/core/protocol";
 import { verifyGenesisToken } from "../../publications/core/genesisToken";
+import { checkDevice, publicationTime, readRevocationList } from "../../publications/core/attestationCheck";
 import type { CoreMetadata } from "../../publications/types";
 
-import { cluster, endpoint, mainnetEndpoint, type Adapter, type Genesis, type Loaded } from "./page";
+import {
+  attestationStatusUrl,
+  cluster,
+  endpoint,
+  mainnetEndpoint,
+  type Adapter,
+  type Device,
+  type Genesis,
+  type Loaded,
+} from "./page";
 import { deviceLine } from "./summary";
 
 /** Metaplex Core's flat `CREATE_FEE`, quoted in the fine print only; the estimate is measured. */
@@ -41,6 +52,27 @@ function genesisRow(e: CoreMetadata): Genesis {
   return mint
     ? { mint, sealed: !!e.genesisSealed, standing: () => verifyGenesisToken(mainnetEndpoint, mint, e.creator) }
     : null;
+}
+
+/**
+ * The document's device evidence and the check that decides whether the page may name the device
+ * (`deviceVerdict`): judged at the block time of the transaction that created the publisher's
+ * claim receipt, against Google's revocation list.
+ */
+function deviceRow(
+  e: CoreMetadata,
+  publication: { program: string; keys: { receipt: string } },
+): Device {
+  const a = e.attestation;
+  if (!a) return e.attestationProblem ? { problem: e.attestationProblem } : null;
+  return {
+    line: deviceLine(a),
+    check: () =>
+      checkDevice(a, {
+        revocationList: () => readRevocationList(attestationStatusUrl),
+        publishedAt: () => publicationTime(endpoint, publication.program, publication.keys.receipt),
+      }),
+  };
 }
 
 export function coreAdapter(edition: string): Adapter {
@@ -80,11 +112,7 @@ export function coreAdapter(edition: string): Adapter {
         description: result.edition.description,
         // What a screen renders. A quote never uses this copy: `claim()` re-reads the offer.
         price: result.offer,
-        device: result.edition.attestation
-          ? { line: deviceLine(result.edition.attestation) }
-          : result.edition.attestationProblem
-            ? { problem: result.edition.attestationProblem }
-            : null,
+        device: deviceRow(result.edition, result.publication),
         // A claim until `standing()` has asked mainnet, which the page does after it has rendered.
         genesis: genesisRow(result.edition),
       };

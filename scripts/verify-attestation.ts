@@ -10,8 +10,10 @@
  *      one's public key equal to one of Google's published attestation roots.
  *   4. Revocation: no certificate serial on https://android.googleapis.com/attestation/status
  *      (skipped with --offline).
- *   5. The attested app: package name and signer digest against dapp-store/signing-certificate.json
- *      (a debug build fails this one; that is reported, not hidden).
+ *   5. The attested app: package name and signer digest against `RELEASE_APP`, the pin from
+ *      dapp-store/signing-certificate.json (a debug build fails this one; reported, not hidden).
+ *   6. The verdict: what the app's Proof sheet and the collect page say for these inputs
+ *      (`deviceVerdict`), so a disagreement with the checks above shows here.
  *
  * Usage:
  *   npx tsx scripts/verify-attestation.ts --edition <address> [--cluster devnet|mainnet-beta] [--rpc <url>]
@@ -19,8 +21,10 @@
  *
  * Certificate validity is judged at publication time (see `validAt`), because Google's device
  * and intermediate attestation certificates live for days to weeks, and a publication's evidence
- * must stay checkable for as long as the publication exists. `--at` also works with `--edition`
- * and then overrides the on-chain time; the `chain` line always names which was used.
+ * must stay checkable for as long as the publication exists. By edition that is the block time of
+ * the transaction that created the publisher's claim receipt (`publicationTime`, the readers'
+ * own). `--at` also works with `--edition` and then overrides it; the `chain` line always names
+ * which was used.
  *
  * Exit code 0 only when every check passes. What passing means: a hardware-protected key on a
  * device Google's attestation chain vouches for signed this publication's manifest. It does not
@@ -33,15 +37,24 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { readAttestationBundle, deviceName, securityLevelName, type ManifestCommitment } from "../publications/core/attestation";
+import {
+  deviceName,
+  deviceVerdict,
+  readAttestationBundle,
+  RELEASE_APP,
+  revocationHits,
+  securityLevelName,
+  type ManifestCommitment,
+  type RevocationList,
+} from "../publications/core/attestation";
+import { GOOGLE_STATUS_URL as STATUS_URL, publicationTime, readRevocationList } from "../publications/core/attestationCheck";
 import { parseCertificate } from "../src/seeker/keyAttestation";
 import { readPublication } from "../publications/core/protocol";
-import { arweaveBytes, request } from "../publications/rpc";
+import { arweaveBytes } from "../publications/rpc";
 import { TRUSTED } from "../publications/deployments";
 import type { Cluster } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const STATUS_URL = "https://android.googleapis.com/attestation/status";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -63,7 +76,8 @@ function pinnedRootKeys(): string[] {
  * When the chain must have been valid. Google's device and intermediate attestation certificates
  * are short-lived (the Seeker's StrongBox certificate observed on 2026-09-16 was valid for 13
  * days), so a chain is judged at PUBLICATION time, never "now": by edition, the block time of the
- * edition account's earliest transaction; by file, `--at <ISO date>` or, failing that, now.
+ * transaction that created the publisher's claim receipt (`publicationTime`, which the app and
+ * the collect page use too); by file, `--at <ISO date>` or, failing that, now.
  */
 let validAt: { time: Date; source: string } = { time: new Date(), source: "now (no publication time known)" };
 if (arg("at")) {
@@ -72,22 +86,13 @@ if (arg("at")) {
   validAt = { time: t, source: "--at" };
 }
 
-async function publicationTime(rpc: string, edition: string): Promise<void> {
+async function publishedAt(rpc: string, program: string, receipt: string): Promise<void> {
   if (arg("at")) return;
-  // Newest first, 1000 per page. Every collect and price change touches the edition account, and
-  // an edition can have 1000 copies, so the first transaction can be several pages back.
-  type Entry = { signature: string; blockTime: number | null };
-  let oldest: Entry | undefined, before: string | undefined, pages = 0;
-  for (;;) {
-    const page = await request<Entry[]>(rpc, "getSignaturesForAddress", [edition, { limit: 1000, ...(before ? { before } : {}) }]);
-    if (page.length) oldest = page[page.length - 1];
-    if (page.length < 1000) break;
-    before = oldest!.signature;
-    if (++pages > 50) throw new Error("the edition has more transaction history than this verifier pages through; pass --at");
+  try {
+    validAt = { time: await publicationTime(rpc, program, receipt), source: "block time of the transaction that created the publisher's claim receipt" };
+  } catch (error) {
+    throw new Error(`publication time: ${error instanceof Error ? error.message : String(error)} (use an archival --rpc, or pass --at)`);
   }
-  if (!oldest) throw new Error("the RPC returned no transactions for the edition (its history may be pruned; use an archival --rpc, or pass --at)");
-  if (!oldest.blockTime) throw new Error("the edition's first transaction has no block time on this RPC; pass --at");
-  validAt = { time: new Date(oldest.blockTime * 1000), source: "block time of the edition's first transaction" };
 }
 
 async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommitment | null }> {
@@ -118,7 +123,7 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   }
   if (!found) throw new Error(`edition ${edition} was not found under a reviewed ${cluster} deployment`);
   const { state } = found;
-  await publicationTime(rpc, edition);
+  await publishedAt(rpc, program, found.keys.receipt);
   const bytes = await arweaveBytes(state.uri.split("/").pop()!, state.metadataHash);
   check("chain-state", true, `document bytes hash to the on-chain metadata_hash ${state.metadataHash}`);
   return {
@@ -175,37 +180,38 @@ async function main() {
   check("leaf-key", appKey === nodeKey,
     `app and Node parsers agree on the leaf key; attestation version ${leaf.keyDescription?.attestationVersion}, OS ${leaf.keyDescription?.osVersion ?? "?"}, patch ${leaf.keyDescription?.osPatchLevel ?? "?"}`);
 
-  // 4. Revocation.
+  // 4. Revocation, through the readers' own parser and lookup: the documented key is lowercase
+  // hex without leading zeros, but the live list keys more than half its entries by DECIMAL
+  // serial, so both spellings are looked up (`revocationHits`). The serials are the app parser's;
+  // Node's must agree, or the lookup would be asked about the wrong numbers.
+  let list: RevocationList | null = null;
+  const serialsAgree = certs.every((c, i) => c.serialNumber.toLowerCase().replace(/^0+(?=.)/, "") === summary.certificates[i]?.serial);
+  if (!serialsAgree) check("serials", false, "the app's parser and Node's disagree on a certificate serial");
   if (flag("offline")) check("revocation", false, "skipped (--offline)");
   else {
-    const response = await fetch(STATUS_URL);
-    if (!response.ok) throw new Error(`revocation list: HTTP ${response.status}`);
-    const status = (await response.json()) as { entries?: Record<string, { status: string; reason?: string }> };
-    const entries = status.entries ?? {};
-    // The documented key is lowercase hex without leading zeros, but the live list (checked
-    // 2026-09-16: 1746 entries) keys more than half its entries by DECIMAL serial. Both are
-    // looked up, with own-property checks so a serial can never resolve to a prototype member.
-    const hits: string[] = [];
-    for (const c of certs) {
-      const hex = c.serialNumber.toLowerCase().replace(/^0+(?=.)/, "");
-      const dec = BigInt("0x" + c.serialNumber).toString(10);
-      for (const key of new Set([hex, dec]))
-        if (Object.hasOwn(entries, key)) hits.push(`serial ${key}: ${entries[key].status} ${entries[key].reason ?? ""}`.trim());
-    }
+    list = await readRevocationList(STATUS_URL);
+    const hits = revocationHits(summary, list);
     check("revocation", hits.length === 0, hits.length
-      ? hits.join("; ")
-      : `none of the ${certs.length} certificate serials (hex or decimal) is on ${STATUS_URL} (${Object.keys(entries).length} entries)`);
+      ? hits.map(([key, status]) => `serial ${key}: ${status} ${list!.get(key)?.reason ?? ""}`.trim()).join("; ")
+      : `none of the ${certs.length} certificate serials (hex or decimal) is on ${STATUS_URL} (${list.size} entries)`);
   }
 
   // 5. The app. The keystore attests every package of the calling UID and every signer, so the
   // sets must be exactly the release package and exactly its key: a shared-UID neighbour or a
   // second signer would otherwise ride along.
-  const pinned = JSON.parse(readFileSync(resolve(here, "..", "dapp-store", "signing-certificate.json"), "utf8")) as { packageName: string; sha256: string };
-  const appOk = summary.packageNames.length === 1 && summary.packageNames[0] === pinned.packageName
-    && summary.signerDigests.length === 1 && summary.signerDigests[0] === pinned.sha256;
+  const appOk = summary.packageNames.length === 1 && summary.packageNames[0] === RELEASE_APP.packageName
+    && summary.signerDigests.length === 1 && summary.signerDigests[0] === RELEASE_APP.signerDigest;
   check("app", appOk, appOk
-    ? `attested app is exactly ${pinned.packageName} signed by exactly the release key`
-    : `attested packages [${summary.packageNames.join(", ")}] / signers [${summary.signerDigests.join(", ")}] are not exactly the release build (${pinned.packageName} / ${pinned.sha256})`);
+    ? `attested app is exactly ${RELEASE_APP.packageName} signed by exactly the release key`
+    : `attested packages [${summary.packageNames.join(", ")}] / signers [${summary.signerDigests.join(", ")}] are not exactly the release build (${RELEASE_APP.packageName} / ${RELEASE_APP.signerDigest})`);
+
+  // 6. What the app and the collect page say for exactly these inputs.
+  const verdict = deviceVerdict(summary, validAt.time, list);
+  check("verdict", verdict.status === "verified", verdict.status === "verified"
+    ? `readers show "Signed on a ${deviceName(summary)}"`
+    : verdict.status === "refused"
+      ? `readers show "Not accepted: ${verdict.reason}"`
+      : `readers show "Couldn't check." (no revocation list)`);
 
   console.log(`manifest sha256 ${bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(bundle.manifest))))} (informational)`);
   for (const c of checks) console.log(`${c.ok ? "PASS" : "FAIL"}  ${c.name.padEnd(12)} ${c.detail}`);

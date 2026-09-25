@@ -120,27 +120,56 @@ publication carries a different challenge and is refused. The document also carr
 explorers show the device without parsing certificates; the app re-derives them from the
 certificate on every read and refuses a document whose attributes overclaim.
 
-What it shows: a hardware-protected key on a device whose keystore attested these properties
-signed this publication's manifest. What it does not show: that the camera sensor produced the
-image, or anything about the scene. The app checks, in pure JavaScript, the manifest binding, the
-signature, the security level, and that the certificate chain is signed down from one of Google's
-published attestation roots (pinned in `src/seeker/keyAttestation.ts`); evidence that fails is set
-aside with a reason on the Proof sheet, and the photograph still loads. Certificate dates and
-revocation need a reference time and the network, so they are checked off-device, from the
-published bytes:
+The Proof sheet, the publish review and the collect page say "Signed on a Solana Seeker ·
+StrongBox hardware key · verified boot, bootloader locked" only when every one of these holds
+(`readAttestationBundle`, then `deviceVerdict`, in `publications/core/attestation.ts`):
+
+- the manifest names this publication, the challenge is its SHA-256, the signature verifies, the
+  key is hardware-backed, and the chain is signed down to one of Google's roots pinned in
+  `src/seeker/keyAttestation.ts` (the RSA root and Key Attestation CA1);
+- the attested app is exactly `app.seekershot` signed by exactly the release key
+  (`RELEASE_APP`, from `dapp-store/signing-certificate.json`); a debug or test build is another app;
+- verified boot and a locked bootloader, and the hardware-attested manufacturer and model are
+  Solana Mobile Inc. / Seeker (another device that passes everything is named as itself);
+- every certificate is valid at the edition's on-chain publication time: the block time of the
+  transaction in which the System program created the publisher's claim receipt for the edition
+  program (`publicationTime`), so an earlier mention of the address cannot backdate it. A draft not
+  yet sent is judged now. Google: RKP certificates must "continue to have their validity period
+  checked"; the Seeker's StrongBox certificate lives 13 days. This is applied to RSA-rooted chains
+  too, which Google does not require for pre-2021 factory keys, none of which is a Seeker;
+- no certificate serial, in hex or decimal, is on Google's revocation list
+  (`https://android.googleapis.com/attestation/status`), whichever root the chain ends at. Leaked
+  factory keyboxes chain to the RSA root, and Google's documentation asks for "the status of each
+  certificate" with no exemption for Key Attestation CA1.
+
+A definite failure reads "Not accepted:" with the reason (another app, bootloader unlocked, boot
+not verified, revoked, suspended, expired at publication); a list or a publication time that
+cannot be fetched reads "Couldn't check."; a document without evidence reads "Not recorded." (on
+the collect page, "No device attestation."), and so does the review when the phone produced none.
+The app fetches Google's list directly; the collect page reads it through
+`site/functions/api/attestation-status.ts`, because Google sends no CORS header. A draft is
+attested when it is built, so before its document's hash goes into the transaction the send path
+attests again when any certificate has expired or will within 24 hours, in the same single wallet
+approval. `npm run release:check` also compares Google's live root list
+(`https://android.googleapis.com/attestation/root`) with the pinned roots and refuses on any
+difference.
+
+What it shows: a hardware-protected key on a Seeker, whose keystore attested a verified, locked
+boot and this app, signed this publication's manifest while its certificates were valid and not
+revoked. What it does not show: that the camera sensor produced the image, or anything about the
+scene; the attested app identity is asserted by the keystore daemon, so it is as good as the OS
+that verified boot vouches for. Wallets and explorers show the document's `attributes` as written,
+without any of these checks. Evidence that fails the reader is set aside with a reason and the
+photograph still loads. The same rules, with Node's X.509 check as a second opinion, run
+off-device from the published bytes:
 
 ```sh
 npm run verify:attestation -- --edition <address> --cluster devnet
 ```
 
-It validates the chain against Google's published attestation roots
-(`scripts/attestation-roots.pem`), the revocation list, the on-chain metadata hash and the
-attested app's signing identity, and exits non-zero on any failure. Certificate validity is
-judged at publication time (the edition's first transaction), because Google's device and
-intermediate attestation certificates live for days to weeks. A phone that cannot attest
-publishes the plain three-field document, exactly as before; the Proof sheet says so. The
-native path was exercised on a Seeker on 2026-09-16
-(`dapp-store/attestation-device-check-2026-09-16.json`).
+It also checks the on-chain metadata hash, prints what the readers show, and exits non-zero on
+any failure. A phone that cannot attest publishes the plain three-field document. The native path
+was exercised on a Seeker on 2026-09-16 (`dapp-store/attestation-device-check-2026-09-16.json`).
 
 ## Seeker Genesis Token
 

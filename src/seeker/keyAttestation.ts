@@ -13,8 +13,9 @@
  *    SPKI SHA-256; the PEM is in `scripts/attestation-roots.pem`).
  *
  * What is NOT done here: certificate validity windows and revocation. Both need a reference time
- * (Google's device and intermediate certificates live for days) and the network; they are the
- * verifier's job, at publication time.
+ * (Google's device and intermediate certificates live for days) and the network; every reader
+ * applies them through `deviceVerdict` (`publications/core/attestation.ts`), at the edition's
+ * on-chain publication time, before it names a device.
  *
  * Every read is a bounded DER walk that refuses indefinite lengths, truncated values and
  * anything not exactly where X.509 puts it; anything malformed throws an `Error` whose message
@@ -504,6 +505,8 @@ export function verifyIssued(cert: ParsedCertificate, issuer: ParsedCertificate)
  * Check a chain, leaf first: every certificate issued and signed by the next, every issuer a
  * CA, the last self-signed and its key one of `trustedRootKeys`. Throws naming the first link
  * that fails. Validity windows and revocation are deliberately not checked here (see the header).
+ * `trustedRootKeys` is for tests only; `scripts/check-release-config.ts` compares the default with
+ * Google's live root list.
  */
 export function verifyChain(chain: ParsedCertificate[], trustedRootKeys: readonly string[] = GOOGLE_ATTESTATION_ROOT_KEYS): void {
   if (chain.length < 2) fail("a chain needs at least two certificates");

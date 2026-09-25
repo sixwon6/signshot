@@ -9,17 +9,22 @@
  * be transplanted: a certificate from another key, phone or publication carries a different
  * challenge and fails here.
  *
- * What the reader checks, on the phone, from the document alone: the manifest names this
- * publication; the leaf certificate's challenge is the manifest's hash; the manifest signature
- * verifies under the leaf key; the key is hardware-backed with an attested device identity; and
- * the chain is signed down from one of Google's published attestation roots. What it does not
- * check, because both need a reference time and the network: certificate validity windows and
- * revocation. That is the off-device verifier's job (`scripts/verify-attestation.ts`).
+ * What the reader checks, from the document alone: the manifest names this publication; the leaf
+ * certificate's challenge is the manifest's hash; the manifest signature verifies under the leaf
+ * key; the key is hardware-backed with an attested device identity; and the chain is signed down
+ * from one of Google's published attestation roots. That is structure, not yet a device claim.
+ *
+ * A screen names the device only after `deviceVerdict` has also found: the attested app is
+ * exactly the release package signed by exactly the release key; verified boot with a locked
+ * bootloader; every certificate valid at the edition's on-chain publication time; and no
+ * certificate on Google's revocation list. The last two need the network
+ * (`attestationCheck.ts`), and a reader that cannot reach it says so rather than guessing.
  *
  * What none of it says: that the camera sensor produced the image, or anything about the scene.
  */
 
 import { getBase64Encoder } from "@solana/kit";
+import signingCertificate from "../../dapp-store/signing-certificate.json";
 import { canonicalize, type JcsValue } from "../../src/jcs";
 import {
   challengeMatches,
@@ -191,6 +196,11 @@ export function readAttestationBundle(
     deviceLocked: k.rootOfTrust.deviceLocked,
     packageNames: k.application?.packages.map((p) => p.name) ?? [],
     signerDigests: k.application?.signerDigests ?? [],
+    certificates: chain.map((c) => ({
+      serial: c.serialHex,
+      notBefore: c.notBefore.getTime(),
+      notAfter: c.notAfter.getTime(),
+    })),
   };
   return {
     bundle: {
@@ -208,4 +218,119 @@ export function checkAttributes(value: unknown, summary: AttestationSummary) {
   const expected = attestationAttributes(summary);
   if (!Array.isArray(value) || canonicalize(value as JcsValue) !== canonicalize(expected as unknown as JcsValue))
     fail("attributes do not match the certificate");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The verdict: what a screen may say about a chain the reader accepted
+
+/**
+ * The release build, from `dapp-store/signing-certificate.json` (the key the dApp Store APK and
+ * `.well-known/assetlinks.json` are signed with). The one pin the verifier, the app and the site
+ * compare the attested app against; a debug or test build attests another signer.
+ */
+export const RELEASE_APP: { readonly packageName: string; readonly signerDigest: string } = {
+  packageName: signingCertificate.packageName,
+  signerDigest: signingCertificate.sha256,
+};
+
+/**
+ * Google's revocation list, by the dictionary key it files a serial under: the documented key is
+ * lowercase hex without leading zeros, and the live list also keys entries by DECIMAL serial
+ * (977 of 1,755 were digits only on 2026-09-24), so both spellings are looked up.
+ */
+export type RevocationList = ReadonlyMap<string, { status: string; reason?: string }>;
+
+/** Every entry the list holds for this chain, as `[key, status]`. */
+export function revocationHits(s: AttestationSummary, list: RevocationList): [string, string][] {
+  const hits: [string, string][] = [];
+  for (const { serial } of s.certificates) {
+    const decimal = BigInt("0x" + serial).toString(10);
+    for (const key of new Set([serial, decimal])) {
+      const entry = list.get(key);
+      if (entry) hits.push([key, entry.status]);
+    }
+  }
+  return hits;
+}
+
+/** The short reasons a screen puts after "Not accepted:". Labels, not explanations. */
+export const DEVICE_REFUSAL = {
+  app: "another app",
+  unlocked: "bootloader unlocked",
+  boot: "boot not verified",
+  revoked: "revoked",
+  suspended: "suspended",
+  expired: "expired at publication",
+  early: "not yet valid at publication",
+  /** A draft not yet sent is judged now; the send path renews it (`src/prints/creator.ts`). */
+  expiredDraft: "expired",
+} as const;
+
+/**
+ * `verified`: every rule holds and the device may be named. `refused`: one definitely does not.
+ * `unchecked`: nothing refused, but the publication time or the revocation list was out of reach,
+ * so nothing is claimed ("Couldn't check.").
+ */
+export type DeviceVerdict =
+  | { status: "verified" }
+  | { status: "refused"; reason: string }
+  | { status: "unchecked" };
+
+/**
+ * Whether a screen may name the attested device. `summary` is what `readAttestationBundle`
+ * accepted (structure, challenge, signature, hardware key, a pinned Google root). On top of that:
+ *
+ *  - the attested app is exactly `RELEASE_APP`: one package, one signer. The keystore attests
+ *    every package of the calling UID and every signer, so a shared-UID neighbour or a second
+ *    signer would otherwise ride along;
+ *  - verified boot and a locked bootloader;
+ *  - every certificate valid at `at`, the edition's ON-CHAIN publication time (`publicationTime`),
+ *    or now for a draft not yet sent. Never the capture time, which the phone asserts. Google:
+ *    "It's critical ... that Remote Key Provisioning (RKP) certificates continue to have their
+ *    validity period checked"; the Seeker's RKP device certificate lives 13 days. Checked for
+ *    every chain, including the RSA root's, which is stricter than Google asks for pre-2021
+ *    factory keys, none of which is a Seeker;
+ *  - no certificate on Google's revocation list, for EITHER root. Leaked factory keyboxes chain
+ *    to the RSA root, and Google's docs say to check "the status of each certificate in an
+ *    attestation chain"; they do not exempt chains ending at Key Attestation CA1, and Google's
+ *    own verifier (github.com/android/keyattestation) checks the list on every path.
+ *
+ * "verified" then names the device the hardware list attests (`deviceName`): the Seeker line only
+ * for Solana Mobile Inc. / Seeker. `at` or `list` null means it could not be fetched. A definite
+ * refusal from any rule that could run wins over "unchecked".
+ * https://developer.android.com/privacy-and-security/security-key-attestation
+ */
+export function deviceVerdict(s: AttestationSummary, at: Date | null, list: RevocationList | null): DeviceVerdict {
+  const refused = (reason: string): DeviceVerdict => ({ status: "refused", reason });
+  if (s.packageNames.length !== 1 || s.packageNames[0] !== RELEASE_APP.packageName ||
+      s.signerDigests.length !== 1 || s.signerDigests[0] !== RELEASE_APP.signerDigest)
+    return refused(DEVICE_REFUSAL.app);
+  if (!s.deviceLocked) return refused(DEVICE_REFUSAL.unlocked);
+  if (s.verifiedBoot !== "verified") return refused(DEVICE_REFUSAL.boot);
+  // The reader never returns fewer than two; a summary without its chain is nothing to vouch for.
+  if (!Array.isArray(s.certificates) || s.certificates.length < 2) return { status: "unchecked" };
+  if (at) {
+    const t = at.getTime();
+    if (s.certificates.some((c) => t > c.notAfter)) return refused(DEVICE_REFUSAL.expired);
+    if (s.certificates.some((c) => t < c.notBefore)) return refused(DEVICE_REFUSAL.early);
+  }
+  if (list) {
+    const hits = revocationHits(s, list);
+    if (hits.length)
+      return refused(hits.every(([, status]) => status === "SUSPENDED") ? DEVICE_REFUSAL.suspended : DEVICE_REFUSAL.revoked);
+  }
+  return at && list ? { status: "verified" } : { status: "unchecked" };
+}
+
+/**
+ * How close to expiry a draft's chain may be when its document goes into a transaction. A draft's
+ * attestation is made when the draft is built and the draft is reused, while the device and
+ * intermediate certificates live days to weeks; a document sealed after they expire would fail
+ * `deviceVerdict` forever. Inside this margin the send path attests again (`src/prints/creator.ts`).
+ */
+export const ATTESTATION_RENEW_MS = 24 * 60 * 60 * 1000;
+
+/** Has any certificate expired, or will it within `margin` of `now`? */
+export function attestationExpiring(s: AttestationSummary, now = Date.now(), margin = ATTESTATION_RENEW_MS): boolean {
+  return s.certificates.some((c) => c.notAfter - margin <= now);
 }

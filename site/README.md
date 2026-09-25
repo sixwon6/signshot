@@ -38,6 +38,9 @@ reader and refused attested editions. Nothing is deployed from that repository a
   (a Pages Function at `/api/solana`; devnet links go straight to `api.devnet.solana.com`). It
   needs the Production-only `SOLANA_RPC_URL` secret and answers 503 without it. Wrangler uploads a
   `functions/` directory found in the working directory it is run from, so deploy from `site/`.
+- `functions/api/attestation-status.ts` — Google's attestation revocation list, same-origin at
+  `/api/attestation-status` (GET only, bounded, re-serialised, held an hour in the Cache API) for
+  the device row, on every network. Needs no secret.
 - `cloudflare/rate-limit-rule.json` — the abuse control on `/api/solana`, in the shape the
   Cloudflare Rulesets API accepts. See "Cloudflare state that is not in a file".
 - `build.mjs` — esbuild: `collect/browser.ts` → `dist/collect/collect.js` (ESM, minified,
@@ -73,10 +76,13 @@ and the trusted programs come from the build, never from the link.
 
 It shows the hash-checked photograph, title, creator, caption, copies available, the price of the
 remaining copies (or "free"), the explorer links, and a **Device** row derived from the
-certificate chain inside the document after the reader verified it to Google's attestation roots:
-"Signed on a Solana Seeker · StrongBox hardware key · verified boot, bootloader locked", or the
-reason recorded evidence was set aside, or "No device attestation was recorded for this
-publication." The row names the device, the key and the boot state. It never says
+certificate chain inside the document after the reader verified it to Google's attestation roots
+and `deviceVerdict` checked the release app, the boot state, Google's revocation list (through
+`functions/api/attestation-status.ts`, since Google's endpoint sends no CORS header) and every
+certificate's dates at the edition's on-chain publication time: "Signed on a Solana Seeker ·
+StrongBox hardware key · verified boot, bootloader locked", or "Device attestation not accepted:
+<reason>", or "Couldn’t check." when the list or the publication time is out of reach, or "No
+device attestation." The row names the device, the key and the boot state. It never says
 "camera-verified" or "authentic", and the fine print under it says it does not describe the scene.
 
 **Open in Signshot**: on Android the control is an `intent://erashot.app/collect/...#Intent;

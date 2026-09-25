@@ -27,6 +27,7 @@ import {
 } from "./creator";
 import { terms } from "../../publications/core/protocol";
 import { deviceName, securityLevelName } from "../../publications/core/attestation";
+import { deviceValue, useDeviceVerdict } from "../seeker/useDeviceVerdict";
 import {
   DESCRIPTION_LIMIT,
   normalizeDescription,
@@ -149,6 +150,8 @@ export function PrintSheet({
     enabled: boolean;
     reason?: string;
   }>({ enabled: false });
+  // The review's Device row: a draft not yet sent is judged now, a published one at its block time.
+  const device = useDeviceVerdict(draft?.edition, published);
 
   async function applyPublicationState(state: PublicationState) {
     setDraft(state.draft);
@@ -896,13 +899,12 @@ export function PrintSheet({
                   label={copy.rowImage}
                   value={`${draft.edition.width} × ${draft.edition.height}`}
                 />
-                {/* Derived from the certificate sealed in the document, never typed. */}
-                {draft.edition.attestation && (
-                  <Row
-                    label={copy.rowDevice}
-                    value={`${deviceName(draft.edition.attestation)} · ${securityLevelName(draft.edition.attestation)}`}
-                  />
-                )}
+                {/* Derived from the certificate sealed in the document, never typed; always
+                    shown, so a phone that produced no evidence says so here. */}
+                <Row
+                  label={copy.rowDevice}
+                  value={deviceValue(draft.edition, device, (a) => `${deviceName(a)} · ${securityLevelName(a)}`)}
+                />
                 {/* The mint the document names, found on mainnet when the draft was made. */}
                 {draft.edition.genesisMint ? (
                   <Row label={copy.rowGenesis} value={shortAddress(draft.edition.genesisMint)} />

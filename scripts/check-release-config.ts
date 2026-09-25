@@ -10,13 +10,15 @@
  * them and records them in `.expo/release/config.json`.
  *
  * Refuses when a `.env*.local` file exists, when the cluster is not mainnet-beta without
- * `--allow-cluster devnet`, or when no program is configured. Never prints the RPC URL, which can
- * carry a provider key.
+ * `--allow-cluster devnet`, when no program is configured, or when Google's live attestation root
+ * list is not exactly the roots this build pins (a network check, so not part of `npm test`).
+ * Never prints the RPC URL, which can carry a provider key.
  *
  * `resolveCluster` is duplicated from `src/solana/cluster.ts`, which cannot load under plain Node.
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { loadProjectEnv, setNodeEnv } from "@expo/env";
 
 import type { Cluster } from "../publications/types";
+import { GOOGLE_ATTESTATION_ROOT_KEYS } from "../src/seeker/keyAttestation";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RECORD = resolve(ROOT, ".expo", "release", "config.json");
@@ -118,6 +121,49 @@ function resolveProgram(
   }
 }
 
+/** Google's published set of valid attestation roots, a JSON array of PEM certificates. */
+const ATTESTATION_ROOT_LIST = "https://android.googleapis.com/attestation/root";
+
+/**
+ * The pinned roots (`GOOGLE_ATTESTATION_ROOT_KEYS`, asserted equal to `scripts/attestation-roots.pem`
+ * by `npm test`) against Google's live list, by SHA-256 of each root's SubjectPublicKeyInfo. A root
+ * Google added means new devices' chains would read "does not end at a Google attestation root" in
+ * this build; one Google withdrew means this build still vouches for chains Google no longer does.
+ * Either is a reviewed change to the pin and the PEM, never something a release ships past.
+ * `null` when they match.
+ */
+export async function attestationRootsRefusal(): Promise<string | null> {
+  let pems: unknown;
+  try {
+    const response = await fetch(ATTESTATION_ROOT_LIST);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    pems = await response.json();
+  } catch (error) {
+    return `could not read Google's attestation root list at ${ATTESTATION_ROOT_LIST} (${error instanceof Error ? error.message : String(error)}).\n` +
+      `    The release check compares the pinned roots with it; run it again with a network.`;
+  }
+  if (!Array.isArray(pems) || pems.length === 0 || !pems.every((pem) => typeof pem === "string"))
+    return `${ATTESTATION_ROOT_LIST} is no longer a JSON array of PEM certificates; review the format before releasing.`;
+  const live = new Map<string, string>();
+  for (const pem of pems as string[]) {
+    const cert = new X509Certificate(pem);
+    const spki = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+    live.set(spki, cert.subject.replace(/\n/g, ", "));
+  }
+  const pinned = new Set(GOOGLE_ATTESTATION_ROOT_KEYS);
+  const added = [...live].filter(([spki]) => !pinned.has(spki));
+  const removed = [...pinned].filter((spki) => !live.has(spki));
+  if (!added.length && !removed.length) return null;
+  return (
+    `Google's attestation root list differs from the roots this build pins.\n` +
+    added.map(([spki, subject]) => `    NEW root at Google, not pinned: ${subject} (SPKI SHA-256 ${spki})\n`).join("") +
+    removed.map((spki) => `    pinned root no longer at Google: SPKI SHA-256 ${spki}\n`).join("") +
+    `    Copy the roots from https://developer.android.com/privacy-and-security/security-key-attestation\n` +
+    `    into scripts/attestation-roots.pem, update GOOGLE_ATTESTATION_ROOT_KEYS in\n` +
+    `    src/seeker/keyAttestation.ts, and run npm test (check-attestation asserts the two agree).`
+  );
+}
+
 /** `git rev-parse HEAD`, or `"unknown"` outside a checkout. */
 function headCommit(cwd: string): string {
   try {
@@ -167,6 +213,9 @@ async function main(argv: readonly string[]): Promise<void> {
   const resolved = resolveProgram(cluster, configuredProgram);
   if ("refusal" in resolved) fail(resolved.refusal);
 
+  const roots = await attestationRootsRefusal();
+  if (roots) fail(roots);
+
   const config: ReleaseConfig = {
     cluster,
     program: resolved.program,
@@ -180,6 +229,7 @@ async function main(argv: readonly string[]): Promise<void> {
   console.log(`  cluster                  ${config.cluster}${cluster === "mainnet-beta" ? "" : "  (explicitly allowed)"}`);
   console.log(`  program                  ${config.program}`);
   console.log(`  EXPO_PUBLIC_SOLANA_RPC_URL  ${config.rpcUrlConfigured ? "set (value not printed)" : "not set"}`);
+  console.log(`  attestation roots        the ${GOOGLE_ATTESTATION_ROOT_KEYS.length} pinned roots are exactly Google's live list`);
   console.log(`  commit                   ${config.commit}`);
   console.log(`  record                   ${file}`);
   console.log("\nRecord the cluster and program with the APK's SHA-256 in the release notes.");

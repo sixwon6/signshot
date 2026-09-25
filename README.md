@@ -33,28 +33,36 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
 ## Before release
 
 - **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; send a copy; buy
-  a priced copy from a second wallet; collect from the link in a browser wallet; cancel, time out
-  and background the wallet mid-publish and mid-upload, and recover. Judge the looks in daylight with a
-  face and something red in frame; check Camcorder's smear in both landscapes; save one photograph
-  per look and compare it with the preview. Open the wallet screen's grid and a print with a wallet
-  that holds copies, and connect a wallet from that screen. Publish from the wallet that holds the
-  Genesis Token and read its row on the review, the Proof sheet and the collect page.
-- **Site:** redeploy `site/`, page and `/api/solana` together: the live page refuses a document
-  that names a Genesis Token, and the live proxy refuses the check's `getTokenAccountsByOwner`.
-  The live home page still says "Simple controls", and the privacy page was corrected on
-  2026-09-21.
-- **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`): the
-  listed devnet programs predate the Genesis Token accounts, so the sealed publish and its
-  refusals have not run on a cluster yet; then list the new address and digest.
-- **Mainnet:** `programs/editions/MAINNET.md`, then the program address and digest in
-  `publications/deployments.ts`, production RPC and storage. The mainnet build is the plain
-  one, never `-Features devnet-genesis`.
-- **Final APK:** `npm run release:check`, `npm run release:apk` with the upload key, a fresh
-  install, an offline capture, one small mainnet publication.
-- **dApp Store:** the mainnet build above; the Publisher Policy's terms for user content (report,
-  block, user terms) against the collect view; screenshots of 1080 px or more a side and a short
-  description of 30 characters or fewer.
-- **Submission:** `SUBMISSION_DRAFT.md`. CLOCK IN closes 2026-10-08 23:59 US Pacific.
+  a priced copy from a second wallet; collect from the link in a browser wallet (Chrome's local
+  network prompt, then Seed Vault signs and declines); cancel, time out and background the wallet
+  mid-publish and mid-upload, and recover. Judge the looks in daylight with a face and something
+  red in frame; check Camcorder's smear in both landscapes; save one photograph per look and
+  compare it with the preview. Open the wallet screen's grid and a print with a wallet that holds
+  copies, and connect a wallet from that screen. Publish from the wallet that holds the Genesis
+  Token and read its row on the review, the Proof sheet and the collect page. Read the Device row
+  of a release-build publication, and of a draft left past its certificates (Continue renews it).
+  Terms and Agree before the first publish and collect; Report; Block and Unblock; an edition in
+  `moderation.json` reads Hidden.
+- **Site:** redeploy `site/` (page, `/api/solana`, `/api/attestation-status`, `/terms/`,
+  `/moderation.json`); the live page refuses a document that names a Genesis Token until then.
+  Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint). Route
+  mail for support@erashot.app.
+- **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`, about 2.4
+  devnet SOL, more than one faucet request grants): the listed devnet programs predate the Genesis
+  Token accounts and the price floor. Then record its address, digest and upgrade authority.
+- **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
+  address; the address, digest, length and upgrade authority in `publications/deployments.ts`;
+  `EXPO_PUBLIC_SOLANA_RPC_URL` at a provider (`release:check` refuses a public endpoint).
+- **Final APK:** `npm run release:check` (also Google's attestation roots), `npm run release:apk`
+  with the upload key, a fresh install, an offline capture, one small mainnet publication — the
+  first paid storage upload, so confirm Turbo credited the upload key from the publish transaction.
+- **dApp Store:** the mainnet build above; publisher identity verification and a publisher wallet
+  with about 0.2 SOL; terms URL https://erashot.app/terms/; the opaque 512×512 icon in
+  `dapp-store/icon-512.png`, a 1200×600 banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a
+  name of 25 characters or fewer and a subtitle of 50 or fewer.
+- **Submission:** `SUBMISSION_DRAFT.md`: push, connect GitHub on Align (or make the repository
+  public), a public direct link to the APK, a captioned demo video (the judges read its
+  transcript), the form's answers. CLOCK IN closes 2026-10-08 23:59 US Pacific.
 
 ## The edition lifecycle
 

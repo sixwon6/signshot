@@ -50,10 +50,12 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
   support@erashot.app.
 - **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`, about 2.4
   devnet SOL, more than one faucet request grants): the listed devnet programs predate the Genesis
-  Token accounts and the price floor. Then record its address, digest and upgrade authority.
+  Token accounts, the price floor and the recorded publication time. Then record its address,
+  digest and upgrade authority.
 - **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
-  address; the address, digest, length and upgrade authority in `publications/deployments.ts`;
-  `EXPO_PUBLIC_SOLANA_RPC_URL` at a provider (`release:check` refuses a public endpoint).
+  address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
+  length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a
+  provider (`release:check` refuses a public endpoint).
 - **Final APK:** `npm run release:check` (also Google's attestation roots), `npm run release:apk`
   with the upload key, a fresh install, an offline capture, one small mainnet publication — the
   first paid storage upload, so confirm Turbo credited the upload key from the publish transaction.

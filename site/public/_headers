@@ -59,6 +59,22 @@
 /privacy.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
+# The terms, `terms/index.html`: the same static shape as the privacy page, served at `/terms/`.
+# `/terms` and the file path redirect there; both are listed so no response goes out without it.
+/terms
+  Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+/terms/
+  Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+/terms/index.html
+  Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+# The owner's moderation list, read by the app and by the collect page (`src/moderation/core.ts`).
+# Short-lived, so an edit reaches readers within minutes; readers fail open if it is unreadable.
+/moderation.json
+  Cache-Control: public, max-age=300
+
 # The not-found page, when requested by its own path. A 404 answered for some other path
 # carries only the /* baseline from this file plus the <meta> policy inside 404.html.
 /404.html

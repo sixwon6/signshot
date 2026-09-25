@@ -4,7 +4,8 @@
  * `browser.ts` accepts a link and hands the adapter for it to `run()`. This file owns wallet
  * discovery on Android (MWA) and elsewhere (Wallet Standard), quoting, the durable
  * pending-attempt safety, confirmation, availability wording, the device row, the open-in-app
- * control, the share card and the error panel; it knows nothing about Metaplex Core plugins,
+ * control, the share card, the terms agreement, Report and Block, the moderation veil
+ * (`src/moderation/core.ts`) and the error panel; it knows nothing about Metaplex Core plugins,
  * PDAs or instruction layouts. The adapter (`core.ts`) supplies the addresses, the reader, the
  * claim and the words that name its own costs, so a page change cannot quietly alter what a
  * collector is told they are paying for.
@@ -38,9 +39,21 @@ import { prepareTransaction, confirmTransaction, request } from "../../publicati
 import { assertAttempt, checkAttempt } from "../../publications/lifecycle";
 import type { Cluster } from "../../publications/types";
 import { genesisDisplay, type GenesisCheck, type GenesisStanding } from "../../publications/core/genesisToken";
+import {
+  MODERATION_URL,
+  TERMS_VERSION,
+  fetchModerationList,
+  readBlockList,
+  reportMailto,
+  termsAgreed,
+  veilOf,
+  withBlocked,
+  type ModerationList,
+  type Veil,
+} from "../../src/moderation/core";
 
 import { qrMatrix } from "./qr";
-import { deviceProblem, GENESIS_LINE, NO_DEVICE, sol } from "./summary";
+import { deviceProblem, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "./summary";
 
 export type { Cluster } from "../../publications/types";
 
@@ -63,6 +76,30 @@ const android = /Android/i.test(navigator.userAgent);
 
 /** The app's Android package, the target of the App Link and of the `intent://` control. */
 const APP_PACKAGE = "app.seekershot";
+
+/**
+ * This browser's agreement to the terms and its block list. They live in `localStorage` and are
+ * never sent anywhere; storage that throws (a private window, blocked site data) reads as empty,
+ * and what is set then holds for this page only.
+ */
+const TERMS_KEY = "seedshot.terms-agreed";
+const BLOCKED_KEY = "seedshot.blocked-creators.v1";
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* held in memory for this page */
+  }
+}
+/** Signshot's moderation list, read from this page's own origin so `connect-src 'self'` covers it. */
+const moderationUrl = new URL(new URL(MODERATION_URL).pathname, location.origin).href;
 
 /**
  * The one place publisher-controlled bytes become an image on this origin.
@@ -311,6 +348,12 @@ export function run(adapter: Adapter) {
     imageUrl: string | null = null,
     alreadyCollected = false,
     needsReconnect = false;
+  /** The last moderation list that parsed; `null` hides nothing (fail open). */
+  let moderation: ModerationList | null = null,
+    blocked: ReadonlySet<string> = new Set(readBlockList(stored(BLOCKED_KEY))),
+    agreed = termsAgreed(stored(TERMS_KEY));
+  /** What stands in for the loaded publication's picture, title and caption, if anything. */
+  const veil = (): Veil => (loaded ? veilOf(machine, loaded.creator, moderation, blocked) : null);
   const pendingKey = adapter.pendingKey;
   type Pending = {
     wallet: string;
@@ -376,7 +419,7 @@ export function run(adapter: Adapter) {
   function setButton() {
     const b = el<HTMLButtonElement>("collect");
     b.hidden = loaded?.supply === 1;
-    b.disabled = busy || !loaded || loaded.remaining === 0 || alreadyCollected;
+    b.disabled = busy || !loaded || loaded.remaining === 0 || alreadyCollected || !!veil();
     const verb = loaded?.price ? "Buy a copy" : "Collect a copy";
     b.textContent = busy
       ? "Please wait…"
@@ -393,6 +436,36 @@ export function run(adapter: Adapter) {
             : quote
               ? verb
               : "Review the cost";
+  }
+  /**
+   * The picture, title and caption — or, when Signshot's list hides the publication or this
+   * browser blocked its publisher, the word that stands in for all three. The record (publisher,
+   * copies, device, links) stays either way, and a veiled edition is not collected from here.
+   */
+  function showContent() {
+    if (!loaded) return;
+    const v = veil();
+    for (const img of [el<HTMLImageElement>("photo"), el<HTMLImageElement>("full-photo")]) {
+      if (v || !imageUrl) img.removeAttribute("src");
+      else img.src = imageUrl;
+      img.alt = v ? "" : loaded.title;
+    }
+    el("view-photo").hidden = !!v;
+    el("veil").hidden = !v;
+    const title = v ? MODERATION_WORDS[v] : loaded.title;
+    el("title").textContent = title;
+    el("full-photo-title").textContent = v ? "" : loaded.title;
+    document.title = `${title} · Signshot`;
+    showMoment(v ? "" : loaded.description);
+    el("share").hidden = !!v;
+    if (v) {
+      el("wallets").hidden = true;
+      el("agreement").hidden = true;
+    }
+    el<HTMLAnchorElement>("report").href = reportMailto(machine, adapter.collectUrl());
+    el("block").textContent = blocked.has(loaded.creator)
+      ? MODERATION_WORDS.unblock
+      : MODERATION_WORDS.block;
   }
   function receipt(sig: string) {
     const a = el<HTMLAnchorElement>("receipt");
@@ -482,18 +555,14 @@ export function run(adapter: Adapter) {
         throw new Error("Unsupported network in this link.");
       address(machine);
       el("cost").textContent = adapter.copy.cost;
-      loaded = await adapter.load();
+      // The list never throws: unreadable is `null`, and the last good list is kept.
+      const [next, list] = await Promise.all([adapter.load(), fetchModerationList(moderationUrl)]);
+      loaded = next;
+      moderation = list ?? moderation;
       if (imageUrl) URL.revokeObjectURL(imageUrl);
       imageUrl = URL.createObjectURL(jpegBlob(loaded.imageBytes));
-      el<HTMLImageElement>("photo").src = imageUrl;
-      el<HTMLImageElement>("photo").alt = loaded.title;
-      el<HTMLImageElement>("full-photo").src = imageUrl;
-      el<HTMLImageElement>("full-photo").alt = loaded.title;
-      el("full-photo-title").textContent = loaded.title;
-      el("title").textContent = loaded.title;
-      document.title = `${loaded.title} · Signshot`;
+      showContent();
       el("creator").textContent = loaded.creator;
-      showMoment(loaded.description);
       showAvailability();
       showDevice(loaded.device);
       showGenesis(loaded.genesis);
@@ -693,7 +762,12 @@ export function run(adapter: Adapter) {
     message("Ready.");
   }
   async function collect() {
-    if (busy || !loaded) return;
+    if (busy || !loaded || veil()) return;
+    // Once per browser, before its first collect or buy: the terms, and Agree, which carries on.
+    if (!agreed) {
+      el("agreement").hidden = false;
+      return;
+    }
     if (!connection) {
       wallets();
       return;
@@ -798,6 +872,20 @@ export function run(adapter: Adapter) {
     }
   }
   el("collect").onclick = () => void collect();
+  el("agree").onclick = () => {
+    agreed = true;
+    store(TERMS_KEY, String(TERMS_VERSION));
+    el("agreement").hidden = true;
+    void collect();
+  };
+  el("block").onclick = () => {
+    if (!loaded) return;
+    const next = withBlocked(blocked, loaded.creator, !blocked.has(loaded.creator));
+    blocked = new Set(next);
+    store(BLOCKED_KEY, JSON.stringify(next));
+    showContent();
+    setButton();
+  };
   el("retry-load").onclick = () => void refresh();
   el("share").onclick = () => void share().catch(error);
   const viewer = el<HTMLDialogElement>("photo-viewer");

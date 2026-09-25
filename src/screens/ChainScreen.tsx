@@ -24,7 +24,7 @@ import { COLLECT_ORIGIN, COLLECT_PATH } from "../navigators/linking";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale } from "../ui/type";
 import { BackButton, Cell, Chip, PhotoFrame, Screen, TextKey } from "../ui/primitives";
-import { actions, collect as collectCopy, collection, price as priceCopy } from "../ui/copy";
+import { actions, collect as collectCopy, collection, moderation as moderationCopy, price as priceCopy } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
 import { liveAuthorize } from "../solana/liveAuthorize";
 import { isUserCancellation } from "../solana/walletErrors";
@@ -43,6 +43,8 @@ import { albumLabel } from "../../publications/core/album";
 import { TRUSTED } from "../../publications/deployments";
 import { readKnownCollections, rememberKnownCollections } from "../prints/knownCollections";
 import { useAppActive } from "../useAppActive";
+import { reportMailto, type Veil } from "../moderation/core";
+import { useModeration } from "../moderation/store";
 
 const short = (value: string) => `${value.slice(0, 4)}…${value.slice(-4)}`;
 /** A small chip is 32 tall and a fingertip is 44. */
@@ -62,10 +64,15 @@ const solText = (lamports: bigint) =>
  * and the readouts line up; on the photograph's own screen it is captioned and takes the
  * edition's own ratio. Paper carries graphite only, never teal.
  */
-function Print({ item, wallet, compact = false }: {
+function Print({ item, wallet, compact = false, veil = null }: {
   item: LibraryPhoto; wallet?: string; compact?: boolean;
+  /** Hidden or blocked: blank paper carrying the word, with no picture and no title. */
+  veil?: Veil;
 }) {
   const e = item.photo.edition;
+  if (veil) return <PhotoFrame variant={compact ? "grid" : "full"}>
+    <View style={s.veil}><Text style={s.state}>{moderationCopy[veil]}</Text></View>
+  </PhotoFrame>;
   if (compact) return <PhotoFrame source={{ uri: item.imageUri }} variant="grid" />;
   const aspectRatio = e.width > 0 && e.height > 0 ? e.width / e.height : 1;
   return <PhotoFrame
@@ -107,6 +114,11 @@ export function ChainScreen() {
   // Whatever the app already knows about this wallet's `.skr` name. `false` starts no lookup from
   // here: the name is a label on the address, never a reason to reach for the network.
   const seeker = useSeekerIdentity(false);
+  // Signshot's list and this phone's blocks. A collected copy of somebody else's photograph is
+  // veiled here as it is on the Collect sheet; the wallet's own publications never are.
+  const moderation = useModeration();
+  const veilOf = (item: LibraryPhoto) =>
+    moderation.veil(item.photo.edition.edition, item.photo.edition.creator, wallet);
   // The same session object the photo sheets build, so the Collect sheet opens a wallet exactly
   // the way publishing and sending do (`liveAuthorize` re-reads the auth token at call time).
   const authorizeSession = useCallback(
@@ -149,7 +161,7 @@ export function ChainScreen() {
   const items = result?.items ?? [];
   const albums = [...new Map(items.flatMap(item => {
     const a = item.photo.publication.album;
-    return a ? [[a.group, albumLabel(a)] as const] : [];
+    return a && !veilOf(item) ? [[a.group, albumLabel(a)] as const] : [];
   })).entries()];
   const filtered = items.filter(item => !album || item.photo.publication.album?.group === album);
   const activePhoto = focused && current ? items.find(item => item.id === selected) : undefined;
@@ -296,6 +308,8 @@ export function ChainScreen() {
   };
   const changeAlbum = (group: string) => { setSelected(null); setAlbum(group); };
   const e = activePhoto?.photo.edition;
+  const activeVeil = activePhoto ? veilOf(activePhoto) : null;
+  const activeBlocked = !!e && moderation.isBlocked(e.creator);
   const activeIndex = activePhoto ? filtered.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
   /** The wallet's value word: the address, or where the connection got to. */
@@ -371,10 +385,10 @@ export function ChainScreen() {
           items.length > 0 ? <Text style={s.state}>{collection.noMatch}</Text> :
           <Text style={s.state}>{collection.empty(mode)}</Text>}
       </View>}
-      renderItem={({ item }) => <Pressable accessibilityRole="button" accessibilityLabel={collection.openPhoto(item.photo.edition.title, item.number)} onPress={() => open(item)} style={({ pressed }) => [s.item, { maxWidth: gridWidth }, pressed && s.pressed]}>
-        <Print item={item} wallet={wallet} compact />
+      renderItem={({ item }) => { const veil = veilOf(item); return <Pressable accessibilityRole="button" accessibilityLabel={collection.openPhoto(veil ? moderationCopy[veil] : item.photo.edition.title, item.number)} onPress={() => open(item)} style={({ pressed }) => [s.item, { maxWidth: gridWidth }, pressed && s.pressed]}>
+        <Print item={item} wallet={wallet} compact veil={veil} />
         <Text style={s.readout}>{collection.tally(item.number ?? item.photo.minted, item.photo.edition.supply)}</Text>
-      </Pressable>}
+      </Pressable>; }}
     />
     <Modal visible={Boolean(activePhoto)} animationType="slide" onRequestClose={close}>
       {activePhoto && e && (immersive
@@ -382,7 +396,9 @@ export function ChainScreen() {
             <View style={s.immersiveNav}>
               <BackButton label={collection.edition} accessibilityLabel={collection.exitFullScreen} onPress={close} />
             </View>
-            <Image source={{ uri: activePhoto.imageUri }} resizeMode="contain" style={s.immersiveImage} />
+            {activeVeil
+              ? <View style={[s.immersiveImage, s.veil]}><Text style={s.state}>{moderationCopy[activeVeil]}</Text></View>
+              : <Image source={{ uri: activePhoto.imageUri }} resizeMode="contain" style={s.immersiveImage} />}
             <View style={[s.immersiveFooter, { paddingBottom: insets.bottom + space.lg }]}>
               <TextKey size="readout" label="‹" accessibilityLabel={collection.previousPhoto}
                 disabled={activeIndex <= 0} onPress={() => setSelected(filtered[activeIndex - 1].id)} />
@@ -398,18 +414,18 @@ export function ChainScreen() {
               <BackButton label={collection.wallet} accessibilityLabel={collection.backToWallet} onPress={close} testID="wallet-close" />
             </View>
             <ScrollView contentContainerStyle={s.detail} showsVerticalScrollIndicator={false}>
-              <Pressable accessibilityRole="button" accessibilityLabel={collection.openFullScreen} onPress={() => setImmersive(true)} style={({ pressed }) => [pressed && s.pressed]}>
-                <Print item={activePhoto} wallet={wallet} />
+              <Pressable accessibilityRole="button" accessibilityLabel={collection.openFullScreen} disabled={!!activeVeil} onPress={() => setImmersive(true)} style={({ pressed }) => [pressed && s.pressed]}>
+                <Print item={activePhoto} wallet={wallet} veil={activeVeil} />
               </Pressable>
               <Text style={[s.readout, activePhoto.number ? s.yours : null]}>{activePhoto.number ? collection.copyOf(activePhoto.number, e.supply) : collection.editionOf(e.supply)}</Text>
               {/* The creator's own words, and the only proportional face on the screen. */}
-              {!!e.description && <Text style={s.caption}>{e.description}</Text>}
+              {!!e.description && !activeVeil && <Text style={s.caption}>{e.description}</Text>}
               <View>
                 <Fact tag={labelOf("by", collection.byLabel)} value={e.creator === wallet ? collection.you : short(e.creator)}
                   yours={e.creator === wallet} verbatim={e.creator !== wallet} accessibilityLabel={collection.copyPublisher}
                   onPress={() => void copy("by", e.creator)} />
                 <Fact tag={collection.issuedLabel} value={collection.tally(activePhoto.photo.minted, e.supply)} />
-                {activePhoto.photo.publication.album && <Fact tag={collection.album}
+                {activePhoto.photo.publication.album && !activeVeil && <Fact tag={collection.album}
                   value={albumLabel(activePhoto.photo.publication.album)}
                   accessibilityLabel={collection.browseAlbum(albumLabel(activePhoto.photo.publication.album))}
                   onPress={() => changeAlbum(activePhoto.photo.publication.album!.group)} />}
@@ -433,9 +449,16 @@ export function ChainScreen() {
             </ScrollView>
             <View style={[s.bottomBar, { paddingBottom: insets.bottom + space.sm }]}>
               <View style={s.chipRow}>
-                <Chip size="small" label={labelOf("share", actions.share)} accessibilityLabel={collection.shareMoment} onPress={share} hitSlop={CHIP_SLOP} testID="wallet-share" />
+                {!activeVeil && <Chip size="small" label={labelOf("share", actions.share)} accessibilityLabel={collection.shareMoment} onPress={share} hitSlop={CHIP_SLOP} testID="wallet-share" />}
                 <Chip size="small" label={labelOf("link", collection.copyLink)} accessibilityLabel={collection.copyMomentLink} hitSlop={CHIP_SLOP} testID="wallet-copy-link"
                   onPress={() => void copy("link", collectUrl(e.edition, cluster))} />
+                {/* Somebody else's photograph: report it, or stop this phone showing its publisher. */}
+                {e.creator !== wallet && <>
+                  <Chip size="small" label={labelOf("report", moderationCopy.report)} hitSlop={CHIP_SLOP} testID="wallet-report"
+                    onPress={() => { Linking.openURL(reportMailto(e.edition, collectUrl(e.edition, cluster))).catch(() => say("report", collection.couldNotOpen)); }} />
+                  <Chip size="small" label={activeBlocked ? moderationCopy.unblock : moderationCopy.block} hitSlop={CHIP_SLOP} testID="wallet-block"
+                    onPress={() => void moderation.setBlocked(e.creator, !activeBlocked)} />
+                </>}
               </View>
             </View>
             {priceEdition && <OfferSheet edition={priceEdition} session={session} onClose={() => setPriceEdition(null)} onSaved={() => setRefresh(n => n + 1)} />}
@@ -505,6 +528,8 @@ const s = StyleSheet.create({
   // --- states ------------------------------------------------------------
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.sm, paddingBottom: space.xxl },
   state: { ...typeScale.readout, color: colors.muted },
+  /** Where a hidden or blocked photograph would be: the picture's place, unexposed. */
+  veil: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.field },
   stateLine: { ...typeScale.body, color: colors.muted, textAlign: "center", maxWidth: 300 },
 
   // --- the photograph's own screen ---------------------------------------

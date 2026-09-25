@@ -349,3 +349,13 @@ footer {
   .details h1 { margin: 14px 0; }
   .details .eyebrow { margin-top: 6px; }
 }
+
+/* Hidden by Signshot's list or blocked in this browser: the paper, with the picture's place unexposed. */
+.veil span { display: block; width: min(100%, 60vh); aspect-ratio: 1; background: #d8ddd0; }
+/* The one-time agreement before a first collect: the terms, and the word that accepts them. */
+.agreement { display: flex; gap: 9px; margin-top: 9px; }
+.agreement a, #agree { flex: 1; min-height: 54px; padding: 16px; border-radius: 10px; text-align: center; font-weight: 650; }
+.agreement a { border: 1px solid #263b2b; color: #263b2b; text-decoration: none; }
+#agree { border: 0; background: #263b2b; color: #f8f5ec; }
+#agree:hover { background: #38503a; }
+.legal { display: flex; gap: 20px; }

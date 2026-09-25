@@ -22,6 +22,13 @@ reader and refused attested editions. Nothing is deployed from that repository a
   on install/update, and a wrong file silently turns collect links back into browser links.
   `scripts/check-site.ts` pins the digest and checks it names `dapp-store/signing-certificate.json`.
 - `public/collect/` — the collect page's document and stylesheet. No inline script, no inline style.
+- `public/terms/index.html` — the terms (the EULA) at `/terms/`. Its "Version N" is `TERMS_VERSION`
+  in `src/moderation/core.ts`; raise both together when people must agree again, and the app and
+  the collect page ask before the next publish or collect.
+- `public/moderation.json` — the owner's moderation list at `/moderation.json`, edited by hand:
+  `{"version":1,"hiddenEditions":[…],"hiddenCreators":[…]}`, edition and publisher addresses the
+  app and the collect page show as "Hidden". Any other shape is ignored and everything shows, so
+  run `npm test` (it parses the file) before deploying an edit.
 - `collect/` — the page's TypeScript: `browser.ts` (router), `page.ts` (DOM, wallets, quoting,
   durable attempt, confirmation, device row, open-in-app, share card), `core.ts` (the adapter over
   the reader: load, receipt check, `collect` vs `buy`), `summary.ts` (pure wording, also used by

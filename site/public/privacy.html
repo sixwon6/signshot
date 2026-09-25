@@ -18,7 +18,7 @@
       <p class="eyebrow">YOUR PHOTOGRAPHS. YOUR CHOICES.</p>
       <h1>Privacy & publication</h1>
       <p class="date">
-        Updated 18 September 2026 · Signshot for Android, app.seekershot
+        Updated 24 September 2026 · Signshot for Android, app.seekershot
       </p>
       <p>
         Signshot is a camera app that can publish a photograph with a Solana
@@ -47,6 +47,11 @@
           upload-signing key in secure storage. The upload key is not your
           wallet's private key. Signshot does not receive your wallet's private
           key or recovery phrase.
+        </li>
+        <li>
+          The publishers you block and your agreement to the
+          <a href="/terms/">terms</a>. On the collect page they stay in your
+          browser's storage instead. Neither is ever sent to Signshot.
         </li>
       </ul>
       <p>
@@ -167,6 +172,24 @@
               publisher's address in that same transaction and is public. The
               app and the page store pending-operation information locally so
               they can recover after an interruption.
+            </td>
+          </tr>
+          <tr>
+            <td>Open the Wallet screen or a collect link</td>
+            <td>
+              The app and the collect page read Signshot's moderation list from
+              <code>erashot.app</code>. The request names no wallet and no
+              edition; the host receives normal connection information.
+            </td>
+          </tr>
+          <tr>
+            <td>Report a publication</td>
+            <td>
+              Report opens your email app with a message to
+              <a href="mailto:support@erashot.app">support@erashot.app</a>. It
+              names the edition's address and carries its collect link. Nothing
+              is sent until you send it; then we receive the message, anything
+              you add to it, and your email address.
             </td>
           </tr>
         </tbody>
@@ -295,7 +318,7 @@
     </main>
     <footer class="site-footer">
       <a class="wordmark" href="/">Signshot</a
-      >
+      ><a href="/terms/">Terms</a>
     </footer>
   </body>
 </html>

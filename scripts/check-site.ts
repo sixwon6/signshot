@@ -12,7 +12,10 @@
  *   - the collect sources never assign markup (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
  *     `document.write`), which the CSP's Trusted Types directive would turn into a runtime throw;
  *   - the bundle builds, carries the trusted programs, reads no `process.env`, and includes no
- *     React Native module (the build's own guards, exercised here so `npm test` runs them).
+ *     React Native module (the build's own guards, exercised here so `npm test` runs them);
+ *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
+ *     failing open, the veil, the report email, the terms page's §10.6 clauses and its headers, and
+ *     the app and the page asking for agreement before a first publish or collect.
  */
 
 import { createHash } from "node:crypto";
@@ -25,7 +28,11 @@ import { readAttestationBundle, type AttestationBundle } from "../publications/c
 import { readPhotoMetadata } from "../publications/core/metadataDocument";
 import { metadata } from "../publications/core/protocol";
 import type { CoreMetadata } from "../publications/types";
-import { deviceLine, deviceProblem, GENESIS_LINE, NO_DEVICE, sol } from "../site/collect/summary";
+import { deviceLine, deviceProblem, GENESIS_LINE, MODERATION_WORDS, NO_DEVICE, sol } from "../site/collect/summary";
+import {
+  MAX_BLOCKED, MODERATION_MAX_BYTES, MODERATION_MAX_ENTRIES, MODERATION_URL, TERMS_URL, TERMS_VERSION,
+  fetchModerationList, parseModerationList, readBlockList, reportMailto, termsAgreed, veilOf, withBlocked,
+} from "../src/moderation/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -97,6 +104,114 @@ ok("the CSP requires Trusted Types and allows no policy", !!metaCsp && /require-
 ok("the bundle is a same-origin module script and nothing is inline",
   /<script type="module" src="\.\/collect\.js"><\/script>/.test(html) && !/<script(?![^>]*src=)/.test(html) && !/ style=/.test(html) && !/<style/.test(html));
 
+// --- Terms, Report, Block and the moderation list -------------------------------------------------
+// The Publisher Policy asks a dApp with user content for user terms people agree to, an in-app
+// report, moderation, and a block; the Developer Agreement (§2.1, §10.6) for a linked EULA that
+// disclaims warranties and liability for the Solana Mobile Parties and says they are not a party.
+const A = "So11111111111111111111111111111111111111112";
+const B = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const throws = (run: () => unknown) => { try { run(); return false; } catch { return true; } };
+const served = parseModerationList(readFileSync(resolve(site, "public", "moderation.json"), "utf8"));
+ok("the served moderation list parses and hides nothing", served.hiddenEditions.size === 0 && served.hiddenCreators.size === 0);
+const listed = parseModerationList(JSON.stringify({ version: 1, hiddenEditions: [A], hiddenCreators: [B] }));
+ok("a moderation list names editions and creators", listed.hiddenEditions.has(A) && listed.hiddenCreators.has(B));
+ok("the moderation list parse is strict: three keys, version 1, addresses, bounded", [
+  "[]", "null", "{}", "{\"version\":1,\"hiddenEditions\":[]}",
+  JSON.stringify({ version: 2, hiddenEditions: [], hiddenCreators: [] }),
+  JSON.stringify({ version: "1", hiddenEditions: [], hiddenCreators: [] }),
+  JSON.stringify({ version: 1, hiddenEditions: [], hiddenCreators: [], note: "" }),
+  JSON.stringify({ version: 1, hiddenEditions: ["not an address"], hiddenCreators: [] }),
+  JSON.stringify({ version: 1, hiddenEditions: [A.slice(0, 20)], hiddenCreators: [] }),
+  JSON.stringify({ version: 1, hiddenEditions: [], hiddenCreators: [42] }),
+  JSON.stringify({ version: 1, hiddenEditions: {}, hiddenCreators: [] }),
+  JSON.stringify({ version: 1, hiddenEditions: Array(MODERATION_MAX_ENTRIES + 1).fill(A), hiddenCreators: [] }),
+  " ".repeat(MODERATION_MAX_BYTES + 1),
+].every((text) => throws(() => parseModerationList(text))));
+ok("the list's edition or creator is Hidden, a blocked publisher is Blocked, and the list wins",
+  veilOf(A, B, listed, new Set()) === "hidden" && veilOf(B, B, listed, new Set()) === "hidden"
+  && veilOf(B, A, null, new Set([A])) === "blocked" && veilOf(A, B, listed, new Set([B])) === "hidden"
+  && veilOf(B, A, listed, new Set()) === null && veilOf(A, B, null, new Set()) === null);
+// tsx runs this file as CommonJS, which has no top-level await; the tail awaits this.
+async function moderationFetch() {
+  const answer = (body: string, init?: ResponseInit) => (async () => new Response(body, init)) as unknown as typeof fetch;
+  const good = JSON.stringify({ version: 1, hiddenEditions: [A], hiddenCreators: [] });
+  const fetched = await Promise.all([
+    fetchModerationList(MODERATION_URL, answer(good)),
+    fetchModerationList(MODERATION_URL, answer(good, { status: 404 })),
+    fetchModerationList(MODERATION_URL, answer("<!doctype html>")),
+    fetchModerationList(MODERATION_URL, answer(good, { headers: { "content-length": String(MODERATION_MAX_BYTES + 1) } })),
+    fetchModerationList(MODERATION_URL, answer(" ".repeat(MODERATION_MAX_BYTES) + good)),
+    fetchModerationList(MODERATION_URL, (async () => { throw new Error("offline"); }) as unknown as typeof fetch),
+    fetchModerationList(MODERATION_URL, ((_url: unknown, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as unknown as typeof fetch, 20),
+  ]);
+  ok("the moderation list is fetched and parsed", fetched[0]?.hiddenEditions.has(A) === true);
+  ok("a refused, malformed, oversized, unreachable or late list hides nothing (fails open)", fetched.slice(1).every((list) => list === null));
+}
+const many = Array.from({ length: MAX_BLOCKED + 5 }, (_, i) => "1".repeat(30) + B58[Math.floor(i / 58)] + B58[i % 58]);
+ok("a stored block list keeps addresses only, once each, capped",
+  readBlockList(JSON.stringify([A, A, "x", 3, B])).join() === `${A},${B}` && readBlockList("{").length === 0
+    && readBlockList(null).length === 0 && readBlockList(JSON.stringify({ A })).length === 0
+    && readBlockList(JSON.stringify(many)).length === MAX_BLOCKED);
+ok("Block adds and Unblock removes exactly that publisher",
+  withBlocked([A], B, true).join() === `${A},${B}` && withBlocked([A, B], A, false).join() === B && withBlocked([A], "junk", true).join() === A);
+const link = `https://erashot.app/collect/?core=${A}&cluster=devnet`;
+ok("Report is an email to support with the edition in the subject and the collect link in the body",
+  reportMailto(A, link) === `mailto:support@erashot.app?subject=Report%20${A}&body=${encodeURIComponent(link)}`);
+ok("only an agreement to the current terms counts",
+  termsAgreed(String(TERMS_VERSION)) && !termsAgreed(String(TERMS_VERSION + 1)) && !termsAgreed(null) && !termsAgreed(""));
+const appModeration = /export const moderation = \{([\s\S]*?)\} as const;/.exec(appCopy)?.[1] ?? "";
+ok("the page says Terms, Agree, Report, Block, Unblock, Blocked and Hidden in the app's own words",
+  Object.keys(MODERATION_WORDS).length === 7
+    && Object.entries(MODERATION_WORDS).every(([key, word]) => new RegExp(`\\b${key}: "${word}",`).test(appModeration)));
+ok("the collect page carries Report, Block, the veil, the one-time agreement and a Terms link",
+  /<a id="report" href="mailto:support@erashot\.app">Report<\/a\s*><button id="block">Block<\/button>/.test(html)
+    && /<div id="veil" class="photograph veil" hidden>/.test(html)
+    && /<div id="agreement" class="agreement" hidden>\s*<a href="\/terms\/"[^>]*>Terms<\/a\s*><button id="agree">Agree<\/button>/.test(html)
+    && /<a href="\/terms\/">Terms<\/a>/.test(html));
+const pageSource = readFileSync(resolve(site, "collect", "page.ts"), "utf8");
+ok("the page asks for the terms before a first collect, refuses a veiled one, and reads the list from its own origin",
+  /if \(!agreed\) \{\s*el\("agreement"\)\.hidden = false;\s*return;/.test(pageSource)
+    && /b\.disabled = [^;]*!!veil\(\);/.test(pageSource) && /if \(busy \|\| !loaded \|\| veil\(\)\) return;/.test(pageSource)
+    && /new URL\(new URL\(MODERATION_URL\)\.pathname, location\.origin\)/.test(pageSource));
+const prints = ["CollectSheet.tsx", "PrintSheet.tsx"].map((file) => readFileSync(resolve(root, "src", "prints", file), "utf8"));
+ok("the app asks for the terms before a first publish and a first collect",
+  prints.every((source) => /(terms|agreement)\.agreed !== true \? \(\s*<TermsAgreement /.test(source)));
+ok("the Collect sheet reports, blocks and veils",
+  /reportMailto\(target\.edition, collectUrl\(target\.edition, cluster\)\)/.test(prints[0])
+    && /moderation\.setBlocked\(e\.creator, !blocked\)/.test(prints[0]) && /!!e && !veil && \(\s*<PhotoFrame/.test(prints[0]));
+ok("Settings links the terms beside the privacy policy",
+  /<LinkRow label=\{copy\.privacyLink\} onPress=\{onPrivacy\} \/>\s*<LinkRow label=\{copy\.termsLink\} onPress=\{onTerms\} \/>/
+    .test(readFileSync(resolve(root, "src", "screens", "SettingsScreen.tsx"), "utf8")));
+const termsPage = readFileSync(resolve(site, "public", "terms", "index.html"), "utf8").replace(/\s+/g, " ");
+ok("the terms disclaim warranties and liability for the Solana Mobile Parties and say they are not a party (§10.6)",
+  /PROVIDED “AS IS”, “WITH ALL FAULTS”/.test(termsPage) && /WE AND THE SOLANA MOBILE PARTIES MAKE NO, AND DISCLAIM ALL, REPRESENTATIONS, WARRANTIES AND CONDITIONS/.test(termsPage)
+    && /MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT/.test(termsPage)
+    && /ERROR-FREE, ACCURATE, RELIABLE, COMPLETE, SECURE OR UNINTERRUPTED/.test(termsPage)
+    && /NEITHER WE NOR THE SOLANA MOBILE PARTIES SHALL BE LIABLE TO YOU FOR ANY CLAIM FOR ANY DIRECT, INDIRECT, SPECIAL, CONSEQUENTIAL, INCIDENTAL, PUNITIVE OR EXEMPLARY DAMAGES/.test(termsPage)
+    && /SOLE AND EXCLUSIVE REMEDY IS TO STOP USING SIGNSHOT/.test(termsPage)
+    && /“Solana Mobile Parties”\) are not a party to these terms and have no responsibility or liability to you in connection with Signshot/.test(termsPage));
+ok("the terms carry the content rules, reporting, hiding, blocking, permanence and the contact address",
+  /What you may not publish/.test(termsPage) && /sexually exploits or abuses children/.test(termsPage) && /intellectual property/.test(termsPage)
+    && /hateful, harassing or threatening/.test(termsPage) && /real-world violence/.test(termsPage) && /violates someone’s privacy/.test(termsPage)
+    && /Anyone can report a publication with Report/.test(termsPage) && /hide publications and creators from Signshot’s own views/.test(termsPage)
+    && /cannot be deleted by anyone/.test(termsPage) && /Block hides a publisher’s photographs/.test(termsPage)
+    && /<a href="mailto:support@erashot\.app">support@erashot\.app<\/a>/.test(termsPage) && /<a href="\/privacy">/.test(termsPage));
+ok("the terms page names the version the app and the page ask agreement to, at the URL they link",
+  termsPage.includes(`Version ${TERMS_VERSION} ·`) && TERMS_URL === "https://erashot.app/terms/" && MODERATION_URL === "https://erashot.app/moderation.json");
+const privacyPage = readFileSync(resolve(site, "public", "privacy.html"), "utf8").replace(/\s+/g, " ");
+ok("the privacy page says what a report sends and that blocks and the agreement stay on the device",
+  /<td>Report a publication<\/td>/.test(privacyPage) && /names the edition's address and carries its collect link/.test(privacyPage)
+    && /The publishers you block and your agreement to the <a href="\/terms\/">terms<\/a>/.test(privacyPage) && /Neither is ever sent to Signshot/.test(privacyPage)
+    && /moderation list/.test(privacyPage));
+const STATIC_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const headerLines = headers.split(/\r?\n/);
+const ruleAfter = (path: string) => { const at = headerLines.findIndex((line) => line.trim() === path); return at < 0 ? "" : (headerLines[at + 1] ?? "").trim(); };
+ok("_headers serves the terms under the static pages' policy and the list with a short cache",
+  ["/privacy", "/terms", "/terms/", "/terms/index.html"].every((path) => ruleAfter(path) === `Content-Security-Policy: ${STATIC_CSP}`)
+    && ruleAfter("/moderation.json") === "Cache-Control: public, max-age=300");
+
 // --- The App Link association ------------------------------------------------------------------------
 const assetlinks = readFileSync(resolve(site, "public", ".well-known", "assetlinks.json"));
 ok("assetlinks.json is byte-identical to the verified file",
@@ -128,6 +243,8 @@ ok("bundle carries the trusted devnet programs and reads no process.env",
 ok("bundle knows the attested document schema", bundled.includes("seedshot-attestation/1"));
 ok("bundle knows the Genesis Token claim, Solana Mobile's group and mainnet's genesis hash",
   bundled.includes("seedshot-genesis/1") && bundled.includes("GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te") && bundled.includes("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"));
+ok("bundle carries the moderation list's address and the Blocked and Hidden words",
+  bundled.includes(MODERATION_URL) && bundled.includes(`"${MODERATION_WORDS.blocked}"`) && bundled.includes(`"${MODERATION_WORDS.hidden}"`));
 const proxy = readFileSync(resolve(site, "functions", "api", "solana.ts"), "utf8");
 ok("the mainnet proxy allows the three methods the Genesis Token check calls",
   ["getGenesisHash", "getAccountInfo", "getTokenAccountsByOwner"].every((method) => new RegExp(`ALLOWED=new Set\\(\\[[^\\]]*'${method}'`).test(proxy)));
@@ -141,7 +258,7 @@ ok("the mainnet proxy allows the three methods the Genesis Token check calls",
  * bundle but are never connection targets are listed with the reason.
  */
 const NOT_CONNECTIONS: Record<string, string> = {
-  "https://erashot.app": "the collect URL the page prints and encodes into QR codes; same origin in production anyway",
+  "https://erashot.app": "the collect URL the page prints and encodes into QR codes, and MODERATION_URL, which the page reads at its own origin; same origin in production anyway",
   "https://explorer.solana.com": "navigation links (View the Solana publication / transaction), not fetches",
   "https://sola.na": "@solana/kit invariant-violation error text ('please file an issue at …')",
   "https://developer.mozilla.org": "@solana/kit error text pointing at MDN",
@@ -172,11 +289,19 @@ ok(`every connection origin in the bundle is allowed by connect-src (${[...liter
 if (unexplained.length) console.error("  not allowed and not explained:", unexplained.join(", "));
 ok("MWA's localhost WebSocket is allowed", literals.has("ws://localhost:*") && connectSrc.includes("ws://localhost:*"));
 ok("dist carries the static routes the app and wallets depend on",
-  ["_headers", ".well-known/assetlinks.json", "icon.png", "privacy.html", "index.html", "collect/index.html", "collect/collect.css", "collect/collect.js.LEGAL.txt"]
+  ["_headers", ".well-known/assetlinks.json", "icon.png", "privacy.html", "terms/index.html", "moderation.json", "index.html", "collect/index.html", "collect/collect.css", "collect/collect.js.LEGAL.txt"]
     .every((p) => { try { return statSync(resolve(dist, p)).isFile(); } catch { return false; } }));
 ok("dist ships no preview gate", (() => { try { statSync(resolve(dist, "functions")); return false; } catch { return true; } })()
   && (() => { try { statSync(resolve(site, "functions", "_middleware.ts")); return false; } catch { return true; } })());
 ok("dist assetlinks.json is the verified file", build.status === 0 && sha256(readFileSync(resolve(dist, ".well-known", "assetlinks.json"))) === sha256(assetlinks));
 
-console.log(failures ? `\n${failures} site check(s) failed.` : "\nsite check passed.");
-process.exit(failures ? 1 : 0);
+void moderationFetch().then(
+  () => {
+    console.log(failures ? `\n${failures} site check(s) failed.` : "\nsite check passed.");
+    process.exit(failures ? 1 : 0);
+  },
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);

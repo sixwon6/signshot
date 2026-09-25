@@ -45,6 +45,20 @@ export const GENESIS_LINE: Record<GenesisLine, string> = {
 /** Under the Genesis Token row for a mainnet seal whose mint mainnet still finds to be an SGT. */
 export const GENESIS_SEALED = "Verified and sealed by the edition program at publish.";
 
+/**
+ * Terms, reports and blocks, in the app's own words (`moderation` in `src/ui/copy.ts`). `hidden`
+ * and `blocked` stand in for the picture's title when the publication is veiled.
+ */
+export const MODERATION_WORDS = {
+  terms: "Terms",
+  agree: "Agree",
+  report: "Report",
+  block: "Block",
+  unblock: "Unblock",
+  blocked: "Blocked",
+  hidden: "Hidden",
+} as const;
+
 /** What the device row says for a plain document that carries no attestation. */
 export const NO_DEVICE = "No device attestation.";
 /** The device row when the document carries evidence the reader set aside. */

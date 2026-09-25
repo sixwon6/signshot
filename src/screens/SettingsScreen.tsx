@@ -34,8 +34,12 @@ import { useSeekerIdentity } from "../seeker/useSeekerIdentity";
 import { useShareStampPref } from "../seeker/shareStampPref";
 import { deleteUploadKey } from "../arweave/uploadKey";
 import { walletOwesUpload } from "../prints/creator";
+import { SUPPORT_EMAIL, TERMS_URL } from "../moderation/core";
 
-/** The dApp Store Publisher Policy requires the privacy policy in the app, not only the listing. */
+/**
+ * The dApp Store Developer Agreement (§2.1) requires links to the privacy policy and the EULA in
+ * the app, not only the listing. The terms are the EULA.
+ */
 const PRIVACY_URL = "https://erashot.app/privacy";
 
 function shortAddress(address: string): string {
@@ -139,6 +143,9 @@ export function SettingsScreen() {
   // typable either way.
   const onPrivacy = useCallback(() => {
     void Linking.openURL(PRIVACY_URL).catch(() => undefined);
+  }, []);
+  const onTerms = useCallback(() => {
+    void Linking.openURL(TERMS_URL).catch(() => undefined);
   }, []);
 
   // `account.address` is already a kit `Address` — a branded base58 string, no conversion.
@@ -268,11 +275,12 @@ export function SettingsScreen() {
 
         <Section title={copy.aboutSection}>
           <LinkRow label={copy.privacyLink} onPress={onPrivacy} />
+          <LinkRow label={copy.termsLink} onPress={onTerms} />
           <LinkRow
             label={copy.supportLink}
             last
             onPress={() =>
-              void Linking.openURL("mailto:support@erashot.app").catch(() =>
+              void Linking.openURL(`mailto:${SUPPORT_EMAIL}`).catch(() =>
                 setWalletError("Email is unavailable on this phone."),
               )
             }

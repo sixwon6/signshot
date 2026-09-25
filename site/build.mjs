@@ -192,7 +192,7 @@ await writeFile(resolve(dist, "collect", "collect.js.LEGAL.txt"), legal + "\n");
 // The static site, verbatim. `_headers` and `.well-known/assetlinks.json` ride along; the App
 // Link association must keep serving byte-identical or Android drops the verified link.
 await cp(resolve(site, "public"), dist, { recursive: true });
-for (const required of ["_headers", ".well-known/assetlinks.json", "icon.png", "privacy.html", "collect/index.html", "collect/collect.css"])
+for (const required of ["_headers", ".well-known/assetlinks.json", "icon.png", "privacy.html", "terms/index.html", "moderation.json", "collect/index.html", "collect/collect.css"])
   await stat(resolve(dist, required)).catch(() => {
     throw new Error(`site/dist is missing ${required}; the deploy would break a live route.`);
   });

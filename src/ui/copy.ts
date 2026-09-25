@@ -596,8 +596,24 @@ export const settings = {
   stampNeedsName: "Needs a .skr name.",
   aboutSection: "About",
   privacyLink: "Privacy & publication",
+  termsLink: "Terms",
   supportLink: "Contact support",
   developerTools: "Developer tools",
+} as const;
+
+/**
+ * Terms, reports and blocks (`src/moderation/`). Labels only; the collect page says the same words
+ * (`MODERATION_WORDS` in `site/collect/summary.ts`).
+ */
+export const moderation = {
+  terms: "Terms",
+  agree: "Agree",
+  report: "Report",
+  block: "Block",
+  unblock: "Unblock",
+  /** Said in place of a publication's picture, title and caption. */
+  blocked: "Blocked",
+  hidden: "Hidden",
 } as const;
 
 /** Copy numbers are printed to three figures, the way they are imprinted on the paper. */

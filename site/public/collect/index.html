@@ -44,6 +44,8 @@
             <img id="photo" alt="Photograph offered by the publisher" decoding="async" />
             <span class="photo-open">View full photo ↗</span>
           </button>
+          <!-- In place of the picture when Signshot's list hides it or this browser blocked its publisher. -->
+          <div id="veil" class="photograph veil" hidden><span></span></div>
         </div>
         <div class="details">
           <p class="eyebrow">A PHOTOGRAPH TO KEEP</p>
@@ -79,6 +81,11 @@
             <p class="fine">Scan to open in Signshot.</p>
           </div>
           <button id="collect" disabled>Collect a copy</button>
+          <!-- Once per browser, before a first collect or buy. -->
+          <div id="agreement" class="agreement" hidden>
+            <a href="/terms/" target="_blank" rel="noopener noreferrer">Terms</a
+            ><button id="agree">Agree</button>
+          </div>
           <div id="wallets" hidden aria-label="Choose a wallet"></div>
           <p id="cost" class="fine"></p>
           <p id="status" role="status" aria-live="polite"></p>
@@ -94,6 +101,8 @@
                 <path d="M12 3v3m0 3v3H3m9 3v6m3-9h6m-6 3h3v3h3m-6 3h3m3-6v-3" />
               </svg>
             </button>
+            <a id="report" href="mailto:support@erashot.app">Report</a
+            ><button id="block">Block</button>
           </div>
           <details>
             <summary>Publication &amp; details</summary>
@@ -111,7 +120,8 @@
       </dialog>
     </main>
     <footer>
-      <a href="/">Signshot · Photo editions from a Seeker</a><a href="/privacy">Privacy</a>
+      <a href="/">Signshot · Photo editions from a Seeker</a
+      ><span class="legal"><a href="/privacy">Privacy</a><a href="/terms/">Terms</a></span>
     </footer>
     <script type="module" src="./collect.js"></script>
   </body>

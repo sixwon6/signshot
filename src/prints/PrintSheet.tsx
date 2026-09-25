@@ -68,6 +68,8 @@ import {
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
 import { deploymentNotice, sessionDeploymentStatus } from "./deploymentNotice";
+import { useTermsAgreement } from "../moderation/store";
+import { TermsAgreement } from "../moderation/TermsAgreement";
 import { programFallback } from "./programVerdict";
 import { CLUSTER_NAME as cluster, IS_MAINNET } from "../solana/cluster";
 import {
@@ -96,6 +98,9 @@ export function PrintSheet({
 }) {
   const insets = useSafeAreaInsets(),
     running = useRef(false);
+  // The terms are agreed to once, before anything is published; an upload owed by an edition
+  // already on Solana is never held behind them.
+  const agreement = useTermsAgreement();
   const [draft, setDraft] = useState<PublicationDraft | null>(null);
   const [edit, setEdit] = useState<PhotoEdit>();
   const [title, setTitle] = useState("");
@@ -843,7 +848,7 @@ export function PrintSheet({
                         <Pill
                           label={busy ? "Checking…" : actions.checkAlbumCost}
                           variant="secondary"
-                          disabled={busy || !newAlbum.trim() || !!draft}
+                          disabled={busy || !newAlbum.trim() || !!draft || agreement.agreed !== true}
                           onPress={() => void quoteAlbum()}
                         />
                       )}
@@ -1028,6 +1033,8 @@ export function PrintSheet({
                 )}
                 {complete || (published && !storageCanRetry) ? (
                   <Pill label={actions.viewPhotograph} onPress={onClose} />
+                ) : !published && agreement.agreed !== true ? (
+                  <TermsAgreement agreed={agreement.agreed} onAgree={() => void agreement.agree()} />
                 ) : quote ? (
                   <Pill
                     label={

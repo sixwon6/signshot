@@ -38,13 +38,17 @@ import {
   changedEstimate,
   collect as copy,
   expiredEstimate,
+  moderation as moderationCopy,
   onChain,
   price as priceCopy,
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
 import { CLUSTER_NAME as cluster, IS_MAINNET } from "../solana/cluster";
-import { explorerUrl } from "../../publications/core/protocol";
+import { collectUrl, explorerUrl } from "../../publications/core/protocol";
+import { reportMailto } from "../moderation/core";
+import { useModeration, useTermsAgreement } from "../moderation/store";
+import { TermsAgreement } from "../moderation/TermsAgreement";
 
 import {
   isChangedQuote,
@@ -68,6 +72,8 @@ export function CollectSheet({
 }) {
   const insets = useSafeAreaInsets(),
     running = useRef(false);
+  const moderation = useModeration(),
+    terms = useTermsAgreement();
   // Every async result is tagged with the request that asked for it, so a slow read for an
   // earlier target can never paint over a newer one.
   const request = useRef(0),
@@ -294,6 +300,18 @@ export function CollectSheet({
 
   const e = collectable?.edition;
   /**
+   * Somebody else's publication as this phone may show it: hidden by Signshot's list, blocked by
+   * this viewer, or shown. A veiled edition keeps its record and loses its picture, title and
+   * caption, and is not collected from here.
+   */
+  const veil = e ? moderation.veil(e.edition, e.creator, wallet) : null;
+  const blocked = !!e && moderation.isBlocked(e.creator);
+  function report() {
+    void Linking.openURL(reportMailto(target.edition, collectUrl(target.edition, cluster))).catch(
+      (problem) => setError(safeErrorText(problem)),
+    );
+  }
+  /**
    * The edition's price, or null for a free one. `pricedOffer` has already collapsed "no offer
    * account", "never priced" and "priced at zero" into the same null, because the program treats
    * all three identically: `collect` succeeds and `buy` answers NotForSale.
@@ -312,12 +330,15 @@ export function CollectSheet({
   const aspectRatio = e && e.width > 0 && e.height > 0 ? e.width / e.height : 1;
   const eligibility = state?.eligibility;
   const finished = collected !== null;
-  const canCollect = !wrongNetwork && !!wallet && eligibility === "collect" && !finished;
+  const canCollect =
+    !wrongNetwork && !!wallet && eligibility === "collect" && !finished && !veil;
   const heading = finished
     ? copy.headingCollected
     : wrongNetwork || eligibility === "unavailable"
       ? copy.headingUnavailable
-      : (e?.title ?? copy.heading);
+      : veil
+        ? moderationCopy[veil]
+        : (e?.title ?? copy.heading);
   // The one state sentence under the readout, when the wallet cannot collect right now.
   const blocker = finished
     ? null
@@ -364,7 +385,7 @@ export function CollectSheet({
           >
             {/* The badge names the chain this copy would be created on. */}
             <NetworkLabel label={IS_MAINNET ? copy.network : copy.networkTest} />
-            {!!e && (
+            {!!e && !veil && (
               <PhotoFrame
                 source={collectable?.imageUri ? { uri: collectable.imageUri } : undefined}
                 title={e.title}
@@ -386,7 +407,7 @@ export function CollectSheet({
             )}
             <Text style={sheetStyles.title}>{heading}</Text>
             {/* The caption the publisher wrote, set apart the way the Collection sets it apart. */}
-            {!!e?.description && (
+            {!!e?.description && !veil && (
               <View style={s.caption}>
                 <Text style={sheetStyles.label}>{copy.momentLabel}</Text>
                 <Text style={sheetStyles.body}>{e.description}</Text>
@@ -430,6 +451,22 @@ export function CollectSheet({
                 }}
               />
             )}
+            {!!e && e.creator !== wallet && (
+              <View style={s.pair}>
+                <Pill
+                  label={moderationCopy.report}
+                  variant="secondary"
+                  onPress={report}
+                  style={s.half}
+                />
+                <Pill
+                  label={blocked ? moderationCopy.unblock : moderationCopy.block}
+                  variant="secondary"
+                  onPress={() => void moderation.setBlocked(e.creator, !blocked)}
+                  style={s.half}
+                />
+              </View>
+            )}
             {!!wallet && !finished && !wrongNetwork && !!collectable && (
               <Pill
                 label={actions.checkCollect}
@@ -466,6 +503,8 @@ export function CollectSheet({
             )}
             {finished || wrongNetwork ? (
               <Pill label={actions.done} disabled={busy} onPress={onClose} />
+            ) : terms.agreed !== true ? (
+              <TermsAgreement agreed={terms.agreed} onAgree={() => void terms.agree()} />
             ) : !wallet ? (
               <Pill
                 label={actions.connectWallet}
@@ -517,4 +556,6 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const s = StyleSheet.create({
   caption: { gap: space.xs, borderLeftWidth: 2, borderLeftColor: colors.teal, paddingLeft: space.md },
+  pair: { flexDirection: "row", gap: space.sm },
+  half: { flex: 1 },
 });

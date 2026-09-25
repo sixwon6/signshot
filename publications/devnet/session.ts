@@ -69,7 +69,7 @@ console.log("DEVNET SESSION", payer.address, "program", program.address);
 console.log(
   "Reports:",
   reportRoot,
-  "\nCommands: prepare, fund, balance, deploy, test, exit",
+  "\nCommands: prepare, fund, balance, deploy, test, stand-in <wallet>, exit",
 );
 const lines = createInterface({ input: process.stdin, terminal: false });
 for await (const command of lines) {
@@ -206,6 +206,13 @@ for await (const command of lines) {
     } else if (command === "deploy" || command === "test") {
       const module = await import(`./work.ts?run=${Date.now()}`);
       await module[command](context);
+    } else if (command === "stand-in" || command.startsWith("stand-in ")) {
+      // A stand-in Genesis Token for another wallet, such as the phone's; paid from what the
+      // session holds, deployed or not (`TEST_COSTS.standIn`).
+      const [wallet, ...extra] = command.slice("stand-in".length).trim().split(/\s+/);
+      assert.ok(wallet && extra.length === 0, "Usage: stand-in <wallet>");
+      const module = await import(`./genesisFixture.ts?run=${Date.now()}`);
+      await module.standIn(context, wallet);
     } else if (command === "exit") break;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -39,7 +39,13 @@ import {
   getDeployWithMaxDataLenInstruction,
 } from "@solana-program/loader-v3";
 import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
-import { LEGACY_WITHOUT_GENESIS, LEGACY_WITHOUT_OFFERS, LEGACY_WITHOUT_PUBLISHED_AT, programFeatures } from "../deployments";
+import {
+  LEGACY_WITHOUT_GENESIS,
+  LEGACY_WITHOUT_OFFERS,
+  LEGACY_WITHOUT_PUBLISHED_AT,
+  LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY,
+  programFeatures,
+} from "../deployments";
 import { request, confirmTransaction } from "../rpc";
 import { checkAttempt, type TransactionAttempt } from "../lifecycle";
 
@@ -92,15 +98,19 @@ const hex = (bytes: ArrayLike<number>) =>
  * number, so extending the acceptance run cannot silently outgrow the reserve the way a literal
  * 0.15 SOL did when the supply-5 and album cases were added. The offer rows were added the same
  * way: the paid case publishes one more edition, sets a price three times and moves the price
- * itself.
+ * itself. So were the royalty and Seeker-only rows: three more editions, one more claim for bob,
+ * his stand-in Genesis Token and its move to frank.
  */
 export const TEST_COSTS = {
   /**
-   * Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3 and the sealed 1/1. Plus
-   * 55,680 lamports since: the 8 bytes of `published_at`, at the same 6,960 per byte.
+   * Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3, the sealed 1/1, the
+   * zero-royalty supply-2, the sealed Seeker-only supply-3 and the unsealed Seeker-only supply-2.
+   * Plus 55,680 lamports since: the 8 bytes of `published_at`, at the same 6,960 per byte; and
+   * 361,920 more for 52 bytes: the collection's `Royalties` plugin (41 bytes of data and a 10-byte
+   * registry record) and `seeker_only`.
    */
-  publish: 12_543_560,
-  publishes: 5,
+  publish: 12_905_480,
+  publishes: 8,
   /**
    * The Genesis Token stand-in the sealed publish needs: the group mint, one member mint, the
    * payer's frozen token account for it, bob's and an empty one of the payer's. Five Token-2022
@@ -108,10 +118,19 @@ export const TEST_COSTS = {
    * group mint is made once per cluster and skipped when it exists, so a later session pays less.
    */
   genesisFixture: 14_000_000,
+  /**
+   * One more member mint held by another wallet: 378 and 170 bytes, 5,595,840 of rent, plus a
+   * three-signature fee (5,610,840). The reserve holds bob's, for the Seeker-only claims. A
+   * `stand-in <wallet>` from `session.ts` is paid from what is left: every rent row here is priced
+   * at 6,960 per byte, well above what devnet charges, and the margin alone covers one.
+   */
+  standIn: 6_000_000,
+  /** Bob's stand-in sent to frank: frank's 170-byte token account, 2,074,080, plus the fee. */
+  genesisMove: 2_500_000,
   /** Measured `create_album` (rent-only group plus a one-signature fee). */
   createAlbum: 1_772_840,
-  /** Measured `publish_in_album`, for the two free album members, plus `published_at` as above. */
-  publishInAlbum: 13_093_400,
+  /** Measured `publish_in_album`, for the two free album members, plus both additions as above. */
+  publishInAlbum: 13_455_320,
   albumPublishes: 2,
   /** Measured first `set_offer`: 1,482,480 lamports of rent for the 85-byte account plus the fee. */
   firstSetOffer: 1_487_480,
@@ -145,7 +164,7 @@ export const WALLET_WORK: readonly {
   transfers?: number;
   buys?: number;
 }[] = [
-  { name: "bob", claims: 2, transfers: 1 },
+  { name: "bob", claims: 3, transfers: 1 },
   { name: "carol", claims: 2 },
   { name: "dave", claims: 1 },
   { name: "erin", claims: 1 },
@@ -181,6 +200,8 @@ export function testReserve(): number {
     t.firstSetOffer +
     t.laterSetOffer * 2 +
     t.genesisFixture +
+    t.standIn +
+    t.genesisMove +
     t.fees +
     t.margin
   );
@@ -424,6 +445,13 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
       programFeatures(c.program.address).publishedAt,
     "This client would read the session program's editions without their publication time",
   );
+  // And for the royalty and Seeker-only arguments: without them `publish` would be sent short,
+  // `collect` without its Genesis Token accounts, and every Edition read one byte short.
+  assert.ok(
+    !LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY.includes(c.program.address) &&
+      programFeatures(c.program.address).royaltiesAndSeekerOnly,
+    "This client would treat the session program as a deployment without royalties or Seeker-only editions",
+  );
   const source = readFileSync(c.artifact.sourcePath, "utf8");
   assert.ok(
     source.includes(`declare_id!("${c.program.address}")`),
@@ -633,6 +661,7 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number, a
 
   devnet: [
     "${program}",
+    "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz",
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
   ],
@@ -640,7 +669,7 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number, a
 2. PROGRAM_IMAGES.devnet — add the reviewed ELF digest and upgrade authority of what was just
    byte-verified (publish, collect and buy refuse a program without both):
 
-    // The devnet acceptance deployment with the Genesis Token accounts (devnet-genesis build).
+    // The devnet acceptance deployment with royalties and Seeker-only editions (devnet-genesis build).
     "${program}": {
       sha256: "${sha256}",
       bytes: ${grouped},
@@ -648,11 +677,12 @@ function printDeploymentsEntry(program: string, sha256: string, bytes: number, a
       source: "devnet acceptance build, publications/devnet session",
     },
 
-3. Leave LEGACY_WITHOUT_OFFERS, LEGACY_WITHOUT_GENESIS and LEGACY_WITHOUT_PUBLISHED_AT exactly
-   as they are: each lists only the OLD builds, and the default for anything else is already
-   offers, genesis and publishedAt: true. This deployment carries the devnet-genesis stand-in
-   addresses, so the sealed publish works only against the fixture the acceptance mints, never
-   a real token.
+3. Leave LEGACY_WITHOUT_OFFERS, LEGACY_WITHOUT_GENESIS, LEGACY_WITHOUT_PUBLISHED_AT and
+   LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY exactly as they are: each lists only the OLD builds,
+   and the default for anything else is already offers, genesis, publishedAt and
+   royaltiesAndSeekerOnly: true. This deployment carries the devnet-genesis stand-in addresses, so
+   the sealed publish and the Seeker-only claim work only with stand-ins the fixture mints
+   (\`stand-in <wallet>\` in the session), never a real token.
 
 4. Select it, in .env.local (gitignored):
 

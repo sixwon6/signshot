@@ -24,7 +24,9 @@ import {
   account,
   addresses,
   buyInstruction,
+  claimReceiptAddress,
   collectInstruction,
+  collectedCopy,
   decodeAsset,
   decodeCollection,
   hasCollected,
@@ -39,11 +41,12 @@ import {
   readReceipt,
   sealedGenesisMint,
   setOfferInstruction,
-  SYSTEM_PROGRAM,
   terms,
   utf8,
   verifyEditionCollection,
   verifyPrintAsset,
+  type GenesisAccounts,
+  type SealedTerms,
 } from "../core/protocol";
 import {
   assertMemberDecodes,
@@ -52,6 +55,7 @@ import {
   genesisTokenAccount,
   groupInstructions,
   memberInstructions,
+  moveInstructions,
 } from "./genesisFixture";
 import { normalizeDescription } from "../core/details";
 import { albumUrl, readAlbum, verifyAlbumGroup, createAlbumInstruction } from "../core/album";
@@ -75,6 +79,8 @@ interface TestContext extends Context {
   genesisMember?: KeyPairSigner;
   /** A fresh, empty token account of the payer's, for the refusal that needs one. */
   genesisEmpty?: KeyPairSigner;
+  /** Bob's own stand-in member mint, for the Seeker-only claims; later sent on to frank. */
+  seekerMember?: KeyPairSigner;
 }
 
 /** 0.01 devnet SOL, the acceptance price. Matches `TEST_COSTS.price` in `work.ts`. */
@@ -98,27 +104,35 @@ const SOME_OTHER_WALLET = "11111111111111111111111111111112";
 /**
  * The `collect` a creator cannot build.
  *
- * `collectInstruction` refuses `collector === creator` outright, for the same reason: `publish`
- * already initialised the creator's receipt, so the program would reject the transaction. Assembled
- * here on purpose, in `struct Collect`'s exact account order, so that the refusal observed on the
- * cluster is the program's and not this client's.
+ * `collectInstruction` refuses `collector === creator` outright, with a Genesis Token or without,
+ * for the same reason the program does: the creator holds copy 1 from publication, and `collect`
+ * answers them `AlreadyCollected` on every edition before it reads anything else. Built here for
+ * another wallet and handed to the creator, with the receipt their claim would open, so that the
+ * refusal observed on the cluster is the program's and not this client's.
  */
-async function creatorCollect(item: CoreMetadata, number: number): Promise<Instruction> {
-  const template = await collectInstruction(item, SOME_OTHER_WALLET, number);
-  const k = await addresses(item.program, item.creator, item.nonce, number, item.creator);
-  return {
-    ...template,
-    accounts: [
-      { address: address(item.creator), role: AccountRole.WRITABLE_SIGNER },
-      ...[k.edition, k.collection, k.print, k.receipt].map((a) => ({
-        address: a,
-        role: AccountRole.WRITABLE,
-      })),
-      { address: await offerAddress(item.program, item.edition), role: AccountRole.READONLY },
-      { address: MPL_CORE, role: AccountRole.READONLY },
-      { address: SYSTEM_PROGRAM, role: AccountRole.READONLY },
-    ],
-  };
+async function creatorCollect(item: CoreMetadata, number: number, genesis?: GenesisAccounts): Promise<Instruction> {
+  const template = await collectInstruction(item, SOME_OTHER_WALLET, number, genesis);
+  const receipt = genesis
+    ? await claimReceiptAddress(item.program, item.edition, genesis.mint)
+    : (await addresses(item.program, item.creator, item.nonce, number, item.creator)).receipt;
+  // `struct Collect`: the collector first, the receipt fifth; every other account is the template's.
+  const accounts = [...template.accounts!];
+  accounts[0] = { address: address(item.creator), role: AccountRole.WRITABLE_SIGNER };
+  accounts[4] = { address: receipt, role: AccountRole.WRITABLE };
+  return { ...template, accounts };
+}
+
+/** What an edition here seals unless its row says otherwise: a 5% royalty, open to every wallet. */
+const OPEN: SealedTerms = { royaltyBps: 500, seekerOnly: false };
+
+interface PlannedEdition {
+  key: string;
+  title: string;
+  supply: number;
+  /** The royalty and Seeker-only setting `publish` seals; `OPEN` when absent. */
+  sealed?: SealedTerms;
+  /** The document names the payer's stand-in Genesis Token, and `publish` seals it. */
+  genesis?: true;
 }
 
 /**
@@ -128,8 +142,12 @@ async function creatorCollect(item: CoreMetadata, number: number): Promise<Instr
  * whose only print is the creator's own. Supply 5 is the free-moment row — one publisher plus four
  * friends. The two album members carry the album acceptance, `offer` carries the paid one and
  * `genesis` the sealed Genesis Token publish, whose document names the stand-in's member mint.
+ * `royalty-0` seals a royalty of 0, which still writes the plugin, and `seeker` is the Seeker-only
+ * edition, sealed with the same member mint at a royalty of 700, which no default could produce.
+ * `seeker-unsealed` is Seeker-only without a token, as a devnet phone publishes. Every other
+ * edition is `OPEN`, so its claims stay one per wallet.
  */
-function editionPlan() {
+function editionPlan(): PlannedEdition[] {
   return [
     { key: "3", title: "DEVNET Core Test", supply: 3 },
     { key: "1", title: "DEVNET Solo Test", supply: 1 },
@@ -137,7 +155,10 @@ function editionPlan() {
     { key: "album-a", title: "DEVNET Album One", supply: 2 },
     { key: "album-b", title: "DEVNET Album Two", supply: 2 },
     { key: "offer", title: "DEVNET Offer Test", supply: 3 },
-    { key: "genesis", title: "DEVNET Genesis Test", supply: 1 },
+    { key: "genesis", title: "DEVNET Genesis Test", supply: 1, genesis: true },
+    { key: "royalty-0", title: "DEVNET Zero Royalty", supply: 2, sealed: { royaltyBps: 0, seekerOnly: false } },
+    { key: "seeker", title: "DEVNET Seeker Only", supply: 3, sealed: { royaltyBps: 700, seekerOnly: true }, genesis: true },
+    { key: "seeker-unsealed", title: "DEVNET Seeker Unsealed", supply: 2, sealed: { royaltyBps: 500, seekerOnly: true } },
   ];
 }
 
@@ -209,7 +230,7 @@ export async function lifecycle(c: TestContext) {
     try {
       const imageUri = prepareUpload(image, "image/jpeg");
       c.testEditions = [];
-      // Named in the sealed edition's document before anything is uploaded; minted later.
+      // Named in the sealed editions' documents before anything is uploaded; minted later.
       c.genesisMember ??= await generateKeyPairSigner();
       for (const item of plan) {
         const nonce = randomBytes(32).toString("hex");
@@ -228,7 +249,7 @@ export async function lifecycle(c: TestContext) {
           width: 512,
           height: 512,
           description: `Devnet acceptance publication: ${item.key}.`,
-          ...(item.key === "genesis" ? { genesisMint: c.genesisMember.address } : {}),
+          ...(item.genesis ? { genesisMint: c.genesisMember.address } : {}),
         };
         // The two gates that decide what may reach permanent storage, run before it does.
         terms(e.title, e.supply);
@@ -276,7 +297,8 @@ export async function lifecycle(c: TestContext) {
   const e = byKey.get("3")!;
   const solo = byKey.get("1")!;
   const five = byKey.get("5")!;
-  const publish = (item: CoreMetadata, key: string, album?: string) =>
+  const sealedTerms = new Map(plan.map((item) => [item.key, item.sealed ?? OPEN]));
+  const publish = (item: CoreMetadata, key: string, album?: string, genesis?: GenesisAccounts) =>
     instruction(
       item,
       c.payer.address,
@@ -284,6 +306,8 @@ export async function lifecycle(c: TestContext) {
       journal[`metadata-${key}`],
       journal[`metadataHash-${key}`],
       album,
+      genesis,
+      sealedTerms.get(key),
     );
   await once("publish-edition-of-three", async () =>
     send(c, [budget, await publish(e, "3")]),
@@ -294,7 +318,7 @@ export async function lifecycle(c: TestContext) {
   // The creator's receipt is written by `publish`, so their second claim is refused while
   // the edition is neither sold out nor stale: the receipt alone is what stops it.
   await once("creator-second-claim-rejected", async () =>
-    send(c, [budget, await creatorCollect(e, 2)], [c.payer], /already in use/),
+    send(c, [budget, await creatorCollect(e, 2)], [c.payer], /AlreadyCollected/),
   );
   await once("collector-claims-print-2", async () =>
     send({ ...c, payer: bob }, [budget, await collectInstruction(e, bob.address, 2)], [bob]),
@@ -304,7 +328,7 @@ export async function lifecycle(c: TestContext) {
       { ...c, payer: bob },
       [budget, await collectInstruction(e, bob.address, 3)],
       [bob],
-      /already in use/,
+      /AlreadyCollected/,
     ),
   );
   await once("stale-number-rejected", async () =>
@@ -343,7 +367,7 @@ export async function lifecycle(c: TestContext) {
       { ...c, payer: bob },
       [budget, await collectInstruction(e, bob.address, 3)],
       [bob],
-      /already in use/,
+      /AlreadyCollected/,
     ),
   );
   await once("collector-claims-print-3", async () =>
@@ -424,6 +448,7 @@ export async function lifecycle(c: TestContext) {
         state.publishedAt !== null && state.publishedAt > 1_780_000_000 && state.publishedAt * 1000 <= Date.now() + 60_000,
         "The edition records no plausible publication time",
       );
+      assert.equal(state.seekerOnly, false, "An open edition reads as Seeker-only");
       assert.equal(state.supply, item.supply);
       assert.equal(state.minted, minted);
       assert.equal(state.creator, item.creator);
@@ -441,13 +466,13 @@ export async function lifecycle(c: TestContext) {
       const bare = decodeCollection(collectionRaw.bytes);
       assert.deepEqual(
         bare.plugins.map((p) => p.type).sort(),
-        ["Attributes", "ImmutableMetadata", "MasterEdition"],
+        ["Attributes", "ImmutableMetadata", "MasterEdition", "Royalties"],
       );
       const collection = verifyEditionCollection(collectionRaw.bytes, state, item.edition);
       assert.equal(collection.numMinted, bare.numMinted);
       assert.ok(collection.numMinted >= state.minted, "Core num_minted is behind minted");
     }
-    return "3/3, 1/1 and 5/5 minted; Core collections carry MasterEdition, ImmutableMetadata, Attributes";
+    return "3/3, 1/1 and 5/5 minted; Core collections carry MasterEdition, ImmutableMetadata, Attributes, Royalties";
   });
   await once("prints-and-receipts", async () => {
     for (const [number, wallet] of [
@@ -521,6 +546,45 @@ export async function lifecycle(c: TestContext) {
       assert.equal(state.minted, item.supply, "The edition is not fully issued");
     }
     return "SHA-256 image and metadata match on both editions; 3/3 and 1/1 issued";
+  });
+
+  // ------------------------------------------------------------------ royalty
+  // Every collection this build creates carries the creator's royalty in a `Royalties` plugin
+  // whose authority is None, so nothing can change it afterwards: at 500 on the editions above,
+  // on an edition published at 0, where the plugin is still written and names the creator, and at
+  // 700 on the Seeker-only edition below.
+  const assertRoyalty = async (item: CoreMetadata, basisPoints: number) => {
+    const collectionRaw = await account(c.endpoint, item.collection);
+    assert.ok(collectionRaw && collectionRaw.owner === MPL_CORE, "The edition has no Core collection");
+    assert.deepEqual(
+      decodeCollection(collectionRaw.bytes).plugins.filter((p) => p.type === "Royalties"),
+      [
+        {
+          type: "Royalties",
+          authority: { kind: "None" },
+          basisPoints,
+          creators: [{ address: c.payer.address, percentage: 100 }],
+          ruleSet: "None",
+          programs: [],
+        },
+      ],
+      "The royalty is not the publisher's alone, locked, with no rule set",
+    );
+    const publication = await readPublication(c.endpoint, c.program.address, item.edition);
+    assert.deepEqual(publication?.royalty, { basisPoints, creator: c.payer.address });
+    return publication!;
+  };
+  const zero = byKey.get("royalty-0")!;
+  await once("publish-zero-royalty-edition", async () =>
+    send(c, [budget, await publish(zero, "royalty-0")]),
+  );
+  await once("royalty-sealed-and-locked", async () => {
+    for (const [item, basisPoints] of [
+      [e, OPEN.royaltyBps],
+      [zero, 0],
+    ] as const)
+      assert.equal((await assertRoyalty(item, basisPoints)).seekerOnly, false);
+    return `Royalties at ${OPEN.royaltyBps} and 0 basis points: the publisher at 100%, authority None, no rule set`;
   });
 
   // ------------------------------------------------------------------ paid distribution
@@ -771,13 +835,7 @@ export async function lifecycle(c: TestContext) {
     send(c, [budget, await withGenesis(member.address, null)], [c.payer], /InvalidGenesisToken/),
   );
   await once("publish-sealed-genesis", async () =>
-    send(c, [
-      budget,
-      await instruction(
-        sealed, c.payer.address, 1, journal["metadata-genesis"], journal["metadataHash-genesis"],
-        undefined, { mint: member.address, token: held },
-      ),
-    ]),
+    send(c, [budget, await publish(sealed, "genesis", undefined, { mint: member.address, token: held })]),
   );
   await once("sealed-genesis-attribute", async () => {
     const state = readEdition((await account(c.endpoint, sealed.edition))!.bytes, c.program.address);
@@ -798,6 +856,132 @@ export async function lifecycle(c: TestContext) {
     assert.equal(state.minted, 1);
     return `${sealed.collection} seals ${GENESIS_ATTRIBUTE} = ${member.address}; the plain editions seal none`;
   });
+
+  // ------------------------------------------------------------------ Seeker-only
+  // Only a Genesis Token holder can collect, one copy per token rather than per wallet. Published
+  // with the payer's stand-in, whose token then holds copy 1. Bob collects with a stand-in of his
+  // own; that token is refused a second time, and again once it has moved to frank; a wallet with
+  // none is refused, and an open edition refuses any token at all. The creator never collects:
+  // not with their sealed token, and not with a token they hold on an edition that sealed none.
+  const seeker = byKey.get("seeker")!;
+  const unsealed = byKey.get("seeker-unsealed")!;
+  assert.equal(seeker.genesisMint, member.address, "The Seeker-only edition's document names another mint");
+  c.seekerMember ??= await generateKeyPairSigner();
+  const bobMember = c.seekerMember;
+  journal["seeker-bob-mint"] = bobMember.address;
+  save();
+  const bobToken: GenesisAccounts = {
+    mint: bobMember.address,
+    token: await genesisTokenAccount(bob.address, bobMember.address),
+  };
+  const movedToken: GenesisAccounts = {
+    mint: bobMember.address,
+    token: await genesisTokenAccount(frank.address, bobMember.address),
+  };
+  await once("publish-seeker-only", async () =>
+    send(c, [budget, await publish(seeker, "seeker", undefined, { mint: member.address, token: held })]),
+  );
+  await once("seeker-only-creator-receipt", async () => {
+    const state = readEdition((await account(c.endpoint, seeker.edition))!.bytes, c.program.address);
+    assert.equal(state.seekerOnly, true, "The edition does not record seeker_only");
+    const publication = await assertRoyalty(seeker, 700);
+    assert.equal(publication.seekerOnly, true);
+    assert.equal(publication.sealedGenesis, member.address);
+    const tokenReceipt = await claimReceiptAddress(c.program.address, seeker.edition, member.address);
+    assert.equal(publication.creatorReceiptAddress, tokenReceipt, "Copy 1 is not the creator's token's claim");
+    const copy = await collectedCopy(c.endpoint, seeker, c.payer.address, member.address);
+    assert.deepEqual(
+      copy && { collector: copy.collector, number: copy.number },
+      { collector: c.payer.address, number: 1 },
+    );
+    const walletKeyed = (await addresses(seeker.program, seeker.creator, seeker.nonce)).receipt;
+    assert.equal(await account(c.endpoint, walletKeyed), null, "The creator's wallet holds a receipt too");
+    return `Royalty 700; copy 1's receipt ${tokenReceipt} is keyed on ${member.address}; none at ${walletKeyed}`;
+  });
+  await once("seeker-stand-in-for-bob", async () =>
+    send(c, await memberInstructions(c, keys, bobMember, bob.address), [c.payer, bobMember, keys.authority]),
+  );
+  await once("seeker-bob-collects-with-stand-in", async () =>
+    send({ ...c, payer: bob }, [budget, await collectInstruction(seeker, bob.address, 2, bobToken)], [bob]),
+  );
+  await once("seeker-bob-copy-is-the-tokens", async () => {
+    const copy = await collectedCopy(c.endpoint, seeker, bob.address, bobMember.address);
+    assert.ok(copy, "Bob's token holds no receipt");
+    assert.equal(copy.collector, bob.address);
+    assert.equal(copy.number, 2);
+    assert.equal(await hasCollected(c.endpoint, seeker, bob.address), false, "The claim opened a wallet receipt");
+    const print = (await addresses(seeker.program, seeker.creator, seeker.nonce, 2)).print;
+    const printRaw = await account(c.endpoint, print);
+    assert.ok(printRaw && printRaw.owner === MPL_CORE, "Print #2 is not a Core account");
+    assert.equal(verifyPrintAsset(printRaw.bytes, seeker, print, 2).owner, bob.address);
+    return `Print #2 is bob's; its receipt is keyed on ${bobMember.address}, not his wallet`;
+  });
+  await once("seeker-same-token-again-refused", async () =>
+    send(
+      { ...c, payer: bob },
+      [budget, await collectInstruction(seeker, bob.address, 3, bobToken)],
+      [bob],
+      /AlreadyCollected/,
+    ),
+  );
+  await once("seeker-token-on-open-edition-refused", async () =>
+    send(
+      { ...c, payer: bob },
+      [budget, await collectInstruction(zero, bob.address, 2, bobToken)],
+      [bob],
+      /InvalidGenesisToken/,
+    ),
+  );
+  await once("seeker-token-moves-to-frank", async () =>
+    send(c, await moveInstructions(c, keys, bobMember.address, bob, frank.address), [c.payer, keys.authority, bob]),
+  );
+  await once("seeker-moved-token-refused", async () =>
+    send(
+      { ...c, payer: frank },
+      [budget, await collectInstruction(seeker, frank.address, 3, movedToken)],
+      [frank],
+      /AlreadyCollected/,
+    ),
+  );
+  await once("seeker-without-token-refused", async () =>
+    send(
+      { ...c, payer: ivan },
+      [budget, await collectInstruction(seeker, ivan.address, 3)],
+      [ivan],
+      /GenesisTokenRequired/,
+    ),
+  );
+  await once("seeker-creator-own-token-refused", async () =>
+    send(c, [budget, await creatorCollect(seeker, 3, { mint: member.address, token: held })], [c.payer], /AlreadyCollected/),
+  );
+  await once("seeker-only-state", async () => {
+    const state = readEdition((await account(c.endpoint, seeker.edition))!.bytes, c.program.address);
+    assert.equal(state.minted, 2, "Copy 1 and bob's #2 only");
+    // One claim per token, whichever wallet holds it now: frank holds bob's token and its receipt.
+    const copy = await collectedCopy(c.endpoint, seeker, frank.address, bobMember.address);
+    assert.equal(copy?.collector, bob.address, "The moved token's receipt does not name bob");
+    assert.equal(await hasCollected(c.endpoint, seeker, frank.address), false);
+    assert.equal(await hasCollected(c.endpoint, seeker, ivan.address), false);
+    return "2/3 issued; the same token twice, the token moved to frank, no token and the creator's token refused";
+  });
+  // Published without the accounts, so copy 1 is the creator's wallet's claim and no token's. The
+  // payer's stand-in, which it still holds, opens no second copy for the creator: the program
+  // refuses the creator before it reads the token.
+  await once("publish-seeker-only-unsealed", async () =>
+    send(c, [budget, await publish(unsealed, "seeker-unsealed")]),
+  );
+  await once("seeker-unsealed-creator-receipt", async () => {
+    const publication = await readPublication(c.endpoint, c.program.address, unsealed.edition);
+    assert.ok(publication, "The unsealed Seeker-only edition does not read");
+    assert.equal(publication.seekerOnly, true);
+    assert.equal(publication.sealedGenesis, null);
+    const walletKeyed = (await addresses(unsealed.program, unsealed.creator, unsealed.nonce)).receipt;
+    assert.equal(publication.creatorReceiptAddress, walletKeyed, "Copy 1 is not the creator's wallet's claim");
+    return `Seeker-only with nothing sealed; copy 1's receipt is the wallet's, ${walletKeyed}`;
+  });
+  await once("seeker-unsealed-creator-token-refused", async () =>
+    send(c, [budget, await creatorCollect(unsealed, 2, { mint: member.address, token: held })], [c.payer], /AlreadyCollected/),
+  );
   save();
   console.log("DEVNET LIFECYCLE COMPLETE");
 }

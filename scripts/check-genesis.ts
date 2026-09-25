@@ -109,6 +109,19 @@ ok("refuses: non-zero padding before the account type", (() => {
   const bent = genuine.slice(); bent[100] = 1; return !isSeekerGenesisMint(bent, MINT);
 })());
 ok("refuses: no extensions", !isSeekerGenesisMint(mintBytes(null, null), MINT));
+{
+  // A Token-2022 multisig is 355 bytes whose first three are m, n and "initialized" and whose
+  // other 352 are eleven signer keys its creator chooses. Laid out as a mint naming the group, it
+  // would pass every other rule; only its length gives it away, as it does to Token-2022.
+  const laidOut = (length: number) => {
+    const bytes = new Uint8Array(length);
+    bytes.set(mintBytes(null, [pointer(address(SGT_METADATA_ADDRESS)), member(GROUP)]));
+    bytes.set([1, 1, 1], 0);
+    return bytes;
+  };
+  ok("refuses: a 355-byte multisig laid out as a Seeker Genesis Token mint",
+    !isSeekerGenesisMint(laidOut(355), MINT) && isSeekerGenesisMint(laidOut(356), MINT));
+}
 ok("a truncated extension is refused, not thrown", !isSeekerGenesisMint(genuine.slice(0, genuine.length - 9), MINT));
 ok("empty data is refused, not thrown", !isSeekerGenesisMint(new Uint8Array(0), MINT));
 ok("a token ACCOUNT is refused", !isSeekerGenesisMint(new Uint8Array(getTokenEncoder().encode({

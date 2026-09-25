@@ -74,6 +74,12 @@ export function readGenesisClaim(value: unknown): string {
  */
 const MINT_BASE_BYTES = 82;
 const ACCOUNT_TYPE_OFFSET = 165;
+/**
+ * Token-2022's `Multisig::LEN`. No mint or token account is ever this long (Token-2022 pads them
+ * past it), and a multisig's eleven signer keys are its creator's to choose, so 352 of its bytes
+ * could be laid out as a mint that names Solana Mobile's group. Refused, as the program refuses it.
+ */
+const MULTISIG_BYTES = 355;
 const ACCOUNT_TYPE_MINT = 1;
 const EXTENSION_METADATA_POINTER = 18;
 const EXTENSION_TOKEN_GROUP_MEMBER = 23;
@@ -112,7 +118,8 @@ export function seekerGenesisMember(
   mint: string,
   expected: GenesisAddresses = SOLANA_MOBILE,
 ): bigint | null {
-  if (data.length <= ACCOUNT_TYPE_OFFSET || data[ACCOUNT_TYPE_OFFSET] !== ACCOUNT_TYPE_MINT) return null;
+  if (data.length <= ACCOUNT_TYPE_OFFSET || data.length === MULTISIG_BYTES || data[ACCOUNT_TYPE_OFFSET] !== ACCOUNT_TYPE_MINT)
+    return null;
   // `is_initialized` is the byte at 45; the padding up to the account type is zero in every mint.
   if (data[45] !== 1 || data.subarray(MINT_BASE_BYTES, ACCOUNT_TYPE_OFFSET).some((byte) => byte !== 0)) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);

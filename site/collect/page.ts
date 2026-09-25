@@ -35,6 +35,7 @@ import {
 } from "@solana/kit";
 import { prepareTransaction, confirmTransaction, request } from "../../publications/rpc";
 import { assertAttempt, checkAttempt } from "../../publications/lifecycle";
+import { PROGRAM_CHANGED } from "../../publications/programImage";
 import type { Cluster } from "../../publications/types";
 import { genesisDisplay, type GenesisCheck, type GenesisStanding } from "../../publications/core/genesisToken";
 import {
@@ -428,7 +429,9 @@ export function run(adapter: Adapter) {
       needsReconnect = true;
       el("cost").textContent = adapter.copy.cost;
     }
-    message(e instanceof Error ? e.message : String(e));
+    const text = e instanceof Error ? e.message : String(e);
+    // A browser collector has no app to update: the refusal alone.
+    message(text === PROGRAM_CHANGED ? "Program changed." : text);
   }
   function setButton() {
     const b = el<HTMLButtonElement>("collect");
@@ -522,6 +525,8 @@ export function run(adapter: Adapter) {
     const say = (text: string, state: "device-ok" | "device-problem" | "device-none") => {
       if (run !== deviceRun) return;
       el("device-text").textContent = text;
+      // What the certificate does not claim, said only under a device it names.
+      el("device-fine").hidden = state !== "device-ok";
       row.classList.remove("device-ok", "device-problem", "device-none");
       row.classList.add(state);
     };

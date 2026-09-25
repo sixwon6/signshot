@@ -45,8 +45,9 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
   `moderation.json` reads Hidden.
 - **Site:** redeploy `site/` (page, `/api/solana`, `/api/attestation-status`, `/terms/`,
   `/moderation.json`); the live page refuses a document that names a Genesis Token until then.
-  Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint). Route
-  mail for support@erashot.app.
+  Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint), apply
+  `site/cloudflare/rate-limit-rule.json` again (now 120 requests per 10 s), and route mail for
+  support@erashot.app.
 - **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`, about 2.4
   devnet SOL, more than one faucet request grants): the listed devnet programs predate the Genesis
   Token accounts and the price floor. Then record its address, digest and upgrade authority.

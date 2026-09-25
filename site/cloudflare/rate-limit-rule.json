@@ -2,7 +2,8 @@
   "_comment": "The abuse control for /api/solana, in the shape the Cloudflare Rulesets API accepts. Prose, plan constraints, the reason for the threshold and the verification procedure are in site/README.md; this file and that one must be changed together. Apply to the http_ratelimit phase entrypoint ruleset of the erashot.app zone: PUT /zones/{zone_id}/rulesets/phases/http_ratelimit/entrypoint with {\"rules\": [rule]}.",
   "zone": "erashot.app",
   "phase": "http_ratelimit",
-  "applied": true,
+  "applied": false,
+  "_applied_note": "Raised from 60 to 120 on 2026-09-25 (site/README.md); the rule applied on 2026-09-12 still caps at 60 until this file is applied again.",
   "applied_on": "2026-09-12T18:11:36Z",
   "ruleset_id": "f90462456c6749d196bd419346b02e93",
   "rule_id": "0caace9a4c4f4abab833dc629dd39aff",
@@ -14,7 +15,7 @@
     "ratelimit": {
       "characteristics": ["cf.colo.id", "ip.src"],
       "period": 10,
-      "requests_per_period": 60,
+      "requests_per_period": 120,
       "mitigation_timeout": 10,
       "requests_to_origin": false
     }

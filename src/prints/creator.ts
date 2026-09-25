@@ -462,9 +462,11 @@ async function sealDocument(
  * review, the quote and the one wallet approval that follow all carry the new one.
  *
  * Only for a draft no transaction can still land for (`prepareSetup` has checked the attempt). If
- * the phone cannot attest now, a chain still valid is kept for the few minutes to publication, and
- * an expired one gives way to the plain document.
+ * the phone cannot attest now, a chain that outlives `SEND_MARGIN_MS` is kept for the few minutes
+ * to publication, and one that does not gives way to the plain document, which `sendSetup` takes.
  */
+/** Wallet approval and confirmation, with room to spare: the chain must outlive the block. */
+const SEND_MARGIN_MS = 15 * 60 * 1000;
 async function renewStaleAttestation(r: CaptureRecord, d: CoreDraft) {
   const stale = d.edition.attestation;
   if (!stale || !attestationExpiring(stale)) return;
@@ -472,7 +474,7 @@ async function renewStaleAttestation(r: CaptureRecord, d: CoreDraft) {
     await assertCurrent(r, d);
     const e: CoreMetadata = { ...d.edition };
     const { json, meta } = await sealDocument(e, r, d.sourceHash, await getUploadKey(e.creator));
-    if (!e.attestation && !attestationExpiring(stale, Date.now(), 0)) return;
+    if (!e.attestation && !attestationExpiring(stale, Date.now(), SEND_MARGIN_MS)) return;
     d.edition = e;
     d.metadata = json;
     d.metadataId = meta.id;
@@ -733,8 +735,6 @@ async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undef
 }
 
 type PublicationQuote = Awaited<ReturnType<typeof prepareSetup>>;
-/** Wallet approval and confirmation, with room to spare: the chain must outlive the block. */
-const SEND_MARGIN_MS = 15 * 60 * 1000;
 type PublishProgress = "wallet" | "confirming" | "uploading";
 async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
   if (d.storage === "available") return;

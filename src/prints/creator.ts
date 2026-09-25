@@ -66,7 +66,7 @@ import {
   programFeatures,
   publishingAvailability,
 } from "../../publications/deployments";
-import { MAX_PRICE_LAMPORTS } from "./price";
+import { checkPriceMinimum, MAX_PRICE_LAMPORTS, minimumPriceLamports } from "./price";
 import { CORE_PROTOCOL, type CoreDraft, type CoreMetadata, type PublicationView } from "../../publications/types";
 // `coordinator.ts` imports `readDraft` from here in return. Only function references cross the
 // cycle and none runs at module scope.
@@ -332,6 +332,8 @@ export async function createDraft(
     // The same gate `readDraft` applies on the way back in, so a price this deployment cannot hold
     // is refused before a photograph is measured rather than at the estimate.
     const price = priceText(program, priceLamports);
+    // The publication's own `set_offer` refuses a price between zero and the rent-exempt minimum.
+    if (price) checkPriceMinimum(BigInt(price), await minimumPriceLamports(RPC_ENDPOINT));
     // The program requires the album account to exist, or the approved transaction fails.
     const chosen = album ? await confirmedAlbum(album, creator) : null;
     const deployed = await account(RPC_ENDPOINT, program);

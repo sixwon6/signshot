@@ -362,8 +362,10 @@ const EDITION_ERROR = {
   NOT_FOR_SALE: 6005n,
   OFFER_CHANGED: 6006n,
   PAYMENT_REQUIRED: 6007n,
-  // After 6008 `InvalidGenesisToken`: `set_offer` refuses a non-zero price below the rent-exempt
-  // minimum of an empty account (`minimumPriceLamports` in `src/prints/price.ts`).
+  // The Genesis Token accounts `publish` was given are not a Seeker Genesis Token the creator holds.
+  INVALID_GENESIS_TOKEN: 6008n,
+  // `set_offer` refuses a non-zero price below the rent-exempt minimum of an empty account
+  // (`minimumPriceLamports` in `src/prints/price.ts`).
   PRICE_TOO_LOW: 6009n,
 } as const;
 /** `MplCoreError::GroupVectorFull`, 0x36. Raised by `AddCollectionsToGroupV1` at 256 members. */
@@ -387,6 +389,8 @@ const EDITION_MESSAGES: Readonly<Record<string, string>> = {
   [String(EDITION_ERROR.OFFER_CHANGED)]:
     "The price changed. Review the new price before buying.",
   [String(EDITION_ERROR.PAYMENT_REQUIRED)]: "This edition has a price. Buy a copy instead.",
+  [String(EDITION_ERROR.INVALID_GENESIS_TOKEN)]:
+    "This wallet no longer holds the Genesis Token this edition names. Discard the draft and publish again.",
   [String(EDITION_ERROR.PRICE_TOO_LOW)]:
     "This price is below the network minimum. Raise it or make the edition free.",
 };

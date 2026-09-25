@@ -736,5 +736,38 @@ if (!process.argv.includes("--worker")) {
   assert.match(readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8"),
     /PUBLIC_MAINNET_ENDPOINT = "https:\/\/api\.mainnet\.solana\.com"/,
     "the public fallback is the host https://solana.com/docs/references/clusters names");
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, release RPC");
+
+  {
+    // The price floor is the cluster's rent-exempt minimum for an empty account, read, never kept.
+    const { checkPriceMinimum, minimumPriceLamports } = await import("../src/prints/price.ts");
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (_url, options) => {
+        const { method, params } = JSON.parse(options.body);
+        assert.equal(method, "getMinimumBalanceForRentExemption");
+        assert.deepEqual(params, [0]);
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: 650_240 }));
+      };
+      assert.equal(await minimumPriceLamports("https://rpc.example"), 650_240n);
+      globalThis.fetch = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: -1 }));
+      await assert.rejects(minimumPriceLamports("https://rpc.example"), /Invalid Solana response/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.equal(checkPriceMinimum(0n, 650_240n), 0n, "free is always allowed");
+    assert.equal(checkPriceMinimum(650_240n, 650_240n), 650_240n);
+    assert.throws(() => checkPriceMinimum(650_239n, 650_240n), /The lowest price is 0\.00065024 SOL\./);
+
+    // Every EditionError the IDL declares has the app's own words, and 6008 and 6009 are final.
+    const { describeProgramError } = await import("../publications/rpc.ts");
+    const idl = JSON.parse(readFileSync(new URL("../programs/editions/idl.json", import.meta.url), "utf8"));
+    const failed = (code, operation) => describeProgramError({ InstructionError: [0, { Custom: code }] },
+      ["Program 7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU failed: custom program error"], { operation });
+    for (const { code, name } of idl.errors)
+      assert.equal(failed(code, "publish").known, true, `${name} (${code}) has a message`);
+    for (const code of [6008, 6009])
+      for (const operation of ["publish", "collect", "buy", "set-offer"])
+        assert.equal(failed(code, operation).retryable, false, `${code} is never offered again as ${operation}`);
+  }
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, release RPC, price floor and program error words");
 }

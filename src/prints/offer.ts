@@ -44,7 +44,7 @@ import {
   confirmTransaction,
   prepareTransaction,
 } from "../../publications/rpc";
-import { MAX_PRICE_LAMPORTS } from "./price";
+import { checkPriceMinimum, MAX_PRICE_LAMPORTS, minimumPriceLamports } from "./price";
 import { CORE_PROTOCOL, type CoreMetadata, type PublicationAttempt } from "../../publications/types";
 
 /** The one chain this build talks to. An edition on any other is refused, never retargeted. */
@@ -210,6 +210,8 @@ export async function prepareOffer(
   // The creator signs, and a signer's privileges reach every program it calls: the deployed bytes
   // and upgrade authority must still be the reviewed ones.
   await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
+  // `set_offer` refuses a price between zero and the rent-exempt minimum; said here, with the number.
+  checkPriceMinimum(priceLamports, await minimumPriceLamports(RPC_ENDPOINT));
   if (operationInProgress(lock(e.edition)))
     throw new Error("This edition already has a price change in progress. Wait for it to finish.");
 

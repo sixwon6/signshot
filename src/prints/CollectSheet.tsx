@@ -352,11 +352,10 @@ export function CollectSheet({
             ? copy.soldOut
             : eligibility === "wait"
               ? copy.wait
-              : eligibility === "needsGenesis"
-                ? copy.needsGenesis
-                : eligibility === "unavailable"
-                  ? copy.unavailable
-                  : null;
+              : eligibility === "unavailable"
+                ? copy.unavailable
+                : // `needsGenesis` is said once, by the status beside the action.
+                  null;
 
   return (
     <Modal

@@ -87,7 +87,22 @@ export function coreAdapter(edition: string): Adapter {
     if (!meta) throw new Error("This edition has not been read yet.");
     return meta;
   };
-  const genesisOf = (wallet: string) => claimGenesis(endpoint, cluster, seekerOnly, wallet);
+  /**
+   * One Genesis Token lookup per wallet for a minute: `hasCollected`, `claim` and the check after
+   * confirming ask in quick succession, and each lookup is several proxy requests. A failure is
+   * not held. The program checks the token again whatever this found.
+   */
+  let held: { wallet: string; until: number; genesis: ReturnType<typeof claimGenesis> } | null = null;
+  const genesisOf = (wallet: string) => {
+    if (!held || held.wallet !== wallet || held.until < Date.now()) {
+      const genesis = claimGenesis(endpoint, cluster, seekerOnly, wallet);
+      held = { wallet, until: Date.now() + 60_000, genesis };
+      genesis.catch(() => {
+        if (held?.genesis === genesis) held = null;
+      });
+    }
+    return held.genesis;
+  };
   return {
     edition,
     pendingKey: `seedshot.core-collect.v2:${cluster}:${edition}`,

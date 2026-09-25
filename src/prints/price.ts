@@ -3,8 +3,12 @@
  *
  * The rule: a price is an unsigned integer of lamports, never floating point. A decimal string is
  * parsed in the UI and preserved exactly through review, signing and recovery; unrepresentable
- * precision and overflow are refused. Zero is a free offer, and there is no product minimum.
+ * precision and overflow are refused. Zero is a free offer, and there is no product minimum. The
+ * one floor is the network's: a price above zero must be at least the rent-exempt minimum of an
+ * empty account, which `set_offer` reads on chain and refuses below (`PriceTooLow`), and which
+ * the client reads from the cluster (`minimumPriceLamports`), never from a constant.
  */
+import { request } from "../../publications/rpc";
 
 /** 1 SOL = 1,000,000,000 lamports. https://solana.com/docs/references/terminology#lamport */
 const LAMPORTS_PER_SOL = 1_000_000_000n;
@@ -63,4 +67,31 @@ export function formatSol(lamports: bigint): string {
   const fraction = (lamports % LAMPORTS_PER_SOL).toString().padStart(SOL_DECIMALS, "0");
   const trimmed = fraction.replace(/0+$/, "");
   return `${whole}.${trimmed || "0"}`;
+}
+
+/**
+ * The lowest price above zero, in lamports: `getMinimumBalanceForRentExemption(0)`, read-only.
+ *
+ * `buy` pays the price into the creator's wallet, and the runtime refuses to leave an empty wallet
+ * holding less than this, so `set_offer` refuses any price between zero and it. Read from the
+ * cluster on every quote rather than kept here: rent per byte is being lowered in steps
+ * (SIMD-0437, https://solana.com/upgrades/reduced-rent), and the program reads the same rate
+ * from the Rent sysvar. 650,240 lamports on both clusters on 2026-09-25.
+ */
+export async function minimumPriceLamports(endpoint: string): Promise<bigint> {
+  const lamports = await request<unknown>(endpoint, "getMinimumBalanceForRentExemption", [0]);
+  if (typeof lamports !== "number" || !Number.isSafeInteger(lamports) || lamports < 0)
+    throw new Error("Invalid Solana response");
+  return BigInt(lamports);
+}
+
+/**
+ * `lamports` when the program will take it as a price against `minimum` (from
+ * `minimumPriceLamports`): zero, or at least the minimum. Otherwise throws a sentence a screen can
+ * render.
+ */
+export function checkPriceMinimum(lamports: bigint, minimum: bigint): bigint {
+  if (lamports !== 0n && lamports < minimum)
+    throw new Error(`The lowest price is ${formatSol(minimum)} SOL.`);
+  return lamports;
 }

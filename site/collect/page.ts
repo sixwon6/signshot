@@ -37,7 +37,7 @@ import {
 import { prepareTransaction, confirmTransaction, request } from "../../publications/rpc";
 import { assertAttempt, checkAttempt } from "../../publications/lifecycle";
 import type { Cluster } from "../../publications/types";
-import type { GenesisStanding } from "../../publications/core/genesisToken";
+import { genesisDisplay, type GenesisCheck, type GenesisStanding } from "../../publications/core/genesisToken";
 
 import { qrMatrix } from "./qr";
 import { deviceProblem, GENESIS_LINE, NO_DEVICE, sol } from "./summary";
@@ -103,7 +103,7 @@ export type Device = { line: string } | { problem: string } | null;
  */
 export type Genesis = {
   mint: string;
-  /** The edition program verified the token and sealed the mint at publish. */
+  /** The edition program verified the token and sealed the mint at publish. Counts on mainnet only. */
   sealed: boolean;
   standing(): Promise<GenesisStanding>;
 } | null;
@@ -445,7 +445,7 @@ export function run(adapter: Adapter) {
   /**
    * The Genesis Token row. The document only claims a mint, so the row says it is checking until
    * mainnet has answered, and the load never waits for it. A later refresh outruns an earlier
-   * check by `genesisRun`.
+   * check by `genesisRun`. What it says, and whether the seal line shows, is `genesisDisplay`.
    */
   let genesisRun = 0;
   function showGenesis(genesis: Genesis) {
@@ -453,20 +453,21 @@ export function run(adapter: Adapter) {
     const row = el("genesis");
     row.hidden = !genesis;
     if (!genesis) return;
-    const say = (standing: keyof typeof GENESIS_LINE) => {
+    const say = (check: GenesisCheck) => {
       if (run !== genesisRun) return;
-      el("genesis-text").textContent = GENESIS_LINE[standing];
+      const { line, sealed } = genesisDisplay(check, { cluster, sealed: genesis.sealed });
+      el("genesis-text").textContent = GENESIS_LINE[line];
+      el("genesis-sealed").hidden = !sealed;
       row.classList.remove("device-ok", "device-problem", "device-none");
       row.classList.add(
-        standing === "held"
+        line === "held"
           ? "device-ok"
-          : standing === "checking" || standing === "unavailable"
+          : line === "checking" || line === "unavailable"
             ? "device-none"
             : "device-problem",
       );
     };
     el("genesis-mint").textContent = genesis.mint;
-    el("genesis-sealed").hidden = !genesis.sealed;
     say("checking");
     void genesis.standing().then(say, () => say("unavailable"));
   }

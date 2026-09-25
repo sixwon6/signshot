@@ -19,7 +19,7 @@ import { safeErrorText } from "../ui/errorText";
  * whatever cluster this build publishes on: the wallet address is the same keypair on every
  * cluster, so no wallet interaction is involved. A failure here is a line in Settings and never
  * reaches the camera, publishing or collecting; the one thing publishing takes from this store is
- * the last SGT it found, when mainnet cannot be asked (`lastKnownGenesisMint`).
+ * which SGT to prefer when a wallet holds several (`lastKnownGenesisMint`).
  */
 
 interface SeekerIdentity {
@@ -147,7 +147,7 @@ function lookup(target: string, force: boolean): Promise<void> {
     const owner = target as Address;
     const [sgt, skr] = await Promise.allSettled([
       needSgt
-        ? rpcWithTimeout((signal) => findSeekerGenesisToken(rpc, owner, signal))
+        ? rpcWithTimeout((signal) => findSeekerGenesisToken(rpc, owner, signal, base.sgtMint ?? undefined))
         : Promise.resolve(undefined),
       needSkr
         ? rpcWithTimeout((signal) => resolveSkrName(rpc, owner, signal))
@@ -201,9 +201,8 @@ async function setWallet(wallet: string | null): Promise<void> {
 }
 
 /**
- * The SGT mint last found for `wallet`, however old, or undefined. For a publication made while
- * mainnet cannot be asked (`publisherGenesisMint`): every reader checks the recorded mint again,
- * so a stale answer can never read as held.
+ * The SGT mint last found for `wallet`, however old, or undefined. Only ever a preference among
+ * the SGTs a fresh lookup finds (`publisherGenesisMint`), never a mint to name on its own.
  */
 export async function lastKnownGenesisMint(wallet: string): Promise<string | undefined> {
   const entry = state.entry?.wallet === wallet ? state.entry : await readCache();

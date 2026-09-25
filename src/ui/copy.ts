@@ -348,6 +348,8 @@ export const publish = {
   rowImage: "Image",
   rowDevice: "Device",
   rowGenesis: "Genesis Token",
+  /** When mainnet could not be asked as the draft was made; the document names none. */
+  rowGenesisUnchecked: "Couldn’t check.",
   rowWallet: "Wallet",
   needTitle: "Add a title to publish.",
   needAlbum:
@@ -410,19 +412,21 @@ export const proof = {
    */
   attestationBody: "Shows which device signed this, not what was photographed.",
   /**
-   * The document's Seeker Genesis Token claim, as `useGenesisStanding` found it on mainnet. The
-   * mint address is shown under the row whatever the answer.
+   * The document's Seeker Genesis Token claim, as `useGenesisStanding` found it on mainnet, keyed
+   * by `genesisDisplay`. "now" only for a sealed mainnet claim. The mint address is shown under
+   * the row whatever the answer.
    */
   genesisLabel: "Seeker Genesis Token",
   genesisNone: "Not recorded.",
   genesisStanding: {
     checking: "Checking…",
     held: "Held by the publishing wallet.",
-    moved: "Not held by the publishing wallet now.",
+    "not-held": "Not held by the publishing wallet.",
+    "not-held-now": "Not held by the publishing wallet now.",
     "not-genesis": "Not a Seeker Genesis Token.",
     unavailable: "Couldn’t check.",
   },
-  /** Under the row when the edition program verified the token at publish (`genesisSealed`). */
+  /** Under the row for a mainnet seal whose mint mainnet still finds to be an SGT (`genesisDisplay`). */
   genesisSealed: "Verified and sealed by the edition program at publish.",
   /** "edition of 5 numbered copies" — the person's word, beside the record's own address. */
   editionSize: (supply: number): string =>

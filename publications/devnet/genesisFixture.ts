@@ -1,21 +1,22 @@
 /**
  * The Seeker Genesis Token stand-in for the devnet acceptance.
  *
- * No real SGT exists on devnet: its mint authority is Solana Mobile's key. The devnet program
- * build (`--features devnet-genesis`) therefore swaps Solana Mobile's three addresses for a test
- * authority and a test group whose ed25519 seeds are public and reproducible — sha256 of the two
- * labels below — and this module builds what that authority would have minted, through
- * Token-2022's own instructions: a GROUP mint carrying `TokenGroup`, and a MEMBER mint with the
- * same three properties a real SGT has (that mint authority, a `MetadataPointer` to the group
- * mint, a `TokenGroupMember` of it), minted once to the publisher and frozen, as a held SGT is.
- * `era_editions` reads the results by hand; nothing here is special-cased for it.
+ * No real SGT exists on devnet: only Solana Mobile's key can add a member to their group. The
+ * devnet program build (`--features devnet-genesis`) therefore swaps Solana Mobile's addresses for
+ * a test authority and a test group whose ed25519 seeds are public and reproducible — sha256 of
+ * the two labels below — and this module builds what that authority would have minted, through
+ * Token-2022's own instructions: a GROUP mint carrying `TokenGroup` under the test authority, and
+ * a MEMBER mint with what a real SGT has (a `MetadataPointer` to the group mint, a
+ * `TokenGroupMember` of it, which Token-2022 writes only with the group authority's signature),
+ * minted once to the publisher and frozen, as a held SGT is. The test authority also mints and
+ * freezes; that is this fixture's convenience, not a property anything checks. `era_editions`
+ * reads the results by hand; nothing here is special-cased for it.
  *
  * Devnet only, like everything in this directory. The keys are worthless by construction.
  */
 import assert from "node:assert/strict";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-  address,
   createKeyPairSignerFromPrivateKeyBytes,
   some,
   type Address,
@@ -105,7 +106,7 @@ export async function groupInstructions(
 }
 
 /**
- * One member mint with the three SGT properties, and the publisher's frozen token account
+ * One member mint with the SGT's extensions, and the publisher's frozen token account
  * holding its one unit. Two transactions' worth: this one creates and holds; `foilInstructions`
  * builds the accounts the refusals need.
  */
@@ -180,9 +181,9 @@ export async function assertMemberDecodes(c: Pick<Context, "endpoint">, mint: Ad
   assert.ok(value && value.owner === TOKEN_2022_PROGRAM_ADDRESS, "The member mint is not a Token-2022 account");
   const bytes = new Uint8Array(Buffer.from(value.data[0], "base64"));
   assert.equal(
-    isSeekerGenesisMint(bytes, { mintAuthority: address(DEVNET_GENESIS_AUTHORITY), metadataAddress: address(DEVNET_GENESIS_GROUP) }),
+    isSeekerGenesisMint(bytes, mint, { metadataAddress: DEVNET_GENESIS_GROUP, groupAddress: DEVNET_GENESIS_GROUP }),
     true,
     "The client's decoder does not read the devnet member mint the program accepts",
   );
-  assert.equal(isSeekerGenesisMint(bytes), false, "The devnet stand-in must never read as a real SGT");
+  assert.equal(isSeekerGenesisMint(bytes, mint), false, "The devnet stand-in must never read as a real SGT");
 }

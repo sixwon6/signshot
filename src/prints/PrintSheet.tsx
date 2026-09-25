@@ -899,9 +899,11 @@ export function PrintSheet({
                   />
                 )}
                 {/* The mint the document names, found on mainnet when the draft was made. */}
-                {!!draft.edition.genesisMint && (
+                {draft.edition.genesisMint ? (
                   <Row label={copy.rowGenesis} value={shortAddress(draft.edition.genesisMint)} />
-                )}
+                ) : draft.genesisUnchecked ? (
+                  <Row label={copy.rowGenesis} value={copy.rowGenesisUnchecked} />
+                ) : null}
                 <WalletRow
                   owner={owner}
                   ownerLabel={ownerLabel}

@@ -132,29 +132,47 @@ the mint address is kept, because it stays the same when the token moves and so 
 Seeker across wallets.
 
 The document only claims the mint. The Proof sheet and the collect page check it on mainnet when
-they open: the mint account must be owned by Token-2022 and carry Solana Mobile's mint authority,
-metadata pointer and group membership, all three, and the publishing wallet must hold it now with
-a non-zero balance. They say held, not held now (an SGT can move between a user's own Seed Vault
-accounts), not a Genesis Token, or couldn't check; an unreachable mainnet never reads as not held.
-The SGT exists on mainnet only, so the check reads mainnet whatever network the edition is on. It
-is independent of the device attestation: one names the owner's token, the other the phone that
-signed. A wallet with no SGT publishes without the claim. `npm test` holds the hand-written mint
-decoder to the official `@solana-program/token-2022` encoder (`scripts/check-genesis.ts`), and
-the check was run against live mainnet tokens on 2026-09-21.
+they open, once the endpoint's genesis hash says it is mainnet: the mint account must be owned by
+Token-2022, its `MetadataPointer` and `TokenGroupMember` must name Solana Mobile's group
+(`GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`), the member must be the claimed mint itself, and
+the publishing wallet must hold it now with a non-zero balance. The membership is what cannot be
+forged: Token-2022 writes it only with the signature of the group's update authority, Solana
+Mobile's key. Mint authority and metadata pointer are anyone's to set on their own mint, and the
+recipe names no mint authority, so nothing checks one. Readers fetch at
+most 4 KB of the account; anything that does not decode as an SGT, however large or foreign, is
+not a Genesis Token, and an unreachable or wrong-cluster endpoint is "Couldn't check", never not
+held. The SGT exists on mainnet only, so the check reads mainnet whatever network the edition is
+on. It is independent of the device attestation: one names the owner's token, the other the phone
+that signed.
+
+The row says "Held by the publishing wallet.", "Not held by the publishing wallet.", "Not a
+Seeker Genesis Token." or "Couldn't check."; "now" is added only for a sealed claim, which the
+program saw held — including a sealed mint whose account has since closed, since an SGT can be
+burned out of a wallet. A seal counts on mainnet only (a devnet seal comes from the acceptance
+build's stand-ins), and "Verified and sealed by the edition program at publish." shows only
+while mainnet still finds the mint to be an SGT (`genesisDisplay`).
+
+At publish the app reads the wallet's Token-2022 accounts holding one unit of a 0-decimal mint,
+at most 100 mints per request. A wallet with several SGTs names the one found last time while it
+still holds it, else the lowest member number; a wallet with none publishes without the claim.
+When mainnet cannot be asked, the document names none and the review's Genesis Token row says
+"Couldn't check." — a remembered mint is never written into a document. `npm test` holds the
+hand-written mint decoder to the official `@solana-program/token-2022` encoder, and the lookup,
+the display rules and the mainnet program's group address to the same constants
+(`scripts/check-genesis.ts`). The check was run against a live mainnet SGT on 2026-09-24.
 
 The program seals it too. `publish` and `publish_in_album` take two more accounts at the end,
 the Genesis Token mint and the creator's token account for it, or the program id in each place
 for a publication without one (`programs/editions/README.md`, "The Seeker Genesis Token
-accounts"). With both, the program reads the two accounts by hand — Token-2022 owner, Solana
-Mobile's mint authority, metadata pointer and group membership, and a non-zero balance owned by
-the creator — refuses anything else with `InvalidGenesisToken`, and appends
-`seeker_genesis_token: <mint>` to the collection's locked attributes, so "held at publish" is
-on chain with no document to trust and no RPC to ask. The app passes the accounts on mainnet,
-where the token exists; a devnet edition carries the document's claim only. The reader
-(`sealedGenesisMint`) accepts the five attributes or the five plus that one, refuses a
-collection whose seal disagrees with the document, and the Proof sheet and the collect page say
-when an edition was sealed. The devnet program is built with `--features devnet-genesis`, which
-swaps Solana Mobile's addresses for the acceptance's stand-ins so the seal and its refusals run
+accounts"). With both, the program reads the two accounts by hand — Token-2022 owner, the mint
+checks above, and a non-zero balance owned by the creator — refuses anything else with
+`InvalidGenesisToken`, and appends `seeker_genesis_token: <mint>` to the collection's locked
+attributes, so "held at publish" is on chain with no document to trust and no RPC to ask. The app
+passes the accounts on mainnet, where the token exists; a devnet edition carries the document's
+claim only. The reader (`sealedGenesisMint`) accepts the five attributes or the five plus that
+one and refuses a collection whose seal disagrees with the document. The devnet program is built
+with `--features devnet-genesis`, which swaps Solana Mobile's addresses for the acceptance's
+stand-ins so the seal and its refusals run
 against a mock the session mints (`programs/editions/DEVNET.md`); a mainnet build never carries
 the feature. This needs the next deployment: the two devnet programs listed in
 `publications/deployments.ts` predate the accounts (`LEGACY_WITHOUT_GENESIS`) and are sent

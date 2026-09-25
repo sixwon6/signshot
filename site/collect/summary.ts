@@ -4,7 +4,7 @@
  * the page renders.
  */
 import { deviceName, securityLevelName } from "../../publications/core/attestation";
-import type { GenesisStanding } from "../../publications/core/genesisToken";
+import type { GenesisLine } from "../../publications/core/genesisToken";
 import type { AttestationSummary } from "../../publications/types";
 
 /** Lamports as a SOL string with no float arithmetic and no trailing-zero noise. */
@@ -28,19 +28,21 @@ export function deviceLine(a: AttestationSummary): string {
 }
 
 /**
- * The Genesis Token row, in the app's own words (`proof.genesisStanding` in `src/ui/copy.ts`). The
- * document only claims a mint; these are what the page says once mainnet has been asked, or
- * could not be. The mint address is shown under the line whatever the answer.
+ * The Genesis Token row, in the app's own words (`proof.genesisStanding` in `src/ui/copy.ts`),
+ * keyed by `genesisDisplay`. The document only claims a mint; these are what the page says once
+ * mainnet has been asked, or could not be. The mint address is shown under the line whatever the
+ * answer.
  */
-export const GENESIS_LINE: Record<GenesisStanding | "checking" | "unavailable", string> = {
+export const GENESIS_LINE: Record<GenesisLine, string> = {
   checking: "Checking…",
   held: "Held by the publishing wallet.",
-  moved: "Not held by the publishing wallet now.",
+  "not-held": "Not held by the publishing wallet.",
+  "not-held-now": "Not held by the publishing wallet now.",
   "not-genesis": "Not a Seeker Genesis Token.",
   unavailable: "Couldn’t check.",
 };
 
-/** Under the Genesis Token row when the edition program verified the token at publish. */
+/** Under the Genesis Token row for a mainnet seal whose mint mainnet still finds to be an SGT. */
 export const GENESIS_SEALED = "Verified and sealed by the edition program at publish.";
 
 /** What the device row says for a plain document that carries no attestation. */

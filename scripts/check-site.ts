@@ -71,11 +71,11 @@ ok("evidence the reader set aside renders as set aside, with the reason",
 const plain = readPhotoMetadata(JSON.parse(canonicalize(metadata(e) as unknown as JcsValue)), e);
 ok("a plain three-key document renders the no-attestation line",
   plain.attestation === undefined && plain.attestationProblem === undefined && NO_DEVICE === "No device attestation.");
-// The Genesis Token row: the page's five lines are the app's own (`proof.genesisStanding`), and a
+// The Genesis Token row: the page's six lines are the app's own (`proof.genesisStanding`), and a
 // document that names a mint reaches the page as a claim for it to check.
 const appCopy = readFileSync(resolve(root, "src", "ui", "copy.ts"), "utf8");
 ok("the Genesis Token row says what the app's Proof sheet says",
-  Object.values(GENESIS_LINE).length === 5 && Object.values(GENESIS_LINE).every((line) => appCopy.includes(`"${line}"`)));
+  Object.values(GENESIS_LINE).length === 6 && Object.values(GENESIS_LINE).every((line) => appCopy.includes(`"${line}"`)));
 const genesisDoc = canonicalize(metadata({ ...e, genesisMint: "So11111111111111111111111111111111111111112" }) as unknown as JcsValue);
 ok("a document that names a Genesis Token loads through the page's reader with the claimed mint",
   readPhotoMetadata(JSON.parse(genesisDoc), e, genesisDoc).genesisMint === "So11111111111111111111111111111111111111112");
@@ -126,11 +126,11 @@ const bundled = build.status === 0 ? readFileSync(resolve(dist, "collect", "coll
 ok("bundle carries the trusted devnet programs and reads no process.env",
   bundled.includes("7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU") && bundled.includes("BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq") && !bundled.includes("process.env"));
 ok("bundle knows the attested document schema", bundled.includes("seedshot-attestation/1"));
-ok("bundle knows the Genesis Token claim and Solana Mobile's three addresses",
-  bundled.includes("seedshot-genesis/1") && bundled.includes("GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4") && bundled.includes("GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te"));
+ok("bundle knows the Genesis Token claim, Solana Mobile's group and mainnet's genesis hash",
+  bundled.includes("seedshot-genesis/1") && bundled.includes("GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te") && bundled.includes("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"));
 const proxy = readFileSync(resolve(site, "functions", "api", "solana.ts"), "utf8");
-ok("the mainnet proxy allows both methods the Genesis Token check calls",
-  /ALLOWED=new Set\(\[[^\]]*'getAccountInfo'[^\]]*'getTokenAccountsByOwner'[^\]]*\]\)/.test(proxy));
+ok("the mainnet proxy allows the three methods the Genesis Token check calls",
+  ["getGenesisHash", "getAccountInfo", "getTokenAccountsByOwner"].every((method) => new RegExp(`ALLOWED=new Set\\(\\[[^\\]]*'${method}'`).test(proxy)));
 
 /**
  * Every origin the bundle could open a connection to must be allowed by `connect-src`, or the

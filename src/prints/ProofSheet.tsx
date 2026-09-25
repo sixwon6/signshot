@@ -16,6 +16,7 @@ import {
   type AttestationSummary,
 } from "../../publications/core/attestation";
 import { useGenesisStanding } from "../seeker/useGenesisStanding";
+import { genesisDisplay } from "../../publications/core/genesisToken";
 
 export function ProofSheet({
   proof,
@@ -27,7 +28,10 @@ export function ProofSheet({
   const insets = useSafeAreaInsets(),
     [error, setError] = useState("");
   const draft = proof.kind === "core" ? proof.draft : null;
-  const genesis = useGenesisStanding(draft?.edition.genesisMint, draft?.edition.creator);
+  const genesisCheck = useGenesisStanding(draft?.edition.genesisMint, draft?.edition.creator);
+  const genesis = genesisCheck && draft
+    ? genesisDisplay(genesisCheck, { cluster: draft.edition.cluster, sealed: !!draft.edition.genesisSealed })
+    : null;
   const published = proof.confirmation === "confirmed";
   const cached = proof.confirmation === "cached";
   // `safeErrorText`: Android's `Linking`/`Clipboard` errors quote the URL they were given.
@@ -137,14 +141,14 @@ export function ProofSheet({
                 )}
                 {/* The document's claim, checked on mainnet when this sheet opens. */}
                 <Row label={copy.genesisLabel}>
-                  {genesis ? copy.genesisStanding[genesis] : copy.genesisNone}
+                  {genesis ? copy.genesisStanding[genesis.line] : copy.genesisNone}
                 </Row>
                 {!!draft.edition.genesisMint && (
                   <Text style={s.value} selectable>
                     {draft.edition.genesisMint}
                   </Text>
                 )}
-                {draft.edition.genesisSealed && (
+                {genesis?.sealed && (
                   <Text style={sheetStyles.help}>{copy.genesisSealed}</Text>
                 )}
               </>

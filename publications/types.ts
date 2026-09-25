@@ -53,13 +53,14 @@ export interface CoreMetadata {
    * The Seeker Genesis Token mint the document names (`publications/core/genesisToken.ts`). A
    * CLAIM, read from the hash-bound document and never from a saved copy: a screen says it is
    * held only after `verifyGenesisToken` has checked it against mainnet. Absent when the
-   * publishing wallet held none, or none could be found, when the document was made.
+   * publishing wallet held none, or mainnet could not be asked, when the document was made.
    */
   genesisMint?: string;
   /**
-   * The edition program verified that mint at publish — Solana Mobile's three properties and the
-   * creator's balance — and sealed it into the collection's locked attributes. Read from the chain
+   * The edition program verified that mint at publish — a Seeker Genesis Token, held by the
+   * creator — and sealed it into the collection's locked attributes. Read from the chain
    * on every load (`sealedGenesisMint`), never from a saved copy; never set without `genesisMint`.
+   * It counts on mainnet only (`genesisDisplay`).
    */
   genesisSealed?: boolean;
 }
@@ -112,6 +113,11 @@ export interface CoreDraft {
    */
   album?: string;
   albumName?: string;
+  /**
+   * Mainnet could not be asked for the wallet's Seeker Genesis Token when the draft was made, so
+   * the document names none (`publisherGenesisMint`). The review says so. A local note only.
+   */
+  genesisUnchecked?: true;
   /**
    * The price of a copy in LAMPORTS, written as a decimal integer string: "100000000" is 0.1 SOL.
    *

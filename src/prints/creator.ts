@@ -380,6 +380,7 @@ export async function createDraft(
     };
     // The publishing wallet's Seeker Genesis Token, by mint address (`seedshot-genesis/1`). Its
     // own evidence, independent of the attestation below: every reader checks it against mainnet.
+    // `undefined`: mainnet could not be asked, so the document names none and the review says so.
     const genesisMint = await genesis;
     if (genesisMint) e.genesisMint = genesisMint;
     // The phone's keystore attests this exact publication (the manifest names the edition, the
@@ -418,6 +419,7 @@ export async function createDraft(
       imagePath: image.path,
       sourceHash,
       ...(chosen ? { album: chosen.address, albumName: chosen.name } : {}),
+      ...(genesisMint === undefined ? { genesisUnchecked: true as const } : {}),
       // Absent for a free edition, so a draft written before prices existed and one published free
       // afterwards are the same record.
       ...(price ? { price } : {}),

@@ -88,13 +88,19 @@ export async function groupInstructions(
   }
   const group = keys.group.address;
   const authority = keys.authority.address;
-  const space = getMintSize([
-    extension("GroupPointer", { authority: some(authority), groupAddress: some(group) }),
+  const pointer = extension("GroupPointer", { authority: some(authority), groupAddress: some(group) });
+  // Token-2022 refuses InitializeMint2 unless the account is exactly as long as the extensions
+  // initialized so far (`_process_initialize_mint`, InvalidAccountData), and InitializeTokenGroup
+  // grows it for the `TokenGroup` itself. So the account starts at the fixed-size length, with rent
+  // already paid for the final one.
+  const space = getMintSize([pointer]);
+  const full = getMintSize([
+    pointer,
     extension("TokenGroup", { updateAuthority: some(authority), mint: group, size: 0n, maxSize: 1000n }),
   ]);
   return [
     getCreateAccountInstruction({
-      payer: c.payer, newAccount: keys.group, lamports: await rent(c, space), space,
+      payer: c.payer, newAccount: keys.group, lamports: await rent(c, full), space,
       programAddress: TOKEN_2022_PROGRAM_ADDRESS,
     }),
     getInitializeGroupPointerInstruction({ mint: group, authority: some(authority), groupAddress: some(group) }),
@@ -118,15 +124,17 @@ export async function memberInstructions(
   const group = keys.group.address;
   const authority = keys.authority.address;
   const mint = member.address;
-  const space = getMintSize([
+  const fixed = [
     extension("MetadataPointer", { authority: some(authority), metadataAddress: some(group) }),
     extension("GroupMemberPointer", { authority: some(authority), memberAddress: some(mint) }),
-    extension("TokenGroupMember", { mint, group, memberNumber: 0n }),
-  ]);
+  ];
+  // As in `groupInstructions`: InitializeTokenGroupMember grows the account for its own extension.
+  const space = getMintSize(fixed);
+  const full = getMintSize([...fixed, extension("TokenGroupMember", { mint, group, memberNumber: 0n })]);
   const held = await genesisTokenAccount(c.payer.address, mint);
   return [
     getCreateAccountInstruction({
-      payer: c.payer, newAccount: member, lamports: await rent(c, space), space,
+      payer: c.payer, newAccount: member, lamports: await rent(c, full), space,
       programAddress: TOKEN_2022_PROGRAM_ADDRESS,
     }),
     getInitializeMetadataPointerInstruction({ mint, authority: some(authority), metadataAddress: some(group) }),

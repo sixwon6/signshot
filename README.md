@@ -93,6 +93,11 @@ optional `Offer` holding the price. The photograph's full-size frames never leav
 public copy is a compressed derivative. A copy is ownership of the NFT — not of the image, and not
 evidence about the scene in front of the camera.
 
+The metadata document follows the Metaplex JSON standard: `name`, `description`, `image`,
+`external_url` (the edition's collect link), `attributes`, and `properties` with the one JPEG
+under `files` and `category: "image"`, beside the evidence below. Its hash is on chain, and the
+readers refuse a link, file list or trait the app would not have written.
+
 ## Storage
 
 The image and the document are ANS-104 data items signed on the phone by a per-wallet upload key
@@ -131,10 +136,13 @@ edition address, creator, nonce, the public image fingerprint and the private ca
 fingerprints. The key signs the manifest, the certificate chain and signature go into the document
 under `properties.seedshot`, and the key is deleted. Because the document's hash is committed on
 chain, the evidence cannot be swapped or transplanted: a certificate from another key, phone or
-publication carries a different challenge and is refused. The document also carries Metaplex
-`attributes` (`Device: Solana Seeker`, `Attestation: StrongBox hardware key`) so wallets and
-explorers show the device without parsing certificates; the app re-derives them from the
-certificate on every read and refuses a document whose attributes overclaim.
+publication carries a different challenge and is refused. The document's `attributes` name the
+device (`Device: Solana Seeker`) for wallets and explorers only when the full verdict below passed
+as the document was sealed, and a draft whose verdict no longer passes when it is sent is sealed
+again without it. The app re-derives the trait from the certificate on every read and refuses one
+from another app or a phone without verified boot and a locked bootloader. Documents sealed before
+this carried `Device` and `Attestation` unconditionally, and stay readable on the deployments they
+were published on.
 
 The Proof sheet, the publish review and the collect page say "Signed on a Solana Seeker ·
 StrongBox hardware key · verified boot, bootloader locked" only when every one of these holds
@@ -186,7 +194,7 @@ npm run verify:attestation -- --edition <address> --cluster devnet
 ```
 
 It also checks the on-chain metadata hash, prints what the readers show, and exits non-zero on
-any failure. A phone that cannot attest publishes the plain three-field document. The native path
+any failure. A phone that cannot attest publishes the document without it. The native path
 was exercised on a Seeker on 2026-09-16 (`dapp-store/attestation-device-check-2026-09-16.json`).
 
 ## Seeker Genesis Token
@@ -220,7 +228,15 @@ Seeker Genesis Token." or "Couldn't check."; "now" is added only for a sealed cl
 program saw held — including a sealed mint whose account has since closed, since an SGT can be
 burned out of a wallet. A seal counts on mainnet only (a devnet seal comes from the acceptance
 build's stand-ins), and "Verified and sealed by the edition program at publish." shows only
-while mainnet still finds the mint to be an SGT (`genesisDisplay`).
+while mainnet still finds the mint to be an SGT (`genesisDisplay`). On mainnet, where the app
+has the program seal every claim it publishes, a claim without the seal reads as none
+(`publishedGenesisClaim`).
+
+A seeker-only edition is collected with a Genesis Token: one copy per token. The app and the
+collect page find the collector's SGT with the same membership check (`findHeldGenesisToken`; on
+devnet the acceptance's stand-in, which is what the devnet program build accepts), key the claim
+receipt on its mint and hand the mint and its token account to `collect` or `buy`
+(`publications/core/seekerClaim.ts`). A wallet without one reads "Needs a Seeker Genesis Token."
 
 At publish the app reads the wallet's Token-2022 accounts holding one unit of a 0-decimal mint,
 at most 100 mints per request. A wallet with several SGTs names the one found last time while it

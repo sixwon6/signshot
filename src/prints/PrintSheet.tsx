@@ -923,10 +923,19 @@ export function PrintSheet({
                       label={estimate.networkFee}
                       value={`${sol(quote.prepared.estimateBreakdown.networkFee)} SOL`}
                     />
+                    {/* The simulated balance delta contains the storage transfer; it is stated
+                        on its own row rather than twice. */}
                     <Row
                       label={estimate.accountCost}
-                      value={`${sol(quote.prepared.estimateBreakdown.accountCost)} SOL`}
+                      value={`${sol(
+                        quote.prepared.estimateBreakdown.accountCost > quote.storageLamports
+                          ? quote.prepared.estimateBreakdown.accountCost - quote.storageLamports
+                          : 0n,
+                      )} SOL`}
                     />
+                    {quote.storageLamports > 0n && (
+                      <Row label={estimate.storage} value={`${sol(quote.storageLamports)} SOL`} />
+                    )}
                     <Row
                       label={estimate.allowance}
                       value={`${sol(quote.prepared.estimateBreakdown.allowance)} SOL`}

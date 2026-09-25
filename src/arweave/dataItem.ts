@@ -19,8 +19,9 @@ export const OWNER_LENGTH = 32;
 const DATA_ITEM_OVERHEAD = 2 + SIGNATURE_LENGTH + OWNER_LENGTH + 1 + 1 + 8 + 8;
 
 /**
- * The app's item cap, below Turbo's free-tier limit (`TURBO_FREE_ITEM_BYTES`). The upload key has
- * no funds, so an oversize item must fail here, before the wallet is involved, not as a 402.
+ * The app's item cap, below Turbo's free-tier limit (`TURBO_FREE_ITEM_BYTES`), on every network:
+ * devnet uploads ride the free tier, and mainnet pays for items of the size devnet tests. An
+ * oversize item must fail here, before the wallet is involved, not as a 402.
  */
 const MAX_DATA_ITEM_BYTES = 100 * 1024;
 
@@ -183,8 +184,7 @@ export function buildDataItem(args: {
   if (total >= MAX_DATA_ITEM_BYTES) {
     throw new Error(
       `dataItem: ${total} bytes is at or over the ${MAX_DATA_ITEM_BYTES}-byte free-tier limit ` +
-        `(${data.length} of data, ${DATA_ITEM_OVERHEAD + tagsBytes.length} of header and tags). ` +
-        `The upload key holds no funds, so a paid item cannot be sent.`,
+        `(${data.length} of data, ${DATA_ITEM_OVERHEAD + tagsBytes.length} of header and tags).`,
     );
   }
 

@@ -5,9 +5,11 @@ import { base58Encode, fromHex, toHex } from "./codec";
 import { OWNER_LENGTH, SIGNATURE_LENGTH, type DataItemSigner } from "./dataItem";
 
 /**
- * Per-wallet ed25519 key that signs Turbo free-tier uploads, kept in SecureStore (Keystore-encrypted).
- * One key per wallet, not per install, so a public `owner` never links two wallets. It holds no
- * funds, and the secret bytes never leave this module.
+ * Per-wallet ed25519 key that signs Turbo uploads, kept in SecureStore (Keystore-encrypted). One
+ * key per wallet, not per install, so a public `owner` never links two wallets. It holds no SOL: on
+ * mainnet its base58 address holds the Turbo credit each publication transaction buys for it
+ * (`publications/storage.ts`), and devnet uploads ride the free tier. The secret bytes never leave
+ * this module.
  */
 
 /** SecureStore rejects `:` in keys, so this namespace uses a `.` separator. */
@@ -134,7 +136,8 @@ export async function getUploadKey(wallet: string): Promise<UploadKey> {
 /**
  * Remove this wallet's upload seed. SecureStore's Android preference key names the wallet in
  * cleartext, so forgetting a wallet must delete it. Only safe when no upload is still owed: a
- * regenerated key cannot reproduce item ids already referenced on chain.
+ * regenerated key cannot reproduce item ids already referenced on chain. Any unspent storage
+ * credit (the headroom above each quote) stays with the deleted key's address.
  */
 export async function deleteUploadKey(wallet: string): Promise<void> {
   const secureKey = uploadKeySecureStoreKey(wallet);

@@ -111,6 +111,8 @@ export const estimate = {
   hide: "Hide cost details",
   networkFee: "Network fee",
   accountCost: "Accounts and Core fee",
+  /** Mainnet only: the Arweave upload, paid to Turbo in the same approval. */
+  storage: "Arweave storage",
   allowance: "Wallet allowance",
 } as const;
 

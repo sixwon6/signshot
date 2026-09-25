@@ -97,7 +97,8 @@ type UploadOutcome =
 
 /**
  * POST one signed data item, unless Turbo already holds it: the id is a pure function of the bytes,
- * and re-posting would spend free-tier allowance. `200` and `202` are both success; neither means
+ * and re-posting would spend free-tier allowance or paid credit. The signer's own balance pays when
+ * the free tier does not; no header selects it. `200` and `202` are both success; neither means
  * the gateway serves it yet. A returned id other than `expectedId` throws: that id is already in a
  * signed `uri`, so the mismatch means our serialization disagrees with the bundler's parse.
  *
@@ -126,8 +127,8 @@ export async function uploadDataItem(
   // RN's narrower `BodyInit_` type; `RequestInit["body"]` is used because @types/node (the scripts
   // project) declares no standalone `BodyInit`.
   //
-  // The next host is tried only on a transport failure or 5xx; a 4xx is an answer (402 allowance,
-  // 413 size). Status is re-read first, so a timed-out POST that was accepted is not sent twice.
+  // The next host is tried only on a transport failure or 5xx; a 4xx is an answer (402 allowance
+  // or credit, 413 size). Status is re-read first, so a timed-out POST that was accepted is not sent twice.
   let res: Response | undefined;
   let attempted = false;
   for (const url of TURBO_UPLOAD_URLS) {

@@ -34,7 +34,15 @@ import {
   type ReviewedReceipt,
 } from "./reviewedReceipt";
 import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
-import { checkStorageCapacity, storageProblem } from "../../publications/storage";
+import {
+  checkStorageCapacity,
+  findStoragePayment,
+  paidStorage,
+  quoteStoragePayment,
+  settleStoragePayment,
+  storagePaymentInstructions,
+  storageProblem,
+} from "../../publications/storage";
 import {
   MAX_PRINT_EDGE,
   account,
@@ -446,9 +454,30 @@ async function publicationItems(d: CoreDraft) {
     throw new Error("Saved publication identifiers changed.");
   return { signer, img, meta };
 }
+/**
+ * Before any approval. Devnet: the free allowance, advisory. Mainnet: the storage payment the
+ * publication transaction will carry, or `null` when the bundler already holds both items.
+ */
 async function checkStorage(d: CoreDraft) {
   const { signer, img, meta } = await publicationItems(d);
-  return checkStorageCapacity(signer.ownerBase58, [img, meta]);
+  if (paidStorage(cluster)) return quoteStoragePayment(signer.ownerBase58, [img, meta]);
+  await checkStorageCapacity(signer.ownerBase58, [img, meta]);
+  return null;
+}
+/**
+ * Mainnet, after confirmation: claim the credit the publication transaction bought. A wallet that
+ * never returned its receipt is answered from the chain, by the fingerprint saved before it opened.
+ */
+async function settleStorage(r: CaptureRecord, d: CoreDraft) {
+  const { signer, img, meta } = await publicationItems(d);
+  await settleStoragePayment(async () => {
+    if (d.attempt?.signature) return d.attempt.signature;
+    const quoteId = (d.attempt as ReviewedAttempt | undefined)?.quoteId;
+    if (!d.attempt || !quoteId) throw new Error("This publication's wallet receipt is missing.");
+    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, d.edition.edition, quoteId);
+    await save(r, d);
+    return d.attempt.signature;
+  }, signer.ownerBase58, [img, meta]);
 }
 async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
@@ -592,7 +621,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   if (d.album) await confirmedAlbum(d.album, d.edition.creator);
   // Quote only. Public upload begins only after an approved, confirmed transaction.
   onProgress?.("storage");
-  await checkStorage(d);
+  const storage = await checkStorage(d);
   const ix = await instruction(
     d.edition,
     d.edition.creator,
@@ -625,13 +654,18 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   const floor =
     OPERATION_FLOOR_LAMPORTS[operationOf(d)] +
     (ixs.length > 1 ? OPERATION_FLOOR_LAMPORTS["set-offer"] : 0n);
+  // Mainnet storage is bought in the same approval (`publications/storage.ts`): it lands only if
+  // the edition does, and the simulated estimate already contains it.
+  if (storage) ixs.push(...storagePaymentInstructions(d.edition.creator, storage));
   onProgress?.("estimate");
   return {
     step: "sign",
     metadataId: d.metadataId,
     // Carried so the approval can rebuild the same transaction on a fresh blockhash.
     instructions: ixs,
-    prepared: await prepareTransaction(RPC_ENDPOINT, d.edition.creator, ixs, [], floor),
+    prepared: await prepareTransaction(RPC_ENDPOINT, d.edition.creator, ixs, [],
+      floor + (storage?.lamports ?? 0n)),
+    storageLamports: storage?.lamports ?? 0n,
   } as const;
 }
 /**
@@ -661,10 +695,11 @@ async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
   delete d.storageError;
   await save(r, d);
   try {
-    await checkStorage(d);
+    if (paidStorage(cluster)) await settleStorage(r, d);
+    else await checkStorage(d);
     await publish(d);
   } catch (error) {
-    d.storageError = storageProblem(error);
+    d.storageError = storageProblem(error, paidStorage(cluster));
     await save(r, d);
     throw new Error(d.storageError.message);
   }
@@ -710,7 +745,9 @@ export async function sendSetup(
         throw new Error("A publishing attempt may still land. Check its status before retrying.");
     }
     if (d.confirmedAt) throw new Error("The previously confirmed record cannot be checked on this connection. Try again later.");
-    await checkStorage(d);
+    // The free allowance can run out after review; a paid publication's storage is in the
+    // reviewed transaction already.
+    if (!paidStorage(cluster)) await checkStorage(d);
     onProgress?.("wallet");
     await session.connectAnd(async (wallet) => {
       const owner = await session.authorizeSession(wallet);

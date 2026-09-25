@@ -648,14 +648,16 @@ async function collectorChecks() {
   const PROGRAM = key(40);
   const keys = await addresses(PROGRAM, e.creator, e.nonce);
   const open: CoreMetadata = { ...e, program: PROGRAM, edition: keys.edition, collection: keys.collection };
-  const seekerOnly: CoreMetadata = { ...open, cluster: "devnet", seekerOnly: true };
+  // The rule is read off the Edition beside the metadata; the claim is the same record either way.
+  const seekerOnly = open;
   stub(both());
-  ok("an open edition's claim carries no token and asks nothing", (await claimGenesis("https://devnet-collector.invalid", open, HOLDER)) === undefined && calls.length === 0);
+  ok("an open edition's claim carries no token and asks nothing",
+    (await claimGenesis("https://devnet-collector.invalid", "devnet", false, HOLDER)) === undefined && calls.length === 0);
   stub(both());
-  const token = await claimGenesis("https://devnet-collector.invalid", seekerOnly, HOLDER);
-  ok("a seeker-only claim carries the collector's token", token?.mint === A && token.token === TA);
+  const token = await claimGenesis("https://devnet-collector.invalid", "devnet", true, HOLDER);
+  ok("a seeker-only claim carries the collector's token, the stand-in on devnet", token?.mint === A && token.token === TA);
   stub({ wallet: [], accounts: {} });
-  ok("a seeker-only claim without a token is null", (await claimGenesis("https://devnet-collector.invalid", seekerOnly, HOLDER)) === null);
+  ok("a seeker-only claim without a token is null", (await claimGenesis("https://devnet-collector.invalid", "devnet", true, HOLDER)) === null);
   const disc = sha256(new TextEncoder().encode("account:Receipt")).slice(0, 8);
   const u16 = (n: number) => new Uint8Array([n & 255, n >> 8]);
   const print2 = (await addresses(PROGRAM, e.creator, e.nonce, 2)).print;

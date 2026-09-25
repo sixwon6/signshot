@@ -424,7 +424,7 @@ export function CollectSheet({
                     value={copy.issuedValue(collectable.minted, e.supply)}
                   />
                 )}
-                {!!e.seekerOnly && <Row label={copy.collectorsLabel} value={copy.seekerOnly} />}
+                {!!collectable?.seekerOnly && <Row label={copy.collectorsLabel} value={copy.seekerOnly} />}
               </View>
             )}
             {!!blocker && <Text style={sheetStyles.body}>{blocker}</Text>}

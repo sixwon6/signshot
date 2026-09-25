@@ -226,6 +226,11 @@ export interface Collectable {
    * transaction, and the buyer's approval carries the price and revision it saw.
    */
   offer: EditionOffer | null;
+  /**
+   * Only Seeker Genesis Token holders may collect, one copy per token: read off the Edition, which
+   * the publication sealed it into, and never changed.
+   */
+  seekerOnly: boolean;
   /** The permanent chain evidence, including the publisher's own receipt for copy 1. */
   publication: Awaited<ReturnType<typeof loadTrustedEdition>>["publication"];
 }
@@ -255,6 +260,7 @@ export async function loadCollectable(edition: string): Promise<Collectable> {
     remaining: result.remaining,
     imageUri: `data:image/jpeg;base64,${getBase64Decoder().decode(result.imageBytes)}`,
     offer: result.offer,
+    seekerOnly: result.seekerOnly,
     publication: result.publication,
   };
 }
@@ -373,7 +379,7 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
 
     // A seeker-only edition's claim is keyed on the wallet's Seeker Genesis Token, found on this
     // build's own cluster (`claimGenesis`): `null` when it holds none, `undefined` when open.
-    const genesis = wallet === e.creator ? undefined : await claimGenesis(RPC_ENDPOINT, e, wallet);
+    const genesis = wallet === e.creator ? undefined : await claimGenesis(RPC_ENDPOINT, cluster, c.seekerOnly, wallet);
     const found = genesis ? { genesis } : {};
     // The publisher's receipt was created by `publish` atomically with print #1 and is already
     // verified inside `c.publication`, so it costs no request to answer for them.
@@ -387,7 +393,7 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
         attempt,
         // A token's copy may sit with the wallet that claimed it, not this one.
         ...(mine.collector === wallet ? { number: mine.number } : {}),
-        reason: e.seekerOnly && wallet !== e.creator ? words.alreadyGenesis : ALREADY,
+        reason: genesis ? words.alreadyGenesis : ALREADY,
         ...found,
       };
 

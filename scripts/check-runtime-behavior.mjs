@@ -837,25 +837,27 @@ if (!process.argv.includes("--worker")) {
     assert.equal(publishWords.royaltyValue(1000), "10%");
     assert.equal(collectWords.seekerOnly, "Seeker holders only");
     assert.equal(collectWords.needsGenesis, "Needs a Seeker Genesis Token.");
+    const types = await import("../publications/types.ts");
+    assert.equal(types.DEFAULT_ROYALTY_BPS, 500, "5% unless the creator chose");
+    assert.equal(types.MAX_ROYALTY_BPS, 1000, "10% at most");
+    assert.equal(types.DEFAULT_SEEKER_ONLY, true, "Seeker holders only unless the creator chose");
     const creator = source("../src/prints/creator.ts");
-    assert.match(creator, /DEFAULT_ROYALTY_BPS = 500;/);
-    assert.match(creator, /MAX_ROYALTY_BPS = 1000;/);
-    assert.match(creator, /if \(!programFeatures\(program\)\.royaltiesAndSeekerOnly\) \{\s*if \(requested\) throw/,
-      "a deployment without the terms is refused them, never sent them");
-    assert.match(creator, /seekerOnly: requested\?\.seekerOnly \?\? true/, "Seeker holders only is the default");
     assert.match(creator, /metadata\(e, attested\.attestation\.bundle, await sealVerdict\(attested\.attestation\.summary\)\)/,
       "the document names the device only on the verdict judged as it is sealed");
     assert.ok(creator.indexOf("await resealDocument(r, d);") > creator.indexOf("await renewStaleAttestation(r, d);") &&
       creator.indexOf("await resealDocument(r, d);") < creator.indexOf("const ix = await instruction("),
       "a draft's document is resealed before its hash goes into the instruction");
-    assert.match(creator, /current\.edition\.royaltyBps !== d\.edition\.royaltyBps \|\| current\.edition\.seekerOnly !== d\.edition\.seekerOnly/,
-      "a stale screen cannot approve other terms");
     const sheet = source("../src/prints/PrintSheet.tsx");
     assert.match(sheet, /setDistribution\(!!features\?\.royaltiesAndSeekerOnly\)/, "the form offers the terms only where the program takes them");
-    assert.match(sheet, /distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined/);
+    assert.match(sheet, /distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined/, "the form's terms reach createDraft");
     assert.match(sheet, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
+    assert.match(sheet, /Math\.max\(0, bps - 100\)/, "down to 0%");
+    assert.match(sheet, /value=\{copy\.royaltyValue\(draft\.royaltyBps \?\? 0\)\}/, "the review reads the royalty back off the draft");
+    assert.match(sheet, /!!draft\.seekerOnly && draft\.edition\.supply > 1/, "and the rule, where there is a copy to collect");
     const collectFlow = source("../src/prints/collect.ts");
     assert.equal(collectFlow.split("await claimedCopy(").length - 1, 2, "the eligibility and the confirmation both read the claim's own receipt");
+    assert.match(collectFlow, /claimGenesis\(RPC_ENDPOINT, cluster, c\.seekerOnly, wallet\)/, "the rule comes off the loaded edition");
+    assert.match(collectFlow, /seekerOnly: result\.seekerOnly,/);
     assert.doesNotMatch(collectFlow, /collectedCopy\(/, "no wallet-keyed receipt read on a path a seeker-only edition takes");
     assert.match(collectFlow, /buyInstruction\([^)]*quote\.genesis\)/);
     assert.match(collectFlow, /collectInstruction\([^)]*quote\.genesis\)/);

@@ -17,8 +17,6 @@ import type { CaptureRecord, PhotoEdit } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
 import {
   createDraft,
-  DEFAULT_ROYALTY_BPS,
-  MAX_ROYALTY_BPS,
   prepareSetup,
   sendSetup,
   discardDraft,
@@ -51,6 +49,11 @@ import {
   configuredProgram,
   programFeatures,
 } from "../../publications/deployments";
+import {
+  DEFAULT_ROYALTY_BPS,
+  DEFAULT_SEEKER_ONLY,
+  MAX_ROYALTY_BPS,
+} from "../../publications/types";
 
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
@@ -150,7 +153,7 @@ export function PrintSheet({
    * fresh publication uses takes them.
    */
   const [royaltyBps, setRoyaltyBps] = useState(DEFAULT_ROYALTY_BPS);
-  const [seekerOnly, setSeekerOnly] = useState(true);
+  const [seekerOnly, setSeekerOnly] = useState(DEFAULT_SEEKER_ONLY);
   const [distribution, setDistribution] = useState(false);
   const [quote, setQuote] = useState<Awaited<
     ReturnType<typeof prepareSetup>
@@ -238,8 +241,8 @@ export function PrintSheet({
           setAlbumMode(state.draft.album ? "existing" : "none");
           setSolo(state.draft.edition.supply === 1);
           setCount(String(state.draft.edition.supply));
-          setRoyaltyBps(state.draft.edition.royaltyBps ?? DEFAULT_ROYALTY_BPS);
-          setSeekerOnly(state.draft.edition.seekerOnly ?? true);
+          setRoyaltyBps(state.draft.royaltyBps ?? DEFAULT_ROYALTY_BPS);
+          setSeekerOnly(state.draft.seekerOnly ?? DEFAULT_SEEKER_ONLY);
         }
         if (state.reason) setStatus(state.reason);
         // Warms the program check while the details are typed; publishing asks again and refuses.
@@ -952,10 +955,11 @@ export function PrintSheet({
                     }
                   />
                 )}
-                {draft.edition.royaltyBps !== undefined && (
-                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.edition.royaltyBps)} />
+                {/* Sealed at publish beside the price, where the deployment takes them. */}
+                {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && (
+                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps ?? 0)} />
                 )}
-                {!!draft.edition.seekerOnly && draft.edition.supply > 1 && (
+                {!!draft.seekerOnly && draft.edition.supply > 1 && (
                   <Row label={copy.rowCollectors} value={collectCopy.seekerOnly} />
                 )}
                 {!!draft.edition.description && (

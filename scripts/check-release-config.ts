@@ -237,6 +237,10 @@ async function main(argv: readonly string[]): Promise<void> {
   if (refusal) fail(refusal);
   const rpc = rpcRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (rpc) fail(rpc);
+  // The devnet funding tool (`src/dev/DevnetFunding.tsx`) is compiled in when these are set.
+  for (const name of ["EXPO_PUBLIC_DEVNET_TEST_PAYER", "EXPO_PUBLIC_DEVNET_TEST_LAMPORTS"])
+    if (cluster !== "devnet" && process.env[name])
+      fail(`${name} is set on a ${cluster} build; it belongs to a devnet test session only.`);
 
   // Imported only now: deployments.ts reads the EXPO_PUBLIC_EDITIONS_* overrides at module load.
   const { configuredProgram, pinnedImage } = await import("../publications/deployments");

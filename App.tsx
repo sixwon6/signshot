@@ -15,7 +15,9 @@ import { useAppFonts } from "./src/ui/fonts";
 // leaves the app on Android's own font rather than on a blank screen.
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
-const DevnetFunding = __DEV__ && CLUSTER_NAME === "devnet" && process.env.EXPO_PUBLIC_DEVNET_TEST_PAYER
+// Devnet builds only, and only when a devnet session's payer is named at build time
+// (`programs/editions/DEVNET.md`); `release:check` refuses both variables on mainnet.
+const DevnetFunding = CLUSTER_NAME === "devnet" && process.env.EXPO_PUBLIC_DEVNET_TEST_PAYER
   ? (require("./src/dev/DevnetFunding") as typeof import("./src/dev/DevnetFunding")).DevnetFunding
   : null;
 

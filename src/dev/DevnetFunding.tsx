@@ -16,7 +16,8 @@ import { colors } from "../ui/theme";
 import { safeErrorText } from "../ui/errorText";
 
 const endpoint = "https://api.devnet.solana.com";
-const target = 2_400_000_000;
+/** The session's whole budget, as its `balance` command prints it ("total"). */
+const target = Number(process.env.EXPO_PUBLIC_DEVNET_TEST_LAMPORTS ?? "");
 type Review = { source: string; balance: number; amount: number };
 type Attempt = { signature: string; lastValidBlockHeight: string; confirmed?: boolean; wire?: string; quoteId?: string };
 const sol = (value: number) => (value / 1_000_000_000).toFixed(9).replace(/\.?0+$/, "");
@@ -55,8 +56,10 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
   }, [key]);
 
   async function guard() {
-    if (!__DEV__ || CHAIN !== "solana:devnet" || chain !== "solana:devnet")
-      throw new Error("This tool requires a devnet debug build.");
+    if (CHAIN !== "solana:devnet" || chain !== "solana:devnet")
+      throw new Error("This tool requires a devnet build.");
+    if (!Number.isSafeInteger(target) || target <= 0)
+      throw new Error("EXPO_PUBLIC_DEVNET_TEST_LAMPORTS is not set to the session's total.");
     address(recipient);
     if (await request(endpoint, "getGenesisHash", []) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG")
       throw new Error("The connection is not devnet.");
@@ -182,7 +185,7 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
   return <SafeAreaView style={s.safe}><ScrollView contentContainerStyle={s.content}>
     <Text style={s.title}>Fund devnet tests</Text>
     <Text style={s.text}>DEVNET · Test tokens only</Text>
-    <Text style={s.text}>Funds the program deployment and publishing, collecting and sales tests. The temporary session needs a total balance of 2.4 devnet SOL.</Text>
+    <Text style={s.text}>Funds the program deployment and publishing, collecting and sales tests. The temporary session needs a total balance of {sol(target)} devnet SOL.</Text>
     <Text style={s.text}>Test recipient</Text>
     <Text selectable style={s.address}>{recipient}</Text>
     {review && <View style={s.review}>

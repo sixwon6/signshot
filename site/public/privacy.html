@@ -101,7 +101,8 @@
             <td>
               Solana receives account reads and a transaction simulation. The
               storage service receives the upload-key address and deterministic
-              item identifiers to check capacity. The photograph is not publicly
+              item identifiers to check capacity, and on mainnet the publication's
+              size to quote its storage price. The photograph is not publicly
               uploaded by this step.
             </td>
           </tr>
@@ -110,8 +111,11 @@
             <td>
               Your wallet submits a Solana transaction. It identifies your
               wallet, the edition, supply, image fingerprint and metadata
-              fingerprint. After confirmation, Signshot uploads the smaller
-              publication image and its metadata to Arweave through ar.io Turbo.
+              fingerprint. On mainnet the same transaction pays ar.io Turbo for
+              the storage, credited to the app's upload key. After confirmation,
+              Signshot sends the transaction's signature to Turbo's payment
+              service and uploads the smaller publication image and its metadata
+              to Arweave through ar.io Turbo.
               If interrupted, the app retains the pending operation for
               recovery.
             </td>
@@ -239,7 +243,7 @@
         </li>
         <li>
           <strong>Arweave and ar.io Turbo:</strong> uploads at
-          <code>upload.ardrive.io</code>, upload allowance at
+          <code>upload.ardrive.io</code>, storage price, payment and allowance at
           <code>payment.ardrive.io</code>, and reads through
           <code>turbo-gateway.com</code> and <code>arweave.net</code>. The
           uploaded files are public and may be served by other Arweave gateways.

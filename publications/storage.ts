@@ -1,6 +1,6 @@
 import { AccountRole, address, signature, type Instruction } from "@solana/kit";
 import { utf8 } from "../src/arweave/codec";
-import { turboItemStatus, TurboError } from "../src/arweave/turbo";
+import { turboItemStatus, TurboError, TURBO_FREE_ITEM_BYTES } from "../src/arweave/turbo";
 import { verifiedTransferReceipt } from "./core/transferReceipt";
 import { request } from "./rpc";
 import { TURBO_PAYMENT_HOSTS, TURBO_UPLOAD_HOSTS } from "./turboHosts";
@@ -69,7 +69,8 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
  * PAID STORAGE. Turbo's free tier is a lifetime budget per wallet AND per /24 subnet (`GET /info`
  * `freeTier`), and its 402 `FREE_TIER_EXHAUSTED` "is a PERMANENT condition" (upload OpenAPI). A
  * carrier NAT shares a subnet, and the edition is on chain before the upload, so a mainnet build
- * never relies on it: the publication transaction itself buys the credit.
+ * does not rely on it: the publication transaction itself buys the credit. The free tier is only
+ * the last resort for a confirmed payment the service will not credit (`settleStoragePayment`).
  *
  * The recipe is turbo-sdk's `SolanaToken.createAndSubmitTx`: a System transfer to the Solana address
  * the payment service advertises at `GET /info`, plus an spl-memo instruction
@@ -81,6 +82,12 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
  */
 export const paidStorage = (cluster: string) => cluster === "mainnet-beta";
 
+/**
+ * Turbo's Solana payment address, pinned: `/info` is read on every quote, but only this answer is
+ * paid. payment.ardrive.io/v1/info, turbo.ardrive.io/info and upload.ardrive.io/info all named it
+ * on 2026-09-25. A different one means a new release, never a transfer to wherever `/info` points.
+ */
+export const TURBO_SOLANA_ADDRESS = "HepiT2k93CFQaSB7i3ZNXhybZKn5MeWiv3UkLsaJKk4i";
 const SYSTEM_PROGRAM = address("11111111111111111111111111111111");
 /** spl-memo v2, the program turbo-sdk writes the credit destination with (`memoProgramId`). */
 const MEMO_PROGRAM = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -99,13 +106,19 @@ export const MAX_STORAGE_LAMPORTS = 10_000_000n;
 /** Credit waits for the transfer to finalize on the service's side; re-posting is idempotent. */
 const CREDIT_POLLS = 12;
 const CREDIT_POLL_MS = 4_000;
+/** Re-posts of a refused or misdirected payment, waiting 1, 2 then 4 polls, before the free tier. */
+const REFUSED_REPOSTS = 3;
 
 const PRICE_UNAVAILABLE: StorageProblem = { kind: "unavailable", retryable: true,
   message: "Storage price unavailable. Try again." };
+const ADDRESS_CHANGED: StorageProblem = { kind: "unavailable", retryable: false,
+  message: "Storage payment address changed. Update Signshot." };
+const PAYMENT_REFUSED: StorageProblem = { kind: "quota", retryable: false,
+  message: "The storage provider refused this publication's payment." };
 
 /** What the publication transaction pays for its own uploads. */
 export interface StoragePayment {
-  /** Turbo's Solana payment address, from the payment service's `/info`. */
+  /** `TURBO_SOLANA_ADDRESS`, once the payment service's `/info` has named it. */
   target: string;
   lamports: bigint;
   /** The upload key's base58 address, named in the credit-destination memo. */
@@ -121,7 +134,7 @@ function winc(body: unknown): bigint {
 
 /**
  * Price the pending items in SOL, before any approval. `null` when the bundler already holds both.
- * Any failure stops publishing here; there is no free-tier fallback on a paid network.
+ * Any failure, and a payment address other than the pinned one, stops publishing here.
  */
 export async function quoteStoragePayment(uploader: string, items: StorageItem[]): Promise<StoragePayment | null> {
   const pending = await pendingItems(items);
@@ -144,6 +157,7 @@ export async function quoteStoragePayment(uploader: string, items: StorageItem[]
   } catch {
     throw new PublicationStorageError(PRICE_UNAVAILABLE);
   }
+  if (target !== TURBO_SOLANA_ADDRESS) throw new PublicationStorageError(ADDRESS_CHANGED);
   if (lamports > MAX_STORAGE_LAMPORTS)
     throw new PublicationStorageError({ kind: "unavailable", retryable: true,
       message: "Storage price out of range. Try again later." });
@@ -160,7 +174,7 @@ export async function quoteStoragePayment(uploader: string, items: StorageItem[]
 
 /** The transfer and the credit-destination memo, appended to the publication's instructions. */
 export function storagePaymentInstructions(payer: string, payment: StoragePayment): Instruction[] {
-  if (payment.lamports <= 0n || payment.lamports > MAX_STORAGE_LAMPORTS)
+  if (payment.lamports <= 0n || payment.lamports > MAX_STORAGE_LAMPORTS || payment.target !== TURBO_SOLANA_ADDRESS)
     throw new Error("Invalid storage payment.");
   // `SystemInstruction::Transfer`: u32 index 2, then the lamports as a u64, both little-endian.
   const data = new Uint8Array(12);
@@ -220,52 +234,97 @@ async function submitPayment(txId: string): Promise<CreditAnswer> {
 }
 
 /**
+ * How a confirmed publication's uploads are paid for, recorded on its draft so a resumed upload
+ * takes the same path: `credit`, the credit its payment bought; `free`, Turbo's free tier, because
+ * the payment service refused that payment for good.
+ */
+export type StorageFunding = "credit" | "free";
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
  * Claim the credit the confirmed publication transaction bought, before anything is uploaded.
  * "Re-posting a `tx_id` that is already credited returns `200` with the existing record rather than
  * crediting twice" (payment OpenAPI), so an interrupted upload resumes here without paying again;
- * nothing on this path builds a payment. `receipt` is asked for only when an item is pending.
+ * nothing on this path builds a payment. `receipt` is asked for only when an item is pending, and
+ * `null` is returned when none is.
+ *
+ * A refusal (400) or a credit to another account is re-posted `REFUSED_REPOSTS` times with backoff.
+ * If it stands, the edition is already on chain and paid for, so the free tier is tried rather than
+ * stranding it: `free` when every pending item is within Turbo's free item size.
  */
 export async function settleStoragePayment(
   receipt: () => Promise<string>,
   destination: string,
   items: StorageItem[],
   pollMs = CREDIT_POLL_MS,
-) {
-  if (!(await pendingItems(items)).length) return;
+): Promise<StorageFunding | null> {
+  const pending = await pendingItems(items);
+  if (!pending.length) return null;
   const txId = await receipt();
-  for (let poll = 0; poll < CREDIT_POLLS; poll += 1) {
-    if (poll) await new Promise(resolve => setTimeout(resolve, pollMs));
+  let polls = 0, refusals = 0;
+  while (true) {
     const answer = await submitPayment(txId);
-    if (answer.status === "pending") continue;
+    if (answer.status === "credited" && answer.destination === destination) return "credit";
     // No host answered at all; a later check re-posts the same transaction.
     if (answer.status === "unreachable") break;
-    if (answer.status === "refused")
-      throw new PublicationStorageError({ kind: "quota", retryable: false,
-        message: "The storage provider refused this publication's payment." });
-    if (answer.destination !== destination)
-      throw new PublicationStorageError({ kind: "quota", retryable: false,
-        message: "The storage payment was credited to another account." });
-    return;
+    if (answer.status === "pending") {
+      if (++polls >= CREDIT_POLLS) break;
+      await wait(pollMs);
+      continue;
+    }
+    if (refusals === REFUSED_REPOSTS) return freeTier(pending);
+    await wait(pollMs * 2 ** refusals);
+    refusals += 1;
   }
   throw new PublicationStorageError({ kind: "unavailable", retryable: true,
     message: "Storage payment is settling. Check again shortly." });
 }
 
-/** How far back the edition's history is walked, and how many of its oldest transactions are read. */
+/**
+ * `free` when every item is under the upload service's advertised free item size, or under the
+ * documented one (`TURBO_FREE_ITEM_BYTES`) when `/info` does not answer: the upload itself is the
+ * final word, and a 402 or 413 there ends in `PAYMENT_REFUSED` (`storageProblem`).
+ */
+async function freeTier(items: StorageItem[]): Promise<StorageFunding> {
+  const info = await firstAnswer(TURBO_UPLOAD_HOSTS, (host) => `${host}/info`).catch(() => null);
+  const advertised = info?.freeTier?.maxItemBytes ?? info?.freeUploadLimitBytes;
+  const limit = Number.isSafeInteger(advertised) && advertised > 0
+    ? Math.min(advertised, TURBO_FREE_ITEM_BYTES) : TURBO_FREE_ITEM_BYTES;
+  if (items.some(item => item.bytes.length >= limit)) throw new PublicationStorageError(PAYMENT_REFUSED);
+  return "free";
+}
+
+/** How far back each address's history is walked, and how many of its oldest transactions are read. */
 const HISTORY_PAGES = 5, HISTORY_PAGE = 1000, OLDEST_READ = 20;
 
 /**
- * The publication transaction when the wallet never returned its receipt: the edition's oldest
- * successful transaction whose message matches the fingerprint saved before the wallet opened,
- * checked as `recoverTransferReceipt` checks a transfer's. Pre-funding the edition's address can put
- * transfers ahead of it, so several of the oldest are read.
+ * The publication transaction when the wallet never returned its receipt: the oldest successful
+ * transaction whose message matches the fingerprint saved before the wallet opened, checked as
+ * `recoverTransferReceipt` checks a transfer's. The creator's claim receipt is searched first:
+ * `publish` creates it and nothing else normally touches it, while every collect writes the edition.
+ * The edition is searched after. Pre-funding either address can put transfers ahead of the
+ * publication, so several of the oldest are read.
  */
-export async function findStoragePayment(endpoint: string, edition: string, quoteId: string): Promise<string> {
+export async function findStoragePayment(
+  endpoint: string,
+  publication: { receipt: string; edition: string },
+  quoteId: string,
+): Promise<string> {
+  for (const account of [publication.receipt, publication.edition]) {
+    const found = await oldestMatching(endpoint, account, quoteId);
+    if (found) return found;
+  }
+  throw new PublicationStorageError({ kind: "unavailable", retryable: true,
+    message: "The publication's payment was not found. Check again shortly." });
+}
+
+async function oldestMatching(endpoint: string, account: string, quoteId: string): Promise<string | null> {
   const landed: { signature: string; slot: number }[] = [];
   let before: string | undefined;
   for (let page = 0; page < HISTORY_PAGES; page += 1) {
     const batch = await request<unknown>(endpoint, "getSignaturesForAddress",
-      [edition, { limit: HISTORY_PAGE, commitment: "confirmed", ...(before ? { before } : {}) }]);
+      [account, { limit: HISTORY_PAGE, commitment: "confirmed", ...(before ? { before } : {}) }]);
     if (!Array.isArray(batch)) throw new Error("Invalid Solana response");
     for (const entry of batch) {
       if (typeof entry?.signature !== "string" || entry.err !== null ||
@@ -278,8 +337,8 @@ export async function findStoragePayment(endpoint: string, edition: string, quot
     if (batch.length < HISTORY_PAGE || typeof last !== "string") break;
     before = last;
   }
-  // RPC lists newest first; the publication created the edition, so it is among the oldest. A read
-  // that fails is a candidate not confirmed, never an error.
+  // RPC lists newest first; the publication created both accounts, so it is among the oldest. A
+  // read that fails is a candidate not confirmed, never an error.
   const oldest = landed.reverse().slice(0, OLDEST_READ);
   const matches = await Promise.all(oldest.map(async (entry) => {
     try {
@@ -290,14 +349,14 @@ export async function findStoragePayment(endpoint: string, edition: string, quot
       return false;
     }
   }));
-  const found = oldest.find((_, index) => matches[index]);
-  if (found) return found.signature;
-  throw new PublicationStorageError({ kind: "unavailable", retryable: true,
-    message: "The publication's payment was not found. Check again shortly." });
+  return oldest.find((_, index) => matches[index])?.signature ?? null;
 }
 
-export function storageProblem(error: unknown, paid = false): StorageProblem {
+export function storageProblem(error: unknown, paid = false, funding?: StorageFunding): StorageProblem {
   if (error instanceof PublicationStorageError) return error.problem;
+  // The payment was refused and the free tier refuses the upload too.
+  if (funding === "free" && error instanceof TurboError && (error.status === 402 || error.status === 413))
+    return PAYMENT_REFUSED;
   if (error instanceof TurboError && error.status === 402)
     return paid
       ? { kind: "quota", retryable: false, message: "Storage credit ran short for this upload." }

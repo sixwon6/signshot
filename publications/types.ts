@@ -144,6 +144,11 @@ export interface CoreDraft {
   confirmedAt?: number;
   storage?: "local" | "pending" | "available";
   storageError?: PublicationStorageProblem;
+  /**
+   * Mainnet: how the uploads are paid for once settled (`StorageFunding` in `storage.ts`), so a
+   * resumed upload neither re-posts a credited payment nor waits out a refusal again.
+   */
+  storageFunding?: "credit" | "free";
 }
 
 /**

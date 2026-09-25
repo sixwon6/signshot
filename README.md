@@ -99,17 +99,22 @@ ids are in the approved `uri`, so an upload can resume from any later session.
 
 - **Mainnet pays.** Turbo's free tier is a lifetime budget per wallet and per /24 subnet, and
   running out of it is permanent. So the publication transaction carries the storage: a SOL
-  transfer to Turbo's payment address from `GET /v1/info`, priced by `/v1/price/bytes` and
-  `/v1/price/solana` with half again as headroom and a 0.01 SOL ceiling, plus an spl-memo
+  transfer to Turbo's payment address, pinned in `publications/storage.ts` and confirmed against
+  `GET /v1/info` on every quote, priced by `/v1/price/bytes` and `/v1/price/solana` with half
+  again as headroom and a 0.01 SOL ceiling, plus an spl-memo
   `turboCreditDestinationAddress=<upload key>`, turbo-sdk's own recipe. The review shows it as
   its own row. After confirmation the transaction id is posted to
   `/v1/account/balance/solana`, which credits the upload key once however often it is re-posted,
-  and the upload waits for that credit. A quote that fails stops publishing before the wallet
-  opens; nothing falls back to the free tier.
+  and the upload waits for that credit. A quote that fails, or an `/info` naming another address,
+  stops publishing before the wallet opens. A confirmed payment the service refuses or credits
+  elsewhere is re-posted three times with backoff, then the upload falls back to the free tier
+  for items within its item size.
 - **Devnet stays free.** The free allowance is checked before the approval and again before
   upload.
 - **Recovery** never pays twice: it only re-posts the confirmed transaction. A wallet that never
-  returned its receipt is answered from the edition's history by the reviewed fingerprint.
+  returned its receipt is answered from the creator's claim receipt's history, then the
+  edition's, by the reviewed fingerprint. The path settled on (credit or free tier) is saved on
+  the draft and a resumed upload takes it again.
 
 `scripts/check-storage.ts` holds the quote, the two instructions (against the official System
 Program encoder), the credit and the recovery lookup to this, against a stubbed network.

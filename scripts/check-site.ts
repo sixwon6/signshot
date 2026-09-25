@@ -18,7 +18,10 @@
  *   - Mobile Wallet Adapter is registered through `@solana-mobile/wallet-standard-mobile`, and the
  *     one Trusted Types policy and the `style-src` hashes admit exactly its dialogs, recomputed
  *     from the installed package;
- *   - the RPC proxy's upstream is its `SOLANA_RPC_URL` binding, or Solana's public mainnet;
+ *   - the RPC proxy's upstream is its `SOLANA_RPC_URL` binding, or Solana's public mainnet with
+ *     `X-Upstream: public` on every answer; its allowlist equals the methods the page sends, every
+ *     request the page's own callers send passes it byte for byte and near misses are refused, and
+ *     an upstream body with no Content-Length is cut off at the cap as it streams;
  *   - the bundle builds, carries the trusted programs, reads no `process.env`, and includes no
  *     React Native module (the build's own guards, exercised here so `npm test` runs them);
  *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
@@ -59,7 +62,16 @@ import {
 } from "../src/moderation/core";
 import { MAX_UPSTREAM, onRequestGet as attestationStatus, UPSTREAM } from "../site/functions/api/attestation-status";
 import { admitMwaMarkup, MWA_FONTS, MWA_MARKUP } from "../site/collect/mwa";
-import { onRequestPost, PUBLIC_MAINNET } from "../site/functions/api/solana";
+import { ALLOWED, MAX_UPSTREAM as RPC_MAX_UPSTREAM, onRequestPost, PUBLIC_MAINNET } from "../site/functions/api/solana";
+import { address, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
+import { extension, getMintEncoder } from "@solana-program/token-2022";
+import { loadTrustedEdition } from "../publications/core/protocol";
+import { MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, verifyGenesisToken } from "../publications/core/genesisToken";
+import { publicationTime } from "../publications/core/attestationCheck";
+import { assertReviewedProgram } from "../publications/programImage";
+import { PROGRAM_IMAGES } from "../publications/deployments";
+import { confirmTransaction, prepareTransaction, request } from "../publications/rpc";
+import { checkAttempt } from "../publications/lifecycle";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -380,36 +392,202 @@ ok("the bundle reads the revocation list same-origin, never from Google (no CORS
 ok("bundle reads both gateways at /raw/ and carries MWA's Local Network Access handling",
   bundled.includes("https://arweave.net/raw/") && bundled.includes("https://turbo-gateway.com/raw/") && bundled.includes("loopback-network"));
 
-/** The proxy's upstream: the `SOLANA_RPC_URL` binding when set, Solana's public mainnet otherwise. */
-async function proxiedTo(env: { SOLANA_RPC_URL?: string }): Promise<string | null> {
+/** One request through the proxy, same-origin, against an upstream that answers with `upstream`. */
+async function viaProxy(body: string, upstream: () => Response, env: { SOLANA_RPC_URL?: string } = {}) {
   const realFetch = globalThis.fetch;
-  let upstream: string | null = null;
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    upstream = String(input);
-    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: 1 }), { headers: { "Content-Type": "application/json" } });
-  }) as typeof fetch;
+  let target: string | null = null;
+  globalThis.fetch = (async (input: string | URL | Request) => { target = String(input); return upstream(); }) as typeof fetch;
   try {
     const response = await onRequestPost({
       env,
       request: new Request("https://erashot.app/api/solana", {
         method: "POST",
         headers: { "Content-Type": "application/json", Origin: "https://erashot.app" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBlockHeight", params: [] }),
+        body,
       }),
     });
-    return response.ok ? upstream : null;
+    return { response, target: target as string | null };
   } finally {
     globalThis.fetch = realFetch;
   }
 }
+const rpcAnswer = () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: 1 }), { headers: { "Content-Type": "application/json" } });
+const heightCall = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBlockHeight", params: [] });
+
+/** The proxy's upstream: the `SOLANA_RPC_URL` binding when set, Solana's public mainnet otherwise, said in a header. */
+async function upstreamChecks() {
+  const fallback = await viaProxy(heightCall, rpcAnswer);
+  const bound = await viaProxy(heightCall, rpcAnswer, { SOLANA_RPC_URL: "https://rpc.example/key" });
+  ok("the proxy forwards to SOLANA_RPC_URL when bound and to https://api.mainnet.solana.com otherwise",
+    PUBLIC_MAINNET === "https://api.mainnet.solana.com" && fallback.response.ok && fallback.target === PUBLIC_MAINNET
+      && bound.response.ok && bound.target === "https://rpc.example/key");
+  const refused = await viaProxy(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getProgramAccounts", params: [] }), rpcAnswer);
+  ok("on the public fallback every answer, refusals included, carries X-Upstream: public; with the secret, none does",
+    fallback.response.headers.get("X-Upstream") === "public" && refused.response.status === 400
+      && refused.response.headers.get("X-Upstream") === "public" && bound.response.headers.get("X-Upstream") === null);
+}
+
+/**
+ * Every request the collect page sends `/api/solana`, recorded from the page's own callers against a
+ * stubbed chain and kept byte for byte: the edition read (`loadTrustedEdition`, whose `account` also
+ * serves `hasCollected` and the offer), the program check's sliced reads (`assertReviewedProgram`,
+ * through both ELF chunks), the Genesis Token check (`verifyGenesisToken`), the device row's time
+ * (`publicationTime`, over two pages), the quote (`prepareTransaction`), the attempt check
+ * (`checkAttempt`), the confirmation (`confirmTransaction`) and the block height `collect` reads
+ * before the wallet opens (`site/collect/page.ts`).
+ */
+async function pageRequests(): Promise<string[]> {
+  const ENDPOINT = "https://erashot.app/api/solana";
+  const LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
+  const [program, image] = Object.entries(PROGRAM_IMAGES.devnet)[0];
+  const [programData] = await getProgramDerivedAddress({
+    programAddress: address(LOADER), seeds: [getAddressEncoder().encode(address(program))],
+  });
+  const mint = "21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH", holder = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+  const sgt = new Uint8Array(getMintEncoder().encode({
+    mintAuthority: none(), supply: 1n, decimals: 0, isInitialized: true, freezeAuthority: none(),
+    extensions: some([
+      extension("MetadataPointer", { authority: none(), metadataAddress: some(address(SGT_METADATA_ADDRESS)) }),
+      extension("TokenGroupMember", { mint: address(mint), group: address(SGT_GROUP_ADDRESS), memberNumber: 7n }),
+    ]),
+  }));
+  const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
+  const u32 = (n: number) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
+  const held = (owner: string, bytes: Uint8Array, space = bytes.length) =>
+    ({ owner, executable: owner === LOADER, lamports: 1, rentEpoch: 0, space, data: [base64(bytes), "base64"] });
+  const SIG = "5".repeat(88);
+  const context = { slot: 100 };
+  const answer = (method: string, params: any[]): unknown => {
+    switch (method) {
+      case "getAccountInfo": {
+        const slice = params[1]?.dataSlice as { offset: number; length: number } | undefined;
+        if (params[0] === program) return { context, value: held(LOADER, new Uint8Array([...u32(2), ...getAddressEncoder().encode(programData)])) };
+        if (params[0] === programData) {
+          // The header with no authority, then zeros: every chunk is read before the hash refuses.
+          const bytes = new Uint8Array(slice!.length);
+          if (slice!.offset === 0) bytes.set(u32(3));
+          return { context, value: held(LOADER, bytes, 45 + image.bytes) };
+        }
+        if (params[0] === mint) return { context, value: held("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", sgt) };
+        return { context, value: null };
+      }
+      case "getGenesisHash": return MAINNET_GENESIS_HASH;
+      case "getTokenAccountsByOwner": return { context, value: [] };
+      // A full first page, so the second asks with `before`.
+      case "getSignaturesForAddress": return params[1]?.before ? [] : Array.from({ length: 1000 }, () => ({ signature: SIG, err: null, slot: 7 }));
+      case "getTransaction": return null;
+      case "getLatestBlockhash": return { context, value: { blockhash: "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k", lastValidBlockHeight: 200 } };
+      case "simulateTransaction":
+        return { context, value: { err: null, logs: [], unitsConsumed: 50_000, returnData: null,
+          accounts: [{ lamports: 9_000_000_000, owner: "11111111111111111111111111111111", executable: false, rentEpoch: 0, space: 0, data: ["", "base64"] }] } };
+      case "getRecentPrioritizationFees": return [];
+      case "getFeeForMessage": return { context, value: 5_000 };
+      case "getBalance": return { context, value: 10_000_000_000 };
+      case "getSignatureStatuses": return { context, value: [null] };
+      case "getBlockHeight": return 1_000;
+      default: throw new Error(`the page is not expected to call ${method}`);
+    }
+  };
+  const realFetch = globalThis.fetch;
+  const bodies: string[] = [];
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const text = String(init?.body);
+    bodies.push(text);
+    const { id, method, params } = JSON.parse(text);
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id, result: answer(method, params) }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    await loadTrustedEdition(ENDPOINT, holder, "mainnet-beta").catch(() => undefined);
+    await assertReviewedProgram(ENDPOINT, program, "devnet").catch(() => undefined);
+    await verifyGenesisToken(ENDPOINT, mint, holder);
+    await publicationTime(ENDPOINT, program, holder).catch(() => undefined);
+    await prepareTransaction(ENDPOINT, holder, [{ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new Uint8Array([1]) }]);
+    await checkAttempt(ENDPOINT, { lastValidBlockHeight: "10", signature: SIG }, { operation: "collect" });
+    await confirmTransaction(ENDPOINT, SIG, 10n).catch(() => undefined);
+    await request(ENDPOINT, "getBlockHeight", [{ commitment: "confirmed" }]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  return bodies;
+}
+
+/** The allowlist and the per-method shapes, held to the page's own requests and to near misses. */
+async function shapeChecks() {
+  const bodies = await pageRequests();
+  const methods = new Set(bodies.map((body) => JSON.parse(body).method as string));
+  ok(`the proxy allowlist equals the methods the page sends (${[...methods].sort().join(", ")})`,
+    methods.size === ALLOWED.size && [...methods].every((method) => ALLOWED.has(method)));
+  const shapes = (method: string) => bodies.filter((body) => JSON.parse(body).method === method).map((body) => JSON.stringify(JSON.parse(body).params));
+  ok("the recording reached the sliced ELF chunks, the paged history and the mint-filtered token read",
+    shapes("getAccountInfo").some((params) => params.includes('"dataSlice":{"offset":262144,"length":')) &&
+    shapes("getSignaturesForAddress").some((params) => params.includes('"before"')) && shapes("getTokenAccountsByOwner").length === 1);
+  const passed = await Promise.all(bodies.map(async (body) => (await viaProxy(body, rpcAnswer)).response.status));
+  const failed = bodies.filter((_, index) => passed[index] !== 200);
+  ok(`every request the page sends passes the proxy, byte for byte (${bodies.length} requests)`, failed.length === 0);
+  if (failed.length) console.error("  refused:", failed.join("\n  "));
+
+  const OWNER = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT", MINT = "21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH", SIG = "5".repeat(88);
+  const call = (method: string, params: unknown[]) => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
+  const nearMisses: [string, string][] = [
+    ["token accounts by program, not by mint", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["token accounts with a second filter key", call("getTokenAccountsByOwner", [OWNER, { mint: MINT, programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["token accounts as base64", call("getTokenAccountsByOwner", [OWNER, { mint: MINT }, { encoding: "base64", commitment: "confirmed" }])],
+    ["token accounts with no options", call("getTokenAccountsByOwner", [OWNER, { mint: MINT }])],
+    ["token accounts with a data slice", call("getTokenAccountsByOwner", [OWNER, { mint: MINT }, { encoding: "jsonParsed", commitment: "confirmed", dataSlice: { offset: 0, length: 1 } }])],
+    ["a history of 1001 signatures", call("getSignaturesForAddress", [OWNER, { limit: 1001, commitment: "confirmed" }])],
+    ["a history bounded by `until`", call("getSignaturesForAddress", [OWNER, { limit: 1000, commitment: "confirmed", until: SIG }])],
+    ["a history with no limit", call("getSignaturesForAddress", [OWNER, { commitment: "confirmed" }])],
+    ["a history before something that is not a signature", call("getSignaturesForAddress", [OWNER, { limit: 10, commitment: "confirmed", before: "x" }])],
+    ["a transaction as base64", call("getTransaction", [SIG, { encoding: "base64", maxSupportedTransactionVersion: 0, commitment: "confirmed" }])],
+    ["a transaction with no version", call("getTransaction", [SIG, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["a transaction with no options", call("getTransaction", [SIG])],
+    ["a transaction by something that is not a signature", call("getTransaction", [OWNER + "!", { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }])],
+    ["an account as jsonParsed", call("getAccountInfo", [OWNER, { encoding: "jsonParsed", commitment: "confirmed" }])],
+    ["an account as base64+zstd", call("getAccountInfo", [OWNER, { encoding: "base64+zstd", commitment: "confirmed" }])],
+    ["an account slice wider than one ELF chunk", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: 262_145 } }])],
+    ["an account slice with no length", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0 } }])],
+    ["an account with an extra option", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", minContextSlot: 1 }])],
+    ["an account option named after Object.prototype", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", toString: 1 }])],
+    ["an account read with a third param", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed" }, {}])],
+    ["accounts in a batch the page never sends", call("getMultipleAccounts", [[OWNER], { encoding: "base64", commitment: "confirmed" }])],
+  ];
+  const refusedStatus = await Promise.all(nearMisses.map(async ([, body]) => {
+    const { response, target } = await viaProxy(body, rpcAnswer);
+    return response.status === 400 && target === null;
+  }));
+  const through = nearMisses.filter((_, index) => !refusedStatus[index]).map(([name]) => name);
+  ok(`the proxy refuses what the page never sends, before forwarding (${nearMisses.length} near misses)`, through.length === 0);
+  if (through.length) console.error("  forwarded:", through.join("; "));
+}
+
+/**
+ * The upstream body is counted as it streams: an answer with no Content-Length is cut off at the
+ * cap and its stream cancelled, not read to the end.
+ */
+async function streamChecks() {
+  let pulled = 0, cancelled = false;
+  const endless = () => new Response(new ReadableStream<Uint8Array>({
+    pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(65_536).fill(0x20)); },
+    cancel() { cancelled = true; },
+  }), { headers: { "Content-Type": "application/json" } });
+  const over = await viaProxy(heightCall, endless);
+  ok(`an undeclared upstream body past 1 MB is refused and its stream cancelled, not read to the end (${pulled} chunks)`,
+    over.response.status === 502 && cancelled && pulled <= Math.ceil(RPC_MAX_UPSTREAM / 65_536) + 2);
+  const padded = JSON.stringify({ jsonrpc: "2.0", id: 1, result: "x".repeat(RPC_MAX_UPSTREAM - 64) });
+  const within = await viaProxy(heightCall, () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { const bytes = new TextEncoder().encode(padded); for (let at = 0; at < bytes.length; at += 65_536) controller.enqueue(bytes.slice(at, at + 65_536)); controller.close(); },
+  })));
+  ok("an undeclared upstream body within 1 MB is read and forwarded", within.response.status === 200 && (await within.response.text()).length === padded.length);
+  const declared = await viaProxy(heightCall, () => new Response("{}", { headers: { "Content-Length": String(RPC_MAX_UPSTREAM + 1) } }));
+  ok("a declared oversize upstream body is refused unread", declared.response.status === 502);
+}
 // One after the other: each swaps the global `fetch`. The summary below waits for it.
-const proxyChecked = proxiedTo({})
-  .then(async (fallback) => [fallback, await proxiedTo({ SOLANA_RPC_URL: "https://rpc.example/key" })])
-  .then(([fallback, bound]) => ok("the proxy forwards to SOLANA_RPC_URL when bound and to https://api.mainnet.solana.com otherwise",
-    PUBLIC_MAINNET === "https://api.mainnet.solana.com" && fallback === PUBLIC_MAINNET && bound === "https://rpc.example/key"))
+const proxyChecked = upstreamChecks()
+  .then(() => shapeChecks())
+  .then(() => streamChecks())
   .catch((error: unknown) => {
     console.error(error);
-    ok("the proxy forwards to SOLANA_RPC_URL when bound and to https://api.mainnet.solana.com otherwise", false);
+    ok("the proxy checks ran", false);
   });
 
 /**

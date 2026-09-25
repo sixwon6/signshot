@@ -8,8 +8,12 @@
  *     encoder, the memo to turbo-sdk's `turboCreditDestinationAddress=` convention, and the largest
  *     publication transaction still inside the mobile wallet's size budget with both added;
  *   - the credit: pending until the service credits the upload key, idempotent on a resume, and
- *     refused, misdirected or unsettled credit reported rather than uploaded past;
- *   - the lost receipt: the publication transaction found in the edition's history by fingerprint.
+ *     refused or misdirected credit re-posted with backoff, then the free tier for items within its
+ *     size, never a second payment; unsettled credit reported rather than uploaded past;
+ *   - the payment address: Turbo's pinned Solana address, and nothing else `/info` names;
+ *   - the lost receipt: the publication transaction found by fingerprint in the creator's claim
+ *     receipt's history first, then the edition's;
+ *   - `src/prints/creator.ts` records the path taken on the draft and resumes it as recorded.
  */
 
 import {
@@ -35,11 +39,15 @@ import {
   getSetComputeUnitLimitInstruction,
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { TurboError } from "../src/arweave/turbo";
 import { addresses, instruction, setOfferInstruction } from "../publications/core/protocol";
 import { reviewedFingerprint } from "../publications/core/transferReceipt";
 import {
   MAX_STORAGE_LAMPORTS,
+  TURBO_SOLANA_ADDRESS,
   findStoragePayment,
   paidStorage,
   quoteStoragePayment,
@@ -140,6 +148,14 @@ async function quoteTests() {
     ok(`refused before any approval: ${name}`,
       error !== undefined && problem.kind === "unavailable" && problem.retryable && posts().length === 0);
   }
+  ok("the pinned payment address is the one Turbo's /info named on 2026-09-25", TURBO_SOLANA_ADDRESS === TURBO);
+  stub([notHeld, info(CREATOR), bytePrice(), solPrice()]);
+  const moved = await rejection(quoteStoragePayment(UPLOADER, items));
+  const movedProblem = storageProblem(moved, true);
+  ok("a valid payment address other than the pinned one stops publishing before the wallet opens",
+    moved !== undefined && movedProblem.message === "Storage payment address changed. Update Signshot." &&
+    !movedProblem.retryable && posts().length === 0 &&
+    !calls.some((call) => /\/v1\/price\/solana\/(?!1000000000$)\d+$/.test(call.url)));
   stub([notHeld, info(), bytePrice(), solPrice(1_000n)]);
   const expensive = storageProblem(await rejection(quoteStoragePayment(UPLOADER, items)), true);
   ok("a quote over the ceiling is refused whatever the provider says",
@@ -172,6 +188,7 @@ function instructionTests() {
   ok("refuses: a zero payment", throws({ ...payment, lamports: 0n }));
   ok("refuses: a payment over the ceiling", throws({ ...payment, lamports: MAX_STORAGE_LAMPORTS + 1n }));
   ok("refuses: a destination that is not an address", throws({ ...payment, destination: "nope" }));
+  ok("refuses: a transfer to any address but Turbo's pinned one", throws({ ...payment, target: CREATOR }));
 }
 
 /**
@@ -222,19 +239,33 @@ function sequence(...answers: (() => Response)[]): [RegExp, Handler] {
   let next = 0;
   return [/\/v1\/account\/balance\/solana$/, () => answers[Math.min(next++, answers.length - 1)]()];
 }
+const refused = () =>
+  json({ message: "Transaction has already failed!", failedTransaction: { transactionId: TX, failureReason: "not a payment" } }, 400);
+/** The upload service's `/info`, advertising `maxItemBytes` as its free item size. */
+const uploadInfo = (maxItemBytes: number): [RegExp, Handler] =>
+  [/^https:\/\/(turbo|upload)\.ardrive\.io\/info$/, () => json({ freeUploadLimitBytes: maxItemBytes, freeTier: { lifetimeBytes: 10_485_760, ipBytes: 10_485_760, maxItemBytes } })];
+/** The waits the settlement makes, read off `setTimeout`; every request deadline is 15 s. */
+let waits: number[] = [];
+const realSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+  if (ms !== 15_000) waits.push(ms ?? 0);
+  return realSetTimeout(handler, ms);
+}) as unknown as typeof setTimeout;
+
 async function creditTests() {
   let asked = 0;
   const signature = async () => { asked += 1; return TX; };
 
   stub([held, sequence(credited)]);
-  await settleStoragePayment(signature, UPLOADER, items, 0);
-  ok("nothing to settle when the bundler holds both items: no receipt lookup, no request", asked === 0 && posts().length === 0);
+  const none = await settleStoragePayment(signature, UPLOADER, items, 0);
+  ok("nothing to settle when the bundler holds both items: no receipt lookup, no request",
+    none === null && asked === 0 && posts().length === 0);
 
   stub([notHeld, sequence(pending, credited)]);
-  await settleStoragePayment(signature, UPLOADER, items, 0);
+  const funding = await settleStoragePayment(signature, UPLOADER, items, 0);
   const sent = posts();
   ok("a pending credit is asked again until the service credits it",
-    sent.length === 2 && sent.every((call) => call.body === JSON.stringify({ tx_id: TX })) &&
+    funding === "credit" && sent.length === 2 && sent.every((call) => call.body === JSON.stringify({ tx_id: TX })) &&
     sent[0].url === "https://turbo.ardrive.io/v1/account/balance/solana");
 
   stub([notHeld, sequence(() => new Response("Transaction ID not found!", { status: 404 }), credited)]);
@@ -251,10 +282,33 @@ async function creditTests() {
   ok("a resume re-posts the same transaction and builds no payment",
     posts().length === 1 && calls.every((call) => /\/status$|\/account\/balance\/solana$/.test(call.url)));
 
+  // A refusal that stands: the same transaction re-posted with doubling waits, then the free tier.
+  const onlySettling = () => calls.every((call) => /\/status$|\/account\/balance\/solana$|\/info$/.test(call.url));
+  stub([notHeld, uploadInfo(107_520), [/\/v1\/account\/balance\/solana$/, refused]]);
+  waits = [];
+  const afterRefusal = await settleStoragePayment(signature, UPLOADER, items, 1);
+  ok("a refused payment is re-posted three times, waiting 1, 2 then 4 polls, then the free tier is used",
+    afterRefusal === "free" && posts().length === 4 && posts().every((call) => call.body === JSON.stringify({ tx_id: TX })) &&
+    waits.join() === "1,2,4" && onlySettling());
+  stub([notHeld, uploadInfo(107_520), [/\/v1\/account\/balance\/solana$/, () => credited(CREATOR)]]);
+  ok("credit landing on another account is re-posted the same way, then the free tier is used",
+    (await settleStoragePayment(signature, UPLOADER, items, 0)) === "free" && posts().length === 4 && onlySettling());
+  stub([notHeld, uploadInfo(107_520), sequence(refused, credited)]);
+  ok("a refusal the service takes back on a re-post is the credit, not the free tier",
+    (await settleStoragePayment(signature, UPLOADER, items, 0)) === "credit" && posts().length === 2);
+  stub([notHeld, [/\/v1\/account\/balance\/solana$/, refused]]);
+  ok("an upload service that does not answer /info leaves the documented free item size",
+    (await settleStoragePayment(signature, UPLOADER, items, 0)) === "free");
+  stub([notHeld, uploadInfo(4_096), [/\/v1\/account\/balance\/solana$/, refused]]);
+  const oversize = storageProblem(await rejection(settleStoragePayment(signature, UPLOADER, items, 0)), true);
+  ok("an item over the advertised free size ends in one line, and no second payment",
+    oversize.message === "The storage provider refused this publication's payment." && !oversize.retryable &&
+    oversize.kind === "quota" && posts().length === 4 && onlySettling());
+  const freeRefused = [402, 413].map((status) => storageProblem(new TurboError(status, "{}", `turbo: upload refused with HTTP ${status}`), true, "free"));
+  ok("the free tier refusing too ends in the same line",
+    freeRefused.every((problem) => problem.message === "The storage provider refused this publication's payment." && !problem.retryable));
+
   const reported: [string, Handler, string, boolean][] = [
-    ["a refused payment", () => json({ message: "Transaction has already failed!", failedTransaction: { transactionId: TX, failureReason: "not a payment" } }, 400),
-      "The storage provider refused this publication's payment.", false],
-    ["credit landing on another account", () => credited(CREATOR), "The storage payment was credited to another account.", false],
     ["a credit record for another transaction", () => credited(UPLOADER, "6".repeat(88)), "Storage payment is settling. Check again shortly.", true],
     ["credit that never settles", pending, "Storage payment is settling. Check again shortly.", true],
     ["no host answering", () => { throw new TypeError("fetch failed"); }, "Storage payment is settling. Check again shortly.", true],
@@ -270,10 +324,29 @@ async function creditTests() {
   ok("unreachable hosts end the wait at once instead of polling on", posts().length === 2);
 
   const short = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"), true);
+  const credit = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"), true, "credit");
   const free = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"));
   ok("a 402 after paying is short credit, a 402 on devnet the free allowance",
     short.message === "Storage credit ran short for this upload." && short.kind === "quota" &&
-    free.message.startsWith("The storage provider refused the free upload allowance"));
+    credit.message === short.message && free.message.startsWith("The storage provider refused the free upload allowance"));
+
+  // The draft side, in `src/prints/creator.ts`: the path is saved before any upload and resumed as
+  // saved, a lost receipt is looked up at the claim receipt, and the free tier refusing clears it.
+  const creator = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "prints", "creator.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const settle = /async function settleStorage\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
+  const upload = /async function uploadConfirmed\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
+  ok("creator.ts resumes a recorded path without re-posting, and records a new one before uploading",
+    /^async function settleStorage\([^)]*\) \{\n  if \(d\.storageFunding\) return;/.test(settle) &&
+    /d\.storageFunding = funding;\n  await save\(r, d\);\n\}$/.test(settle) &&
+    upload.indexOf("await settleStorage(r, d)") < upload.indexOf("await publish(d)"));
+  ok("creator.ts looks a lost receipt up at the creator's claim receipt, then the edition",
+    /const \{ receipt \} = await addresses\(d\.edition\.program, d\.edition\.creator, d\.edition\.nonce\);/.test(settle) &&
+    /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId\)/.test(settle));
+  ok("creator.ts keeps the path across a stale screen and a reload, and forgets it only when the free tier refuses",
+    /d\.storageFunding = current\.storageFunding;/.test(creator) &&
+    /d\.storageFunding !== undefined && d\.storageFunding !== "credit" && d\.storageFunding !== "free"/.test(creator) &&
+    /storageProblem\(error, paidStorage\(cluster\), d\.storageFunding\);\n\s*\/\/[^\n]*\n\s*if \(d\.storageFunding === "free" && d\.storageError\.kind === "quota"\) delete d\.storageFunding;/.test(upload));
 }
 
 // --- The lost receipt ------------------------------------------------------------------------------
@@ -303,32 +376,50 @@ async function receiptTests() {
     confirmationStatus: "finalized",
   }));
   const byId = new Map([prefund, publication, later, failed].map((tx) => [tx.signature, tx.result]));
-  const fetched: string[] = [];
-  stub([[/^https:\/\/rpc\.invalid/, (_url, init) => {
+  // The creator's claim receipt and the edition, by address; each answers its own history.
+  const RECEIPT = "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77", EDITION = CREATOR;
+  const at = { receipt: RECEIPT, edition: EDITION };
+  const entry = (tx: typeof publication) => ({ signature: tx.signature, err: null, slot: 7, confirmationStatus: "finalized" });
+  let fetched: string[] = [], searched: string[] = [];
+  const chain = (histories: Record<string, unknown[]>, unreadable?: string): Handler => (_url, init) => {
     const body = JSON.parse(String(init?.body));
-    if (body.method === "getSignaturesForAddress") return json({ jsonrpc: "2.0", id: body.id, result: history });
+    if (body.method === "getSignaturesForAddress") {
+      searched.push(body.params[0]);
+      return json({ jsonrpc: "2.0", id: body.id, result: histories[body.params[0]] ?? [] });
+    }
     fetched.push(body.params[0]);
+    if (body.params[0] === unreadable) return new Response("pruned", { status: 500 });
     return json({ jsonrpc: "2.0", id: body.id, result: byId.get(body.params[0]) ?? null });
-  }]]);
-  const found = await findStoragePayment("https://rpc.invalid", CREATOR, publication.quoteId);
-  ok("the publication is found by its fingerprint among the oldest, past a pre-funding transfer",
-    found === publication.signature && fetched.includes(prefund.signature));
+  };
+  const search = async (histories: Record<string, unknown[]>, quoteId = publication.quoteId, unreadable?: string) => {
+    fetched = []; searched = [];
+    stub([[/^https:\/\/rpc\.invalid/, chain(histories, unreadable)]]);
+    return findStoragePayment("https://rpc.invalid", at, quoteId);
+  };
+
+  ok("the claim receipt is searched first, and the edition not at all when it holds the publication",
+    (await search({ [RECEIPT]: [entry(publication)], [EDITION]: history })) === publication.signature &&
+    searched.join() === RECEIPT && fetched.join() === publication.signature);
+  ok("a pre-funding transfer on the claim receipt does not hide the publication behind it",
+    (await search({ [RECEIPT]: [entry(publication), entry(prefund)] })) === publication.signature &&
+    fetched.includes(prefund.signature));
+  ok("a claim receipt without the publication falls through to the edition, verified the same way",
+    (await search({ [RECEIPT]: [entry(prefund)], [EDITION]: history })) === publication.signature &&
+    searched.join() === `${RECEIPT},${EDITION}`);
+  ok("the publication is found by its fingerprint among the edition's oldest, past a pre-funding transfer",
+    (await search({ [EDITION]: history })) === publication.signature && fetched.includes(prefund.signature));
   ok("a failed transaction is never read", !fetched.includes(failed.signature));
-  stub([[/^https:\/\/rpc\.invalid/, (_url, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.method === "getSignaturesForAddress") return json({ jsonrpc: "2.0", id: body.id, result: history });
-    if (body.params[0] === prefund.signature) return new Response("pruned", { status: 500 });
-    return json({ jsonrpc: "2.0", id: body.id, result: byId.get(body.params[0]) ?? null });
-  }]]);
   ok("one unreadable transaction does not hide the publication",
-    (await findStoragePayment("https://rpc.invalid", CREATOR, publication.quoteId)) === publication.signature);
-  stub([[/^https:\/\/rpc\.invalid/, (_url, init) => {
-    const body = JSON.parse(String(init?.body));
-    return json({ jsonrpc: "2.0", id: body.id, result: body.method === "getSignaturesForAddress" ? history : byId.get(body.params[0]) });
-  }]]);
-  const missing = storageProblem(await rejection(findStoragePayment("https://rpc.invalid", CREATOR, "f".repeat(64))), true);
-  ok("no matching transaction is reported and can be checked again",
-    missing.message === "The publication's payment was not found. Check again shortly." && missing.retryable);
+    (await search({ [EDITION]: history }, publication.quoteId, prefund.signature)) === publication.signature);
+  const missing = storageProblem(await rejection(search({ [RECEIPT]: [entry(publication)], [EDITION]: history }, "f".repeat(64))), true);
+  ok("no matching transaction at either address is reported and can be checked again",
+    missing.message === "The publication's payment was not found. Check again shortly." && missing.retryable &&
+    searched.join() === `${RECEIPT},${EDITION}`);
+  fetched = []; searched = [];
+  const full = Array.from({ length: 1000 }, () => entry(later));
+  stub([[/^https:\/\/rpc\.invalid/, chain({ [RECEIPT]: full, [EDITION]: full })]]);
+  await rejection(findStoragePayment("https://rpc.invalid", at, publication.quoteId));
+  ok("each address's history is walked at most five pages", searched.length === 10);
 }
 
 void (async () => {

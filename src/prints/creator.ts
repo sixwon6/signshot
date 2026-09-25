@@ -184,6 +184,8 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
   if (!isTrustedDeployment(cluster, d.edition.program)) throw new Error(UNTRUSTED);
   d.edition = readSavedPhotoMetadata(d.metadata, d.edition);
   if (d.attempt) assertAttempt(d.attempt);
+  if (d.storageFunding !== undefined && d.storageFunding !== "credit" && d.storageFunding !== "free")
+    throw new Error("Saved edition draft does not match this photo.");
   terms(d.edition.title, d.edition.supply);
   // A draft edited on disk must not smuggle unbounded or bidi-reversed text onto a screen.
   readDescription(d.edition.description);
@@ -512,17 +514,23 @@ async function checkStorage(d: CoreDraft) {
 /**
  * Mainnet, after confirmation: claim the credit the publication transaction bought. A wallet that
  * never returned its receipt is answered from the chain, by the fingerprint saved before it opened.
+ * The path taken is saved before any upload, and a saved one is resumed as it is.
  */
 async function settleStorage(r: CaptureRecord, d: CoreDraft) {
+  if (d.storageFunding) return;
   const { signer, img, meta } = await publicationItems(d);
-  await settleStoragePayment(async () => {
+  const funding = await settleStoragePayment(async () => {
     if (d.attempt?.signature) return d.attempt.signature;
     const quoteId = (d.attempt as ReviewedAttempt | undefined)?.quoteId;
     if (!d.attempt || !quoteId) throw new Error("This publication's wallet receipt is missing.");
-    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, d.edition.edition, quoteId);
+    const { receipt } = await addresses(d.edition.program, d.edition.creator, d.edition.nonce);
+    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId);
     await save(r, d);
     return d.attempt.signature;
   }, signer.ownerBase58, [img, meta]);
+  if (!funding) return;
+  d.storageFunding = funding;
+  await save(r, d);
 }
 async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
@@ -645,6 +653,7 @@ async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
   d.confirmedAt = current.confirmedAt;
   d.storage = current.storage;
   d.storageError = current.storageError;
+  d.storageFunding = current.storageFunding;
 }
 export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   onProgress?: (stage: "network" | "publication" | "previous" | "storage" | "estimate") => void) {
@@ -746,7 +755,9 @@ async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
     else await checkStorage(d);
     await publish(d);
   } catch (error) {
-    d.storageError = storageProblem(error, paidStorage(cluster));
+    d.storageError = storageProblem(error, paidStorage(cluster), d.storageFunding);
+    // The free tier refused as well: the next check asks the payment service again first.
+    if (d.storageFunding === "free" && d.storageError.kind === "quota") delete d.storageFunding;
     await save(r, d);
     throw new Error(d.storageError.message);
   }

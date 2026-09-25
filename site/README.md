@@ -169,11 +169,14 @@ or API state, written down here so it can be re-applied exactly.
 upstream of `/api/solana`: the full HTTPS URL of a dedicated provider endpoint, key included. It
 never reaches the browser. When it is unset or deleted the proxy falls back to
 `https://api.mainnet.solana.com`, Solana's public endpoint, which rate-limits per IP and may block
-high-traffic sites without notice; a live mainnet page should always have it set.
+high-traffic sites without notice; a live mainnet page should always have it set. On the fallback
+every answer carries `X-Upstream: public`, so `curl -sI -X POST https://erashot.app/api/solana`
+shows a lost secret.
 
 **Why `/api/solana` needs a rate limit.** It is an unauthenticated proxy in front of a paid RPC
 provider. It refuses cross-origin and `Origin`-less callers, allows only the read-only methods
-the page calls, and bounds sizes — but `Origin` is forgeable, and `simulateTransaction` (needed
+the page calls, holds the account, token-account, history and transaction reads to the exact
+params the page sends, and bounds sizes — but `Origin` is forgeable, and `simulateTransaction` (needed
 for an honest estimate) executes attacker-chosen program code at the provider. The rule bounds
 that residual. Rate limiting rules are available on the Free plan
 (https://developers.cloudflare.com/waf/rate-limiting-rules/).

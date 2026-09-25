@@ -31,6 +31,7 @@ export const HISTORICAL: Record<Cluster, readonly string[]> = {
   // The devnet acceptance deployment. It is still upgradeable, so PROGRAM_IMAGES pins its
   // reviewed ELF digest and upgrade authority. Devnet only: a mainnet override naming it is refused.
   devnet: [
+    "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz",
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
   ],
@@ -56,7 +57,16 @@ export type ProgramImage = {
 
 export const PROGRAM_IMAGES: Record<Cluster, Record<string, ProgramImage>> = {
   devnet: {
-    // Byte-verified current build with paid sales, deployed 2026-09-16. Authority read from its
+    // The devnet acceptance deployment with the Genesis Token accounts, the price floor and the
+    // recorded publication time (devnet-genesis build), deployed and byte-verified 2026-09-25.
+    // Its upgrade authority is the session's in-memory payer, gone when the session ended.
+    A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz: {
+      sha256: "2abe33410a1d5567715fba96d086364a366bf1865d4586a70d4a4e1ae926bead",
+      bytes: 451_856,
+      upgradeAuthority: "7Q49ptVZPvbfV5UyXyWuSbbCT727QgTr3Kkuu4einsJ8",
+      source: "2026-09-25 devnet acceptance build, publications/devnet session",
+    },
+    // Byte-verified build with paid sales, deployed 2026-09-16. Authority read from its
     // ProgramData account (BrcFJBrcj18FcPGfFJFZnNJirnaV45LcoRLibm7hqQ2u) on 2026-09-24.
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU": {
       sha256: "aa59dbe513a5628b2c8944e8d36d9a250a723ddbf525d9776b5b290562a1aacf",

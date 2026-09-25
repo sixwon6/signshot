@@ -69,7 +69,7 @@ import { addresses, loadTrustedEdition } from "../publications/core/protocol";
 import { MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, verifyGenesisToken } from "../publications/core/genesisToken";
 import { publicationTime } from "../publications/core/attestationCheck";
 import { assertReviewedProgram } from "../publications/programImage";
-import { PROGRAM_IMAGES } from "../publications/deployments";
+import { LEGACY_WITHOUT_PUBLISHED_AT, PROGRAM_IMAGES } from "../publications/deployments";
 import { confirmTransaction, prepareTransaction, request } from "../publications/rpc";
 import { checkAttempt } from "../publications/lifecycle";
 
@@ -440,7 +440,8 @@ async function upstreamChecks() {
 async function pageRequests(): Promise<string[]> {
   const ENDPOINT = "https://erashot.app/api/solana";
   const LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
-  const [program, image] = Object.entries(PROGRAM_IMAGES.devnet)[0];
+  // A legacy program: its Edition records no publication time, so the page walks the receipt's history.
+  const [program, image] = Object.entries(PROGRAM_IMAGES.devnet).find(([key]) => LEGACY_WITHOUT_PUBLISHED_AT.includes(key))!;
   const [programData] = await getProgramDerivedAddress({
     programAddress: address(LOADER), seeds: [getAddressEncoder().encode(address(program))],
   });

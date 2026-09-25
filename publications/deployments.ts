@@ -31,6 +31,7 @@ export const HISTORICAL: Record<Cluster, readonly string[]> = {
   // The devnet acceptance deployment. It is still upgradeable, so PROGRAM_IMAGES pins its
   // reviewed ELF digest and upgrade authority. Devnet only: a mainnet override naming it is refused.
   devnet: [
+    "BrRJzFDzJKg3zrvyYQ3wkhAQuJwbVZtGhqAox8RfjqC",
     "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz",
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
     "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
@@ -57,6 +58,15 @@ export type ProgramImage = {
 
 export const PROGRAM_IMAGES: Record<Cluster, Record<string, ProgramImage>> = {
   devnet: {
+    // The devnet acceptance deployment with locked royalties, Seeker-only claims and the creator
+    // rule (devnet-genesis build), deployed and byte-verified 2026-09-25. Its upgrade authority is
+    // that session's in-memory payer.
+    BrRJzFDzJKg3zrvyYQ3wkhAQuJwbVZtGhqAox8RfjqC: {
+      sha256: "81dc877aedb1cf4a575c86bab36596fab9a1aae03a19e2112f9f7e296a624f57",
+      bytes: 428_552,
+      upgradeAuthority: "5bdctsW1eaVUVq25ZWcz2vQN3aSDzaS4UJJmrbkicKQD",
+      source: "2026-09-25 devnet acceptance build (royalties, Seeker-only), publications/devnet session",
+    },
     // The devnet acceptance deployment with the Genesis Token accounts, the price floor and the
     // recorded publication time (devnet-genesis build), deployed and byte-verified 2026-09-25.
     // Its upgrade authority is the session's in-memory payer, gone when the session ended.

@@ -842,8 +842,8 @@ async function royaltiesAndSeekers(program: Address, build: string, sgts: Minter
   await settles("copy 2", send(holder, [await collectInstruction(sent.e, holder.address, 2)]));
   const [one, two] = [await addresses(program, creator.address, sent.e.nonce, 1), await addresses(program, creator.address, sent.e.nonce, 2)];
   const recipient = await generateKeyPairSigner();
-  const moved1 = await send(creator, transferInstructions({ owner: creator.address, recipient: recipient.address, asset: one.print, collection: sent.e.collection }));
-  const moved2 = await send(holder, transferInstructions({ owner: holder.address, recipient: recipient.address, asset: two.print, collection: sent.e.collection }));
+  const moved1 = await send(creator, transferInstructions({ owner: creator.address, recipient: recipient.address, asset: one.print, collection: address(sent.e.collection) }));
+  const moved2 = await send(holder, transferInstructions({ owner: holder.address, recipient: recipient.address, asset: two.print, collection: address(sent.e.collection) }));
   const ownerOf = async (key: string) => decodeAsset((await read(key))!.bytes).owner;
   ok("Core TransferV1 sends copy 1 and a collected copy 2 out of a collection carrying the royalty (RuleSet::None)",
     moved1.ok && moved2.ok && (await ownerOf(one.print)) === recipient.address && (await ownerOf(two.print)) === recipient.address,

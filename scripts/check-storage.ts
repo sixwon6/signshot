@@ -193,7 +193,8 @@ function instructionTests() {
 
 /**
  * The largest publication the app builds: `publish_in_album` with the Genesis Token sealed, a
- * 24-byte title, `set_offer`, the compute budget, and now the storage transfer and memo, compiled as
+ * 24-byte title, the royalty and Seeker-only setting, `set_offer`, the compute budget, and now the
+ * storage transfer and memo, compiled as
  * `prepareTransaction` compiles it and held to its 1,057-byte mobile wallet budget.
  */
 async function sizeTest() {
@@ -209,7 +210,8 @@ async function sizeTest() {
   };
   const publication: Instruction[] = [
     await instruction(e, CREATOR, 1, `https://arweave.net/${"D".repeat(43)}`, "e".repeat(64),
-      "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", { mint, token: "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77" }),
+      "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", { mint, token: "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77" },
+      { royaltyBps: 1000, seekerOnly: true }),
     await setOfferInstruction(e, 18_446_744_073_709_551_615n),
   ];
   const size = (ixs: Instruction[]) => {
@@ -340,8 +342,8 @@ async function creditTests() {
     /^async function settleStorage\([^)]*\) \{\n  if \(d\.storageFunding\) return;/.test(settle) &&
     /d\.storageFunding = funding;\n  await save\(r, d\);\n\}$/.test(settle) &&
     upload.indexOf("await settleStorage(r, d)") < upload.indexOf("await publish(d)"));
-  ok("creator.ts looks a lost receipt up at the creator's claim receipt, then the edition",
-    /const \{ receipt \} = await addresses\(d\.edition\.program, d\.edition\.creator, d\.edition\.nonce\);/.test(settle) &&
+  ok("creator.ts looks a lost receipt up at the creator's claim receipt (the sealed token's on a Seeker-only edition), then the edition",
+    /const receipt = await claimReceiptAddress\(d\.edition\.program, d\.edition\.edition,\s*publisherClaimant\(d\.edition\.creator, d\.seekerOnly, /.test(settle) &&
     /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId\)/.test(settle));
   ok("creator.ts keeps the path across a stale screen and a reload, and forgets it only when the free tier refuses",
     /d\.storageFunding = current\.storageFunding;/.test(creator) &&

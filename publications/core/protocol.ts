@@ -409,7 +409,7 @@ export function checkSealedTerms(sealed: SealedTerms): void {
  *
  * A deployment with `programFeatures().royaltiesAndSeekerOnly` takes two more ARGUMENTS after
  * `supply`, `royalty_bps` (u16) and `seeker_only` (bool), which `sealed` must carry: the data grows
- * from 185 to 188 bytes and nothing before them moves. On a Seeker-only edition published with the
+ * by 3 bytes and nothing before them moves. On a Seeker-only edition published with the
  * creator's Genesis Token, the creator's receipt is keyed on that mint (`publisherClaimant`). An
  * older deployment is sent neither, and refuses anything but `{ royaltyBps: 0, seekerOnly: false }`.
  */

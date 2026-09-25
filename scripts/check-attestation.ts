@@ -318,8 +318,12 @@ for (const [name, bad] of [
 const realFetch = globalThis.fetch;
 const reply = (body: unknown, init?: ResponseInit) => new Response(JSON.stringify(body), init);
 const SYSTEM = "11111111111111111111111111111111";
-/** A deployment that predates `published_at` (`LEGACY_WITHOUT_PUBLISHED_AT`), and one after it. */
+/**
+ * A deployment that predates `published_at` (`LEGACY_WITHOUT_PUBLISHED_AT`), one that records it but
+ * predates `seeker_only` (`LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY`), and a current one.
+ */
 const LEGACY = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
+const TIMED = "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz";
 const CURRENT = getAddressDecoder().decode(new Uint8Array(32).fill(7));
 const CREATOR = getAddressDecoder().decode(new Uint8Array(32).fill(9));
 const NONCE = "ab".repeat(32);
@@ -327,9 +331,10 @@ type Stored = { owner: string; bytes: Uint8Array };
 
 /**
  * An `Edition` account as a program writes it: 8 + 293 bytes before `published_at`, 8 + 301 with it
- * as an i64 after `bump` (lib.rs `published_at_is_eight_bytes_right_after_bump`).
+ * as an i64 after `bump` (lib.rs `published_at_is_eight_bytes_right_after_bump`), 8 + 302 with the
+ * `seeker_only` byte after that. `seekerOnly` null leaves the byte out.
  */
-function editionBytes(publishedAt: bigint | null): Uint8Array {
+function editionBytes(publishedAt: bigint | null, seekerOnly: boolean | null = publishedAt === null ? null : false): Uint8Array {
   const text = (s: string) => { const b = new TextEncoder().encode(s); const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, b.length, true); return [n, b]; };
   const i64 = (v: bigint) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigInt64(0, v, true); return b; };
   const parts = [
@@ -338,9 +343,10 @@ function editionBytes(publishedAt: bigint | null): Uint8Array {
     new Uint8Array(32).fill(1), new Uint8Array(32).fill(2),
     new Uint8Array([3, 0, 1, 0, 254]), // supply 3, minted 1, bump
     ...(publishedAt === null ? [] : [i64(publishedAt)]),
+    ...(seekerOnly === null ? [] : [new Uint8Array([seekerOnly ? 1 : 0])]),
     ...text("Sample"), ...text(`https://arweave.net/${"A".repeat(43)}`),
   ];
-  const out = new Uint8Array(publishedAt === null ? 301 : 309);
+  const out = new Uint8Array(publishedAt === null ? 301 : seekerOnly === null ? 309 : 310);
   let at = 0;
   for (const part of parts) { out.set(part, at); at += part.length; }
   return out;
@@ -387,9 +393,21 @@ async function networkChecks() {
   ok("a recorded published_at is the publication time, read from the Edition in one request; a padded history is never asked",
     (await publicationTime(rpc(), CURRENT, current.edition)).getTime() === PUBLISHED * 1000
       && flooded.join() === "getAccountInfo");
+  chain([], {}, recorded(editionBytes(BigInt(PUBLISHED), true)));
+  ok("a Seeker-only edition's time reads the same",
+    (await publicationTime(rpc(), CURRENT, current.edition)).getTime() === PUBLISHED * 1000);
   chain([], {}, recorded(editionBytes(null)));
   ok("a recording deployment's Edition in the 301-byte layout is refused, never read as untimed",
     await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+  chain([], {}, recorded(editionBytes(BigInt(PUBLISHED), null)));
+  ok("a current deployment's Edition in the 309-byte layout is refused",
+    await rejects(publicationTime(rpc(), CURRENT, current.edition)));
+  const timed = await addresses(TIMED, CREATOR, NONCE);
+  chain(() => full, {}, { [timed.edition]: { owner: TIMED, bytes: editionBytes(BigInt(PUBLISHED), null) } });
+  ok("a deployment between the two reads its 309-byte Edition's published_at",
+    (await publicationTime(rpc(), TIMED, timed.edition)).getTime() === PUBLISHED * 1000);
+  chain([], {}, { [timed.edition]: { owner: TIMED, bytes: editionBytes(BigInt(PUBLISHED)) } });
+  ok("and refuses the 310-byte layout it never wrote", await rejects(publicationTime(rpc(), TIMED, timed.edition)));
   for (const [name, time] of [["zero", 0n], ["negative", -1n], ["past what a Date holds", 8_640_000_000_001n]] as const) {
     chain([], {}, recorded(editionBytes(time)));
     ok(`a published_at that is ${name} is refused`, await rejects(publicationTime(rpc(), CURRENT, current.edition)));
@@ -427,7 +445,7 @@ async function networkChecks() {
   const paging = chain(() => full, {}, untimed);
   ok("legacy: history past three pages is not walked", await rejects(publicationTime(rpc(), LEGACY, legacy.edition))
     && paging.filter((m) => m === "getSignaturesForAddress").length === 3 && !paging.includes("getTransaction"));
-  chain([], {}, { [legacy.edition]: { owner: LEGACY, bytes: editionBytes(BigInt(PUBLISHED)) } });
+  chain([], {}, { [legacy.edition]: { owner: LEGACY, bytes: editionBytes(BigInt(PUBLISHED), null) } });
   ok("legacy: a 309-byte Edition is refused for a deployment that never wrote one",
     await rejects(publicationTime(rpc(), LEGACY, legacy.edition)));
   chain([{ signature: "creation", err: null }], {

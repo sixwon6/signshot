@@ -459,8 +459,8 @@ async function pageRequests(): Promise<string[]> {
     ({ owner, executable: owner === LOADER, lamports: 1, rentEpoch: 0, space, data: [base64(bytes), "base64"] });
   const SIG = "5".repeat(88);
   const context = { slot: 100 };
-  // The device row's time: an Edition with `published_at` (8 + 301 bytes) under a deployment that
-  // records it, and one without (8 + 293) under the legacy program, whose receipt history is walked.
+  // The device row's time: a current Edition with `published_at` and `seeker_only` (8 + 302 bytes),
+  // and one without either (8 + 293) under the legacy program, whose receipt history is walked.
   const NONCE = "cd".repeat(32);
   const RECORDING = getAddressDecoder().decode(new Uint8Array(32).fill(7));
   const recordedEdition = (await addresses(RECORDING, holder, NONCE)).edition;
@@ -471,8 +471,9 @@ async function pageRequests(): Promise<string[]> {
     if (publishedAt !== null) new DataView(time.buffer).setBigInt64(0, publishedAt, true);
     const parts = [createHash("sha256").update("account:Edition").digest().subarray(0, 8),
       getAddressEncoder().encode(address(holder)), Buffer.from(NONCE, "hex"), new Uint8Array(96),
-      new Uint8Array([1, 0, 1, 0, 255]), time, ...text("Sample"), ...text(`https://arweave.net/${"A".repeat(43)}`)];
-    const out = new Uint8Array(publishedAt === null ? 301 : 309);
+      new Uint8Array([1, 0, 1, 0, 255]), time, new Uint8Array(publishedAt === null ? 0 : 1),
+      ...text("Sample"), ...text(`https://arweave.net/${"A".repeat(43)}`)];
+    const out = new Uint8Array(publishedAt === null ? 301 : 310);
     let at = 0;
     for (const part of parts) { out.set(part, at); at += part.length; }
     return out;

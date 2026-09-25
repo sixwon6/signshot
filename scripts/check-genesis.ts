@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AccountRole, address, createSolanaRpc, getAddressDecoder, getAddressEncoder, none, some, type Address } from "@solana/kit";
+import { AccountRole, address, createSolanaRpc, getAddressDecoder, getAddressEncoder, none, some, type Address, type Instruction } from "@solana/kit";
 import { extension, getMintEncoder, getTokenEncoder, AccountState, type ExtensionArgs } from "@solana-program/token-2022";
 import { canonicalize, type JcsValue } from "../src/jcs";
 import {
@@ -40,12 +40,22 @@ import type { AttestationBundle } from "../publications/core/attestation";
 import { readPhotoMetadata, readSavedPhotoMetadata } from "../publications/core/metadataDocument";
 import {
   GENESIS_ATTRIBUTE,
+  NO_ROYALTIES,
+  ROYALTY_RANGE,
+  SYSTEM_PROGRAM,
   addresses,
+  buyInstruction,
+  claimReceiptAddress,
+  collectInstruction,
+  collectionRoyalty,
   instruction,
   metadata,
   sealedGenesisMint,
   verifyEditionCollection,
+  type GenesisAccounts,
+  type SealedTerms,
 } from "../publications/core/protocol";
+import { programFeatures } from "../publications/deployments";
 import type { CoreMetadata } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -213,12 +223,20 @@ const GENESIS_PROGRAM = "Ds4LT9zQ3a9V9ZxqKgwYQxskh1DgeYPhoCYz5iHjAizE"; // any n
 const LEGACY_PROGRAM = "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU";
 const URI = "https://arweave.net/" + "B".repeat(43);
 const TOKEN_ACCOUNT = "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77";
-async function publishAccounts(program: string, genesis?: { mint: string; token: string }, album?: string, genesisMint: string | null = MINT) {
+/** Open to any wallet at 5%: the terms a current program is sent unless a check says otherwise. */
+const OPEN: SealedTerms = { royaltyBps: 500, seekerOnly: false };
+const accountList = (ix: Instruction) =>
+  ix.accounts!.map((a) => `${a.address}:${a.role === AccountRole.READONLY ? "r" : a.role === AccountRole.WRITABLE ? "w" : "s"}`);
+/** `sealed` null sends none. */
+async function publishIx(program: string, genesis?: GenesisAccounts, album?: string, genesisMint: string | null = MINT,
+  sealed: SealedTerms | null = programFeatures(program).royaltiesAndSeekerOnly ? OPEN : null) {
   const keys = await addresses(program, e.creator, e.nonce);
   const item: CoreMetadata = { ...e, program, edition: keys.edition, collection: keys.collection, ...(genesisMint ? { genesisMint } : {}) };
   if (!genesisMint) delete item.genesisMint;
-  const ix = await instruction(item, e.creator, 1, URI, "a".repeat(64), album, genesis);
-  return ix.accounts!.map((a) => `${a.address}:${a.role === AccountRole.READONLY ? "r" : a.role === AccountRole.WRITABLE ? "w" : "s"}`);
+  return instruction(item, e.creator, 1, URI, "a".repeat(64), album, genesis, sealed ?? undefined);
+}
+async function publishAccounts(program: string, genesis?: GenesisAccounts, album?: string, genesisMint: string | null = MINT) {
+  return accountList(await publishIx(program, genesis, album, genesisMint));
 }
 async function publishThrows(program: string, genesis?: { mint: string; token: string }, genesisMint: string | null = MINT) {
   try { await publishAccounts(program, genesis, undefined, genesisMint); return false; } catch { return true; }
@@ -240,27 +258,101 @@ async function accountTests() {
   ok("refuses: sealing when the document names none", await publishThrows(GENESIS_PROGRAM, { mint: MINT, token: TOKEN_ACCOUNT }, null));
 }
 
+// --- The royalty and Seeker-only setting ---------------------------------------------------------------
+// A current deployment takes `royalty_bps` (u16) and `seeker_only` (bool) after `supply`, and on
+// `collect` and `buy` the collector's Genesis Token accounts last, keying a claim made with one on its
+// mint. The deployment before it (A1fn, which has the publisher's Genesis Token accounts) takes neither.
+const TIMED_PROGRAM = "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz";
+const GENESIS: GenesisAccounts = { mint: MINT, token: TOKEN_ACCOUNT };
+const failure = async (p: Promise<unknown>) => {
+  try { await p; return null; } catch (error) { return error instanceof Error ? error.message : String(error); }
+};
+async function sealedTests() {
+  const data = async (program: string, sealed?: SealedTerms | null) => [...(await publishIx(program, undefined, undefined, MINT, sealed)).data!];
+  // The v1 arguments: discriminator, nonce, title, uri, both hashes, supply (185 bytes at an 8-byte title).
+  const v1 = 8 + 32 + 4 + e.title.length + 4 + URI.length + 32 + 32 + 2;
+  const sealed = await data(GENESIS_PROGRAM, { royaltyBps: 1000, seekerOnly: true });
+  const before = await data(TIMED_PROGRAM);
+  ok("three bytes more on a current program, the u16 royalty and the bool last, nothing before them moved",
+    sealed.length === v1 + 3 && sealed.slice(-3).join() === "232,3,1" && sealed.slice(0, v1).join() === before.join());
+  ok("0% and open to any wallet: three zero bytes", (await data(GENESIS_PROGRAM, { royaltyBps: 0, seekerOnly: false })).slice(v1).join() === "0,0,0");
+  ok("the v1 arguments alone on the program before them, sent no terms or 0% and open",
+    before.length === v1 && (await data(TIMED_PROGRAM, { royaltyBps: 0, seekerOnly: false })).join() === before.join());
+  ok("refuses: no terms for a program that takes them",
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, null))) === "Invalid edition creation");
+  for (const [name, royaltyBps] of [["over 10%", 1001], ["a fraction", 500.5], ["negative", -1]] as const)
+    ok(`refuses: a royalty ${name}`,
+      (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, { royaltyBps, seekerOnly: false }))) === ROYALTY_RANGE);
+  ok("refuses: a royalty or Seeker-only for the program before them",
+    (await failure(publishIx(TIMED_PROGRAM, undefined, undefined, MINT, OPEN))) === NO_ROYALTIES &&
+    (await failure(publishIx(TIMED_PROGRAM, undefined, undefined, MINT, { royaltyBps: 0, seekerOnly: true }))) === NO_ROYALTIES);
+
+  const keys = await addresses(GENESIS_PROGRAM, e.creator, e.nonce);
+  const tokenReceipt = await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, MINT);
+  const publisherReceipt = async (seekerOnly: boolean, genesis?: GenesisAccounts) =>
+    (await publishIx(GENESIS_PROGRAM, genesis, undefined, MINT, { ...OPEN, seekerOnly })).accounts![4].address;
+  ok("the publisher's receipt is keyed on the sealed mint only on a Seeker-only edition with a Genesis Token",
+    (await publisherReceipt(true, GENESIS)) === tokenReceipt && (await publisherReceipt(true)) === keys.receipt &&
+    (await publisherReceipt(false, GENESIS)) === keys.receipt &&
+    (await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, e.creator)) === keys.receipt);
+
+  const item = async (program: string): Promise<CoreMetadata> => {
+    const k = await addresses(program, e.creator, e.nonce);
+    return { ...e, program, edition: k.edition, collection: k.collection };
+  };
+  const claims = async (program: string, collector: string, genesis?: GenesisAccounts) => {
+    const it = await item(program);
+    return [await collectInstruction(it, collector, 2, genesis), await buyInstruction(it, collector, 2, 1_000_000n, 1, genesis)].map(accountList);
+  };
+  const collector = key(99);
+  const walletReceipt = (await addresses(GENESIS_PROGRAM, e.creator, e.nonce, 2, collector)).receipt;
+  const open = await claims(GENESIS_PROGRAM, collector);
+  const held = await claims(GENESIS_PROGRAM, collector, GENESIS);
+  ok("collect and buy end with the program id twice, read only, and use the wallet's receipt without a Genesis Token",
+    open.map((a) => a.length).join() === "10,11" &&
+    open.every((a) => a.slice(-2).join() === `${GENESIS_PROGRAM}:r,${GENESIS_PROGRAM}:r` && a[4] === `${walletReceipt}:w`));
+  ok("with one they end with its mint and token account, read only, and the receipt is keyed on the mint",
+    held.every((a, i) => a.length === open[i].length && a.slice(-2).join() === `${MINT}:r,${TOKEN_ACCOUNT}:r` && a[4] === `${tokenReceipt}:w`));
+  const older = await claims(TIMED_PROGRAM, collector);
+  ok("the program before them is sent neither: collect and buy end at System",
+    older.map((a) => a.length).join() === "8,9" && older.every((a) => a[a.length - 1] === `${SYSTEM_PROGRAM}:r`));
+  const olderItem = await item(TIMED_PROGRAM);
+  ok("refuses: a Genesis Token on a claim for the program before them",
+    (await failure(collectInstruction(olderItem, collector, 2, GENESIS))) === NO_ROYALTIES &&
+    (await failure(buyInstruction(olderItem, collector, 2, 1_000_000n, 1, GENESIS))) === NO_ROYALTIES);
+  const current = await item(GENESIS_PROGRAM);
+  ok("the publisher's wallet is refused a claim, their Genesis Token is left to the program",
+    (await failure(collectInstruction(current, e.creator, 2))) !== null &&
+    (await failure(collectInstruction(current, e.creator, 2, GENESIS))) === null &&
+    (await failure(buyInstruction(current, e.creator, 2, 1_000_000n, 1, GENESIS))) === null);
+}
+
 // --- The sealed attribute, through the collection reader ---------------------------------------------
 // A Core `CollectionV1` encoded by hand in the layout `decodeCollection` reads: the base, the plugin
-// header, the three plugin blobs the program writes, then the registry. Only the attributes vary.
+// header, the three plugin blobs the program writes and any `extras`, then the registry.
 const u32le = (n: number) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
 const u64le = (n: number) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), true); return b; };
 const text = (s: string) => { const bytes = new TextEncoder().encode(s); return concatBytes(u32le(bytes.length), bytes); };
 const concatBytes = (...parts: Uint8Array[]) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
 const state = { creator: address(e.creator), nonce: e.nonce, collection: OTHER, metadataHash: "c".repeat(64), imageHash: "d".repeat(64), supply: 3, minted: 1, title: "Sample", uri: URI };
 const EDITION = e.edition;
-function encodeCollection(attributes: { key: string; value: string }[]): Uint8Array {
+/** One more plugin: its blob, discriminator first, and its registry authority (`None` unless given). */
+type Extra = { blob: Uint8Array; authority?: Uint8Array };
+function encodeCollection(attributes: { key: string; value: string }[], extras: Extra[] = []): Uint8Array {
   const base = concatBytes(new Uint8Array([5]), getAddressEncoder().encode(address(EDITION)) as Uint8Array, text(state.title), text(state.uri), u32le(1), u32le(1));
   const master = concatBytes(new Uint8Array([10, 1]), u32le(state.supply), new Uint8Array([0, 0])); // MasterEdition: Some(max_supply), None, None
   const immutable = new Uint8Array([12]);
   const attrs = concatBytes(new Uint8Array([6]), u32le(attributes.length), ...attributes.map((a) => concatBytes(text(a.key), text(a.value))));
-  const headerLength = 1 + 8;
-  const offsets = { master: base.length + headerLength, immutable: base.length + headerLength + master.length, attrs: base.length + headerLength + master.length + immutable.length };
-  const registryOffset = offsets.attrs + attrs.length;
-  const header = concatBytes(new Uint8Array([3]), u64le(registryOffset));
-  const record = (type: number, offset: number) => concatBytes(new Uint8Array([type, 0]), u64le(offset)); // authority None
-  const registry = concatBytes(new Uint8Array([4]), u32le(3), record(10, offsets.master), record(12, offsets.immutable), record(6, offsets.attrs), u32le(0));
-  return concatBytes(base, header, master, immutable, attrs, registry);
+  const plugins: Extra[] = [{ blob: master }, { blob: immutable }, { blob: attrs }, ...extras];
+  let at = base.length + 1 + 8;
+  const records = plugins.map(({ blob, authority = new Uint8Array([0]) }) => {
+    const record = concatBytes(new Uint8Array([blob[0]]), authority, u64le(at));
+    at += blob.length;
+    return record;
+  });
+  const header = concatBytes(new Uint8Array([3]), u64le(at));
+  const registry = concatBytes(new Uint8Array([4]), u32le(records.length), ...records, u32le(0));
+  return concatBytes(base, header, ...plugins.map((p) => p.blob), registry);
 }
 const FIVE = [
   { key: "image_sha256", value: state.imageHash }, { key: "metadata_sha256", value: state.metadataHash },
@@ -276,6 +368,29 @@ ok("refuses: a sixth attribute that is not an address", verifies([...FIVE, { key
 ok("refuses: anything after the sixth", verifies([...FIVE, { key: GENESIS_ATTRIBUTE, value: MINT }, { key: "verified", value: "yes" }]) === null);
 ok("refuses: the sixth in place of one of the five", verifies([...FIVE.slice(0, 4), { key: GENESIS_ATTRIBUTE, value: MINT }]) === null);
 ok("refuses: fewer than five", verifies(FIVE.slice(0, 4)) === null);
+
+// The `Royalties` plugin as the program writes it: `[0, u16 bps, u32 1, creator, 100, RuleSet::None]`.
+const royalties = ({ bps = 500, creators = [{ creator: state.creator as string, share: 100 }], rules = new Uint8Array([0]) } = {}) =>
+  concatBytes(new Uint8Array([0, bps & 255, bps >> 8]), u32le(creators.length),
+    ...creators.map((c) => concatBytes(getAddressEncoder().encode(address(c.creator)) as Uint8Array, new Uint8Array([c.share]))), rules);
+const royaltyOf = (...extras: Extra[]) => {
+  try { return collectionRoyalty(verifyEditionCollection(encodeCollection(FIVE, extras), state, EDITION)); } catch { return undefined; }
+};
+ok("the program's Royalties plugin verifies and reads back, at 5% and at 0%; none reads as null",
+  JSON.stringify(royaltyOf({ blob: royalties() })) === JSON.stringify({ basisPoints: 500, creator: state.creator }) &&
+  royaltyOf({ blob: royalties({ bps: 0 }) })?.basisPoints === 0 && royaltyOf() === null);
+for (const [name, extras] of [
+  ["a second one", [{ blob: royalties() }, { blob: royalties() }]],
+  ["a plugin authority other than None", [{ blob: royalties(), authority: new Uint8Array([2]) }]],
+  ["an allow list", [{ blob: royalties({ rules: concatBytes(new Uint8Array([1]), u32le(0)) }) }]],
+  ["a deny list", [{ blob: royalties({ rules: concatBytes(new Uint8Array([2]), u32le(1), getAddressEncoder().encode(OTHER) as Uint8Array) }) }]],
+  ["no creator", [{ blob: royalties({ creators: [] }) }]],
+  ["two creators", [{ blob: royalties({ creators: [{ creator: state.creator, share: 50 }, { creator: OTHER, share: 50 }] }) }]],
+  ["the creator at 99%", [{ blob: royalties({ creators: [{ creator: state.creator, share: 99 }] }) }]],
+  ["over 10%", [{ blob: royalties({ bps: 1001 }) }]],
+  ["a creator other than the publisher", [{ blob: royalties({ creators: [{ creator: OTHER, share: 100 }] }) }]],
+] as const)
+  ok(`refuses: a Royalties plugin with ${name}`, royaltyOf(...extras) === undefined);
 
 // --- What a screen says --------------------------------------------------------------------------------
 const shows = (check: GenesisCheck, cluster: "mainnet-beta" | "devnet", sealed: boolean, line: GenesisLine, sealLine: boolean) => {
@@ -372,6 +487,7 @@ const plainAt = (): Held => ({ owner: TOKEN_2022, data: mintBytes(OTHER, [pointe
 // tsx runs this file as CommonJS, which has no top-level await.
 async function verifier() {
 await accountTests();
+await sealedTests();
 stub({ accounts: mintAt(genuine), holdings: [tokenAccount("0"), tokenAccount("1")] });
 ok("held: a genuine mint and a non-zero token account of the holder's, once mainnet says it is mainnet",
   (await verifyGenesisToken(MAINNET, MINT, HOLDER)) === "held" && calls.join() === "getGenesisHash,getAccountInfo,getTokenAccountsByOwner");

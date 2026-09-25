@@ -64,7 +64,8 @@ import {
 } from "../../publications/core/protocol";
 import { findGenesisTokenAccount } from "../../publications/core/genesisToken";
 import { normalizeDescription, readDescription } from "../../publications/core/details";
-import { readSavedPhotoMetadata } from "../../publications/core/metadataDocument";
+import { readSavedPhotoMetadata, sealedEvidence } from "../../publications/core/metadataDocument";
+import { checkDevice, GOOGLE_STATUS_URL, readRevocationList } from "../../publications/core/attestationCheck";
 import {
   configuredProgram,
   isTrustedDeployment,
@@ -90,7 +91,12 @@ import {
 import { assertAlbumLabel, confirmedAlbum } from "./albums";
 import { safeErrorText } from "../ui/errorText";
 import { attestPublication } from "../seeker/publicationAttestation";
-import { attestationExpiring } from "../../publications/core/attestation";
+import {
+  attestationExpiring,
+  type AttestationBundle,
+  type AttestationSummary,
+  type DeviceVerdict,
+} from "../../publications/core/attestation";
 import { publisherGenesisMint } from "../seeker/publisherGenesis";
 
 /** ANS-104 tags are public and unhashed, so each upload carries only its media type. */
@@ -493,7 +499,7 @@ async function sealDocument(
   let json: string, meta: ReturnType<typeof buildDataItem>;
   try {
     if (attested.status !== "attested") throw new Error("plain");
-    json = canonicalize(metadata(e, attested.attestation.bundle) as unknown as JcsValue);
+    json = canonicalize(metadata(e, attested.attestation.bundle, await sealVerdict(attested.attestation.summary)) as unknown as JcsValue);
     meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
   } catch (error) {
     if (attested.status === "attested")
@@ -503,6 +509,47 @@ async function sealDocument(
     meta = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer });
   }
   return { json, meta };
+}
+
+/**
+ * The full device verdict on a chain as its document is sealed, judged now, which is when a draft
+ * is published: what decides whether the document's `attributes` name the device (`metadata()`).
+ * Never throws; a revocation list out of reach is "unchecked", which names nothing.
+ */
+function sealVerdict(summary: AttestationSummary): Promise<DeviceVerdict> {
+  return checkDevice(summary, {
+    revocationList: () => readRevocationList(GOOGLE_STATUS_URL),
+    publishedAt: async () => new Date(),
+  }).catch((): DeviceVerdict => ({ status: "unchecked" }));
+}
+
+/**
+ * Right before a draft's document goes into a transaction, it must be the document `metadata()`
+ * writes today, and it may name the device only while the verdict still passes: a draft is reused
+ * for days, and a certificate can be revoked or a list become unreachable in that time. Otherwise
+ * it is sealed again from the same attestation, keeping its bundle and its Genesis Token claim, and
+ * the draft changed in place, like `renewStaleAttestation`. A document that does not name the
+ * device is never upgraded to one that does here; a fresh draft is.
+ */
+async function resealDocument(r: CaptureRecord, d: CoreDraft) {
+  const sealed = sealedEvidence(d.metadata);
+  const summary = d.edition.attestation;
+  const withdraw = sealed.namesDevice && (!summary || (await sealVerdict(summary)).status !== "verified");
+  if (sealed.current && !withdraw) return;
+  await exclusive(lock(r), async () => {
+    await assertCurrent(r, d);
+    // A bundle the reader set aside is not carried into a new document.
+    const bundle = summary ? (sealed.bundle as AttestationBundle | undefined) : undefined;
+    const verdict = bundle && !withdraw ? await sealVerdict(summary!) : undefined;
+    const json = canonicalize(metadata(d.edition, bundle, verdict) as unknown as JcsValue);
+    if (json === d.metadata) return;
+    const signer = await getUploadKey(d.edition.creator);
+    // The summary and the claim are read back off the new document, as `readDraft` will.
+    d.edition = readSavedPhotoMetadata(json, d.edition);
+    d.metadata = json;
+    d.metadataId = buildDataItem({ data: utf8(json), tags: DOCUMENT_TAGS, signer }).id;
+    await save(r, d);
+  });
 }
 
 /**
@@ -730,6 +777,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   }
   // Before the document's hash goes into the instruction below.
   await renewStaleAttestation(r, d);
+  await resealDocument(r, d);
   // Checked before the estimate, so a doomed `publish_in_album` never reaches a wallet prompt.
   if (d.album) await confirmedAlbum(d.album, d.edition.creator);
   // Quote only. Public upload begins only after an approved, confirmed transaction.

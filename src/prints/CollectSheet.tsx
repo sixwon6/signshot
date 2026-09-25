@@ -347,14 +347,16 @@ export function CollectSheet({
       : !wallet
         ? copy.needWallet
         : eligibility === "already"
-          ? copy.already
+          ? state?.reason ?? copy.already
           : eligibility === "soldOut"
             ? copy.soldOut
             : eligibility === "wait"
               ? copy.wait
-              : eligibility === "unavailable"
-                ? copy.unavailable
-                : null;
+              : eligibility === "needsGenesis"
+                ? copy.needsGenesis
+                : eligibility === "unavailable"
+                  ? copy.unavailable
+                  : null;
 
   return (
     <Modal
@@ -422,6 +424,7 @@ export function CollectSheet({
                     value={copy.issuedValue(collectable.minted, e.supply)}
                   />
                 )}
+                {!!e.seekerOnly && <Row label={copy.collectorsLabel} value={copy.seekerOnly} />}
               </View>
             )}
             {!!blocker && <Text style={sheetStyles.body}>{blocker}</Text>}

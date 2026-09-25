@@ -21,7 +21,9 @@
  *   3. the receipt PDA `["claim", edition, collector]` is `init` — one claim per wallet, ever,
  *      surviving any later transfer or burn of the print. That account, not a signature, is what
  *      proves a claim, and it is also why this flow needs none of `transfer.ts`'s replay
- *      bookkeeping: the program itself refuses a second claim by the same wallet.
+ *      bookkeeping: the program itself refuses a second claim by the same wallet. On a seeker-only
+ *      edition the same account is keyed on the collector's Seeker Genesis Token instead, one
+ *      claim per token, and the claim carries the token (`publications/core/seekerClaim.ts`).
  *
  * No UI lives here. The attempt is persisted before the wallet opens, the edition is re-read
  * immediately before it opens, and one in-process lock per edition stops two taps racing.
@@ -42,13 +44,15 @@ import {
   addresses,
   buyInstruction,
   collectInstruction,
-  collectedCopy,
   loadTrustedEdition,
   pricedOffer,
   readOfferAccount,
   readPublication,
   type EditionOffer,
+  type GenesisAccounts,
 } from "../../publications/core/protocol";
+import { claimGenesis, claimedCopy } from "../../publications/core/seekerClaim";
+import { collect as words } from "../ui/copy";
 import { reviewedFingerprint } from "../../publications/core/transferReceipt";
 import { isTrustedDeployment } from "../../publications/deployments";
 import { assertReviewedProgram } from "../../publications/programImage";
@@ -322,7 +326,7 @@ const write = (attempt: CollectAttempt) =>
 // State
 // ---------------------------------------------------------------------------
 
-type CollectEligibility = "collect" | "already" | "soldOut" | "wait" | "unavailable";
+type CollectEligibility = "collect" | "already" | "soldOut" | "wait" | "needsGenesis" | "unavailable";
 
 export interface CollectState {
   eligibility: CollectEligibility;
@@ -330,6 +334,11 @@ export interface CollectState {
   /** The copy this wallet holds, when `already`. */
   number?: number;
   reason?: string;
+  /**
+   * On a seeker-only edition, the wallet's Seeker Genesis Token as it was found for this state:
+   * what the claim is keyed on and what the program is handed (`claimGenesis`). Absent otherwise.
+   */
+  genesis?: GenesisAccounts;
 }
 
 const SOLD_OUT = "Sold out.";
@@ -362,13 +371,25 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
     await assertEndpointCluster();
     attempt = await read(e, wallet);
 
+    // A seeker-only edition's claim is keyed on the wallet's Seeker Genesis Token, found on this
+    // build's own cluster (`claimGenesis`): `null` when it holds none, `undefined` when open.
+    const genesis = wallet === e.creator ? undefined : await claimGenesis(RPC_ENDPOINT, e, wallet);
+    const found = genesis ? { genesis } : {};
     // The publisher's receipt was created by `publish` atomically with print #1 and is already
     // verified inside `c.publication`, so it costs no request to answer for them.
     const mine =
       wallet === e.creator
         ? c.publication.creatorReceipt
-        : await collectedCopy(RPC_ENDPOINT, e, wallet);
-    if (mine) return { eligibility: "already", attempt, number: mine.number, reason: ALREADY };
+        : await claimedCopy(RPC_ENDPOINT, e, wallet, genesis);
+    if (mine)
+      return {
+        eligibility: "already",
+        attempt,
+        // A token's copy may sit with the wallet that claimed it, not this one.
+        ...(mine.collector === wallet ? { number: mine.number } : {}),
+        reason: e.seekerOnly && wallet !== e.creator ? words.alreadyGenesis : ALREADY,
+        ...found,
+      };
 
     if (attempt) {
       const standing = await checkAttempt(RPC_ENDPOINT, attempt, { operation: "collect" });
@@ -383,7 +404,8 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
     }
 
     if (c.remaining <= 0) return { eligibility: "soldOut", attempt, reason: SOLD_OUT };
-    return { eligibility: "collect", attempt };
+    if (genesis === null) return { eligibility: "needsGenesis", attempt, reason: words.needsGenesis };
+    return { eligibility: "collect", attempt, ...found };
   } catch (error) {
     return {
       eligibility: "unavailable",
@@ -397,9 +419,10 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
 function refusal(state: CollectState): Error {
   return new Error(
     state.reason ??
-      { already: ALREADY, soldOut: SOLD_OUT, wait: MAY_LAND, unavailable: CANNOT_REPEAT, collect: "" }[
-        state.eligibility
-      ],
+      {
+        already: ALREADY, soldOut: SOLD_OUT, wait: MAY_LAND, needsGenesis: words.needsGenesis,
+        unavailable: CANNOT_REPEAT, collect: "",
+      }[state.eligibility],
   );
 }
 
@@ -434,6 +457,11 @@ export interface CollectQuote {
    * fail (`OfferChanged`) instead of settling at a price nobody reviewed.
    */
   revision: number;
+  /**
+   * The Seeker Genesis Token a seeker-only claim was quoted with, handed to the program in both
+   * the reviewed and the approved instruction; absent for an open edition.
+   */
+  genesis?: GenesisAccounts;
   prepared: Awaited<ReturnType<typeof prepareTransaction>>;
 }
 
@@ -441,10 +469,14 @@ export interface CollectQuote {
  * The transaction for a quote: `buy` when the offer is priced, `collect` when it is free. One
  * function so the review and the approval cannot drift into different instructions.
  */
-const claimInstruction = (c: Collectable, collector: string, quote: Pick<CollectQuote, "kind" | "number" | "priceLamports" | "revision">) =>
+const claimInstruction = (
+  c: Collectable,
+  collector: string,
+  quote: Pick<CollectQuote, "kind" | "number" | "priceLamports" | "revision" | "genesis">,
+) =>
   quote.kind === "buy"
-    ? buyInstruction(c.edition, collector, quote.number, quote.priceLamports, quote.revision)
-    : collectInstruction(c.edition, collector, quote.number);
+    ? buyInstruction(c.edition, collector, quote.number, quote.priceLamports, quote.revision, quote.genesis)
+    : collectInstruction(c.edition, collector, quote.number, quote.genesis);
 
 /**
  * The wallet's balance in lamports, at confirmed commitment. Read only to refuse a purchase the
@@ -517,9 +549,11 @@ export async function prepareCollect(c: Collectable, wallet: string): Promise<Co
   // The live offer, not the one loaded with the edition. `pricedOffer` collapses "no offer",
   // "no offers on this program" and "priced at zero" into the one answer they all mean: free.
   const offer = pricedOffer(await readOfferAccount(RPC_ENDPOINT, e.program, e.edition));
+  // The token the state above just found, so the claim is keyed on the one checked for a receipt.
+  const genesis = state.genesis ? { genesis: state.genesis } : {};
   const shape = offer
-    ? { kind: "buy" as const, number, priceLamports: offer.priceLamports, revision: offer.revision }
-    : { kind: "collect" as const, number, priceLamports: 0n, revision: 0 };
+    ? { kind: "buy" as const, number, priceLamports: offer.priceLamports, revision: offer.revision, ...genesis }
+    : { kind: "collect" as const, number, priceLamports: 0n, revision: 0, ...genesis };
   if (offer) {
     // The price is known here; current account rent and fees come from the simulation below.
     // The historical rent table can exceed today's rent and must not reject a funded buyer.
@@ -588,6 +622,9 @@ export async function sendCollect(
 
     const state = await getCollectState(c, collector);
     if (state.eligibility !== "collect") throw refusal(state);
+    // A seeker-only claim is keyed on the token: another one now is another claim than reviewed.
+    if (state.genesis?.mint !== quote.genesis?.mint || state.genesis?.token !== quote.genesis?.token)
+      throw new Error("The collection review changed. Check this edition again.");
     // Again right before the wallet opens: two header reads while the reviewed slot is cached.
     await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
 
@@ -642,7 +679,8 @@ export async function sendCollect(
 
     onProgress?.("confirming");
     await confirmTransaction(RPC_ENDPOINT, attempt.signature, BigInt(attempt.lastValidBlockHeight));
-    const receipt = await collectedCopy(RPC_ENDPOINT, e, collector);
+    // On a seeker-only edition the receipt is the token's, at the address the claim was keyed on.
+    const receipt = await claimedCopy(RPC_ENDPOINT, e, collector, quote.genesis);
     if (!receipt)
       throw new Error(
         "The transaction confirmed, but the collection receipt is not visible yet. Check again before collecting.",

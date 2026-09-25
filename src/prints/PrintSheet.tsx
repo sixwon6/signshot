@@ -7,6 +7,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -16,6 +17,8 @@ import type { CaptureRecord, PhotoEdit } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
 import {
   createDraft,
+  DEFAULT_ROYALTY_BPS,
+  MAX_ROYALTY_BPS,
   prepareSetup,
   sendSetup,
   discardDraft,
@@ -60,6 +63,7 @@ import {
 import {
   actions,
   changedEstimate,
+  collect as collectCopy,
   estimate,
   expiredEstimate,
   onChain,
@@ -140,6 +144,14 @@ export function PrintSheet({
    */
   const [priceText, setPriceText] = useState("");
   const [offers, setOffers] = useState(false);
+  /**
+   * The royalty, in basis points and whole percents, and whether only Seeker Genesis Token holders
+   * may collect. Frozen into the draft like the price, and offered only where the deployment a
+   * fresh publication uses takes them.
+   */
+  const [royaltyBps, setRoyaltyBps] = useState(DEFAULT_ROYALTY_BPS);
+  const [seekerOnly, setSeekerOnly] = useState(true);
+  const [distribution, setDistribution] = useState(false);
   const [quote, setQuote] = useState<Awaited<
     ReturnType<typeof prepareSetup>
   > | null>(null);
@@ -199,16 +211,15 @@ export function PrintSheet({
         // Which deployment a fresh publication would use decides whether a price can be set on it
         // at all. `configuredProgram` throws when publishing is unavailable, which is already its
         // own screen state, so there is simply no price field then either.
-        setOffers(
-          available.enabled &&
-            (() => {
-              try {
-                return programFeatures(configuredProgram(cluster)).offers;
-              } catch {
-                return false;
-              }
-            })(),
-        );
+        const features = (() => {
+          try {
+            return available.enabled ? programFeatures(configuredProgram(cluster)) : null;
+          } catch {
+            return null;
+          }
+        })();
+        setOffers(!!features?.offers);
+        setDistribution(!!features?.royaltiesAndSeekerOnly);
         await applyPublicationState(state);
         if (!live) return;
         // Albums are a separate durable list; an unreadable one disables the control with a
@@ -227,6 +238,8 @@ export function PrintSheet({
           setAlbumMode(state.draft.album ? "existing" : "none");
           setSolo(state.draft.edition.supply === 1);
           setCount(String(state.draft.edition.supply));
+          setRoyaltyBps(state.draft.edition.royaltyBps ?? DEFAULT_ROYALTY_BPS);
+          setSeekerOnly(state.draft.edition.seekerOnly ?? true);
         }
         if (state.reason) setStatus(state.reason);
         // Warms the program check while the details are typed; publishing asks again and refuses.
@@ -307,6 +320,8 @@ export function PrintSheet({
           moment,
           selectedAlbum || undefined,
           lamports,
+          // An edition of 1 has nobody to collect it, so it keeps the default rule.
+          distribution ? { royaltyBps, seekerOnly: solo || seekerOnly } : undefined,
         );
         setDraft(current);
         onChanged?.();
@@ -765,6 +780,44 @@ export function PrintSheet({
                     {!!priceError && <Text style={sheetStyles.error}>{priceError}</Text>}
                   </View>
                 )}
+                {/* The royalty and who may collect. Absent, never disabled, on a deployment that
+                    takes neither; who may collect only where there is a copy to collect. */}
+                {distribution && (
+                  <View style={s.group}>
+                    <View style={s.countRow}>
+                      <Text style={[sheetStyles.label, s.countLabel]}>{copy.royaltyLabel}</Text>
+                      <View style={s.stepper}>
+                        <Chip
+                          label={copy.lessRoyalty}
+                          size="small"
+                          disabled={busy || royaltyBps <= 0}
+                          onPress={() => setRoyaltyBps((bps) => Math.max(0, bps - 100))}
+                          style={s.step}
+                        />
+                        <Text style={s.stepValue}>{copy.royaltyValue(royaltyBps)}</Text>
+                        <Chip
+                          label={copy.moreRoyalty}
+                          size="small"
+                          disabled={busy || royaltyBps >= MAX_ROYALTY_BPS}
+                          onPress={() => setRoyaltyBps((bps) => Math.min(MAX_ROYALTY_BPS, bps + 100))}
+                          style={s.step}
+                        />
+                      </View>
+                    </View>
+                    {!solo && (
+                      <View style={s.countRow}>
+                        <Text style={[sheetStyles.label, s.countLabel]}>{copy.seekerOnlyLabel}</Text>
+                        <Switch
+                          value={seekerOnly}
+                          onValueChange={setSeekerOnly}
+                          disabled={busy}
+                          trackColor={{ true: colors.teal, false: colors.line }}
+                          thumbColor={colors.ink}
+                        />
+                      </View>
+                    )}
+                  </View>
+                )}
                 <View style={s.group}>
                   <Text style={sheetStyles.label}>{copy.albumLabel}</Text>
                   <View
@@ -898,6 +951,12 @@ export function PrintSheet({
                         : priceCopy.free
                     }
                   />
+                )}
+                {draft.edition.royaltyBps !== undefined && (
+                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.edition.royaltyBps)} />
+                )}
+                {!!draft.edition.seekerOnly && draft.edition.supply > 1 && (
+                  <Row label={copy.rowCollectors} value={collectCopy.seekerOnly} />
                 )}
                 {!!draft.edition.description && (
                   <Row label={copy.rowMoment} value={draft.edition.description} />
@@ -1194,6 +1253,9 @@ const s = StyleSheet.create({
     gap: space.md,
   },
   countLabel: { flex: 1 },
+  stepper: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  step: { width: 44 },
+  stepValue: { ...type.readout, color: colors.ink, minWidth: 48, textAlign: "center" },
   count: {
     ...type.readout,
     color: colors.ink,

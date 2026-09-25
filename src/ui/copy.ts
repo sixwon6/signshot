@@ -337,6 +337,12 @@ export const publish = {
   /** The form carries labels, not explanations; `needCount` names the range when it is wrong. */
   totalLabel: "Total copies, including yours",
   albumLabel: "Album (optional)",
+  /** The creator's cut of a resale, in whole percents, and who may collect. */
+  royaltyLabel: "Royalty",
+  royaltyValue: (bps: number): string => `${bps / 100}%`,
+  lessRoyalty: "−",
+  moreRoyalty: "+",
+  seekerOnlyLabel: "Seeker holders only",
   albumEmpty: "No albums yet.",
   albumNeedsWallet: "Connect a wallet to use albums.",
   albumNameLabel: "New album name",
@@ -345,6 +351,8 @@ export const publish = {
   albumCostSuffix: "for the album. Separate approval.",
   /** The receipt rows, once a draft exists. Labels only; the values are the draft's. */
   rowCopies: "Copies",
+  rowRoyalty: "Royalty",
+  rowCollectors: "Collectors",
   rowMoment: "Moment",
   rowAlbum: "Album",
   rowImage: "Image",
@@ -496,8 +504,13 @@ export const collect = {
 
   /** Before a wallet: a copy is collected INTO a wallet, so there is nothing to show without one. */
   needWallet: "Connect a wallet to collect.",
+  /** A seeker-only edition: the rule as a value, and the one line for a wallet without a token. */
+  collectorsLabel: "COLLECTORS",
+  seekerOnly: "Seeker holders only",
+  needsGenesis: "Needs a Seeker Genesis Token.",
   /** The states `getCollectState` reports. One sentence each, and never a claim of failure. */
   already: "Already collected by this wallet.",
+  alreadyGenesis: "Already collected with this Seeker Genesis Token.",
   soldOut: "Sold out.",
   wait: "An earlier collect may still land. Check status in a moment.",
   unavailable: "Couldn’t read this edition. Try again.",

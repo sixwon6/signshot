@@ -827,5 +827,46 @@ if (!process.argv.includes("--worker")) {
       for (const operation of ["publish", "collect", "buy", "set-offer"])
         assert.equal(failed(code, operation).retryable, false, `${code} is never offered again as ${operation}`);
   }
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, all three Edition layouts, release RPC, price floor and program error words");
+  {
+    // The royalty and Seeker-only terms, the honest Device trait at publish, and a seeker-only claim.
+    const { readFileSync } = await import("node:fs");
+    const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+    const { publish: publishWords, collect: collectWords } = await import("../src/ui/copy.ts");
+    assert.equal(publishWords.royaltyValue(500), "5%");
+    assert.equal(publishWords.royaltyValue(0), "0%");
+    assert.equal(publishWords.royaltyValue(1000), "10%");
+    assert.equal(collectWords.seekerOnly, "Seeker holders only");
+    assert.equal(collectWords.needsGenesis, "Needs a Seeker Genesis Token.");
+    const creator = source("../src/prints/creator.ts");
+    assert.match(creator, /DEFAULT_ROYALTY_BPS = 500;/);
+    assert.match(creator, /MAX_ROYALTY_BPS = 1000;/);
+    assert.match(creator, /if \(!programFeatures\(program\)\.royaltiesAndSeekerOnly\) \{\s*if \(requested\) throw/,
+      "a deployment without the terms is refused them, never sent them");
+    assert.match(creator, /seekerOnly: requested\?\.seekerOnly \?\? true/, "Seeker holders only is the default");
+    assert.match(creator, /metadata\(e, attested\.attestation\.bundle, await sealVerdict\(attested\.attestation\.summary\)\)/,
+      "the document names the device only on the verdict judged as it is sealed");
+    assert.ok(creator.indexOf("await resealDocument(r, d);") > creator.indexOf("await renewStaleAttestation(r, d);") &&
+      creator.indexOf("await resealDocument(r, d);") < creator.indexOf("const ix = await instruction("),
+      "a draft's document is resealed before its hash goes into the instruction");
+    assert.match(creator, /current\.edition\.royaltyBps !== d\.edition\.royaltyBps \|\| current\.edition\.seekerOnly !== d\.edition\.seekerOnly/,
+      "a stale screen cannot approve other terms");
+    const sheet = source("../src/prints/PrintSheet.tsx");
+    assert.match(sheet, /setDistribution\(!!features\?\.royaltiesAndSeekerOnly\)/, "the form offers the terms only where the program takes them");
+    assert.match(sheet, /distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined/);
+    assert.match(sheet, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
+    const collectFlow = source("../src/prints/collect.ts");
+    assert.equal(collectFlow.split("await claimedCopy(").length - 1, 2, "the eligibility and the confirmation both read the claim's own receipt");
+    assert.doesNotMatch(collectFlow, /collectedCopy\(/, "no wallet-keyed receipt read on a path a seeker-only edition takes");
+    assert.match(collectFlow, /buyInstruction\([^)]*quote\.genesis\)/);
+    assert.match(collectFlow, /collectInstruction\([^)]*quote\.genesis\)/);
+    assert.match(collectFlow, /state\.genesis\?\.mint !== quote\.genesis\?\.mint/, "another token than reviewed is refused before the wallet");
+    const { sealedEvidence } = await import("../publications/core/metadataDocument.ts");
+    const trait = { trait_type: "Device", value: "Solana Seeker" };
+    assert.deepEqual(sealedEvidence(JSON.stringify({ name: "x", external_url: "u", attributes: [trait], properties: { seedshot: { a: 1 } } })),
+      { current: true, bundle: { a: 1 }, namesDevice: true });
+    assert.deepEqual(sealedEvidence(JSON.stringify({ name: "x", attributes: [trait, { trait_type: "Attestation", value: "k" }], properties: {} })),
+      { current: false, namesDevice: true });
+    assert.deepEqual(sealedEvidence(JSON.stringify({ name: "x", description: "", image: "i" })), { current: false, namesDevice: false });
+  }
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
 }

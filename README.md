@@ -65,7 +65,7 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
   name of 25 characters or fewer and a subtitle of 50 or fewer.
 - **Submission:** `SUBMISSION_DRAFT.md`: push, connect GitHub on Align (or make the repository
   public), a public direct link to the APK, a captioned demo video (the judges read its
-  transcript), the form's answers. CLOCK IN closes 2026-10-08 23:59 US Pacific.
+  transcript). CLOCK IN closes 2026-10-08 23:59 US Pacific.
 
 ## The edition lifecycle
 

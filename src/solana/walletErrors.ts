@@ -13,9 +13,9 @@ export function isSigningRefused(e: unknown): boolean {
 }
 
 /**
- * A single-payload signing request. An explicit refusal sent nothing, so `forget` puts the saved
- * attempt back as it was before the wallet opened; a timeout, a closed session or anything else
- * keeps it, because a signed transaction may still land. Call it inside the operation's lock.
+ * A single-payload signing request. An explicit refusal sent nothing, so `forget` drops the attempt
+ * saved for it, or puts back the one before it; a timeout, a closed session or anything else keeps
+ * it, because a signed transaction may still land. Call it inside the operation's lock.
  */
 export function forgetIfRefused<T>(signing: Promise<T>, forget: () => Promise<unknown>): Promise<T> {
   return signing.catch(async (error: unknown) => {

@@ -857,12 +857,20 @@ if (!process.argv.includes("--worker")) {
     // (the node gates cannot run `creator.ts`, so its path is held here as text).
     const sheet = source("../src/prints/PrintSheet.tsx");
     assert.match(sheet, /setDistribution\(!!features\?\.royaltiesAndSeekerOnly\)/, "the form offers the terms only where the program takes them");
-    assert.match(sheet, /createDraft\(\s*record,[^;]*?\blamports,\s*(?:\/\/[^\n]*\n\s*)?distribution \? \{ royaltyBps, seekerOnly: solo \|\| seekerOnly \} : undefined,\s*\)/,
+    assert.match(sheet, /createDraft\(\s*record,[^;]*?\blamports,\s*(?:\/\/[^\n]*\n\s*)*distribution \? \{ royaltyBps, seekerOnly: sealable && \(solo \|\| seekerOnly\) \} : undefined,\s*\)/,
       "the form's terms are createDraft's last argument, after the price");
+    // Seeker-only only with the creator's Genesis Token to seal, which the program requires (6011).
+    assert.match(sheet, /setSealable\(!!features && canSealGenesis\(configuredProgram\(cluster\)\)\)/);
+    assert.match(sheet, /\{!solo && sealable && \(/, "the switch is absent where no Genesis Token can be sealed");
+    assert.match(creator, /export function canSealGenesis\(program: string\): boolean \{\s*return cluster === "mainnet-beta" && programFeatures\(program\)\.genesis;/);
+    assert.match(creator, /const sealsGenesis = [^\n]*\n\s*!!e\.genesisMint && canSealGenesis\(e\.program\);/);
+    assert.match(creator, /seekerOnly: chosenTerms\.seekerOnly && sealsGenesis\(e\),/, "the draft records Seeker-only only with a token to seal");
+    assert.match(creator, /async function genesisAccounts\(e: CoreMetadata\)[^{]*\{\s*if \(!sealsGenesis\(e\)\) return undefined;/,
+      "and publish sends the accounts on the same condition");
     assert.match(creator, /priceLamports\?: bigint,\s*\/\*\*[\s\S]*?\*\/\s*sealed\?: SealedTerms,\s*\): Promise<CoreDraft>/,
       "createDraft takes them as `sealed`, after the price");
     assert.match(creator, /const chosenTerms = sealedFor\(program, sealed \?\? \(/, "the draft records what the form chose, or the defaults");
-    assert.match(creator, /royaltyBps: chosenTerms\.royaltyBps,\s*seekerOnly: chosenTerms\.seekerOnly,/, "both go into the saved draft");
+    assert.match(creator, /royaltyBps: chosenTerms\.royaltyBps,\s*(?:\/\/[^\n]*\n\s*)*seekerOnly: chosenTerms\.seekerOnly && /, "both go into the saved draft");
     assert.match(prepare, /const ix = await instruction\((?:(?!\n {2}\);)[\s\S])*?\{ royaltyBps: d\.royaltyBps, seekerOnly: d\.seekerOnly \},\s*\);/,
       "and from the draft into the publish builder's `sealed`");
     assert.match(creator, /current\.royaltyBps !== d\.royaltyBps \|\| current\.seekerOnly !== d\.seekerOnly/, "a stale screen cannot approve other terms");

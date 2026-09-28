@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CaptureRecord, PhotoEdit } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
 import {
+  canSealGenesis,
   createDraft,
   prepareSetup,
   sendSetup,
@@ -155,6 +156,8 @@ export function PrintSheet({
   const [royaltyBps, setRoyaltyBps] = useState(DEFAULT_ROYALTY_BPS);
   const [seekerOnly, setSeekerOnly] = useState(DEFAULT_SEEKER_ONLY);
   const [distribution, setDistribution] = useState(false);
+  // Seeker-only is sealed with the creator's Genesis Token, which only a mainnet build can send.
+  const [sealable, setSealable] = useState(false);
   const [quote, setQuote] = useState<Awaited<
     ReturnType<typeof prepareSetup>
   > | null>(null);
@@ -223,6 +226,7 @@ export function PrintSheet({
         })();
         setOffers(!!features?.offers);
         setDistribution(!!features?.royaltiesAndSeekerOnly);
+        setSealable(!!features && canSealGenesis(configuredProgram(cluster)));
         await applyPublicationState(state);
         if (!live) return;
         // Albums are a separate durable list; an unreadable one disables the control with a
@@ -323,8 +327,9 @@ export function PrintSheet({
           moment,
           selectedAlbum || undefined,
           lamports,
-          // An edition of 1 has nobody to collect it, so it keeps the default rule.
-          distribution ? { royaltyBps, seekerOnly: solo || seekerOnly } : undefined,
+          // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
+          // records Seeker-only only with the wallet's Genesis Token to seal.
+          distribution ? { royaltyBps, seekerOnly: sealable && (solo || seekerOnly) } : undefined,
         );
         setDraft(current);
         onChanged?.();
@@ -784,7 +789,8 @@ export function PrintSheet({
                   </View>
                 )}
                 {/* The royalty and who may collect. Absent, never disabled, on a deployment that
-                    takes neither; who may collect only where there is a copy to collect. */}
+                    takes neither; who may collect only where there is a copy to collect and a
+                    Genesis Token can be sealed. */}
                 {distribution && (
                   <View style={s.group}>
                     <View style={s.countRow}>
@@ -807,7 +813,7 @@ export function PrintSheet({
                         />
                       </View>
                     </View>
-                    {!solo && (
+                    {!solo && sealable && (
                       <View style={s.countRow}>
                         <Text style={[sheetStyles.label, s.countLabel]}>{copy.seekerOnlyLabel}</Text>
                         <Switch

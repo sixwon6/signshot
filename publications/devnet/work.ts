@@ -98,19 +98,19 @@ const hex = (bytes: ArrayLike<number>) =>
  * number, so extending the acceptance run cannot silently outgrow the reserve the way a literal
  * 0.15 SOL did when the supply-5 and album cases were added. The offer rows were added the same
  * way: the paid case publishes one more edition, sets a price three times and moves the price
- * itself. So were the royalty and Seeker-only rows: three more editions, one more claim for bob,
+ * itself. So were the royalty and Seeker-only rows: two more editions, one more claim for bob,
  * his stand-in Genesis Token and its move to frank.
  */
 export const TEST_COSTS = {
   /**
    * Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3, the sealed 1/1, the
-   * zero-royalty supply-2, the sealed Seeker-only supply-3 and the unsealed Seeker-only supply-2.
-   * Plus 55,680 lamports since: the 8 bytes of `published_at`, at the same 6,960 per byte; and
-   * 361,920 more for 52 bytes: the collection's `Royalties` plugin (41 bytes of data and a 10-byte
-   * registry record) and `seeker_only`.
+   * zero-royalty supply-2 and the sealed Seeker-only supply-3. Plus 55,680 lamports since: the 8
+   * bytes of `published_at`, at the same 6,960 per byte; and 361,920 more for 52 bytes: the
+   * collection's `Royalties` plugin (41 bytes of data and a 10-byte registry record) and
+   * `seeker_only`.
    */
   publish: 12_905_480,
-  publishes: 8,
+  publishes: 7,
   /**
    * The Genesis Token stand-in the sealed publish needs: the group mint, one member mint, the
    * payer's frozen token account for it, bob's and an empty one of the payer's. Five Token-2022

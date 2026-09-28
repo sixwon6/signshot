@@ -143,9 +143,9 @@ interface PlannedEdition {
  * friends. The two album members carry the album acceptance, `offer` carries the paid one and
  * `genesis` the sealed Genesis Token publish, whose document names the stand-in's member mint.
  * `royalty-0` seals a royalty of 0, which still writes the plugin, and `seeker` is the Seeker-only
- * edition, sealed with the same member mint at a royalty of 700, which no default could produce.
- * `seeker-unsealed` is Seeker-only without a token, as a devnet phone publishes. Every other
- * edition is `OPEN`, so its claims stay one per wallet.
+ * edition, sealed with the same member mint at a royalty of 700, which no default could produce;
+ * the program refuses it without the token. Every other edition is `OPEN`, so its claims stay one
+ * per wallet.
  */
 function editionPlan(): PlannedEdition[] {
   return [
@@ -158,7 +158,6 @@ function editionPlan(): PlannedEdition[] {
     { key: "genesis", title: "DEVNET Genesis Test", supply: 1, genesis: true },
     { key: "royalty-0", title: "DEVNET Zero Royalty", supply: 2, sealed: { royaltyBps: 0, seekerOnly: false } },
     { key: "seeker", title: "DEVNET Seeker Only", supply: 3, sealed: { royaltyBps: 700, seekerOnly: true }, genesis: true },
-    { key: "seeker-unsealed", title: "DEVNET Seeker Unsealed", supply: 2, sealed: { royaltyBps: 500, seekerOnly: true } },
   ];
 }
 
@@ -861,10 +860,9 @@ export async function lifecycle(c: TestContext) {
   // Only a Genesis Token holder can collect, one copy per token rather than per wallet. Published
   // with the payer's stand-in, whose token then holds copy 1. Bob collects with a stand-in of his
   // own; that token is refused a second time, and again once it has moved to frank; a wallet with
-  // none is refused, and an open edition refuses any token at all. The creator never collects:
-  // not with their sealed token, and not with a token they hold on an edition that sealed none.
+  // none is refused, and an open edition refuses any token at all. The creator never collects, not
+  // with their sealed token either, and without it the edition is refused at publish.
   const seeker = byKey.get("seeker")!;
-  const unsealed = byKey.get("seeker-unsealed")!;
   assert.equal(seeker.genesisMint, member.address, "The Seeker-only edition's document names another mint");
   c.seekerMember ??= await generateKeyPairSigner();
   const bobMember = c.seekerMember;
@@ -878,6 +876,14 @@ export async function lifecycle(c: TestContext) {
     mint: bobMember.address,
     token: await genesisTokenAccount(frank.address, bobMember.address),
   };
+  // The same publish with the program id in place of both accounts, which the client never builds.
+  // Tried first: once the edition exists, its `init` refuses a second attempt before this rule.
+  await once("seeker-only-without-token-refused", async () => {
+    const template = await publish(seeker, "seeker", undefined, { mint: member.address, token: held });
+    const absent = { address: address(c.program.address), role: AccountRole.READONLY };
+    return send(c, [budget, { ...template, accounts: [...template.accounts!.slice(0, -2), absent, absent] }],
+      [c.payer], /GenesisTokenRequired/);
+  });
   await once("publish-seeker-only", async () =>
     send(c, [budget, await publish(seeker, "seeker", undefined, { mint: member.address, token: held })]),
   );
@@ -964,24 +970,6 @@ export async function lifecycle(c: TestContext) {
     assert.equal(await hasCollected(c.endpoint, seeker, ivan.address), false);
     return "2/3 issued; the same token twice, the token moved to frank, no token and the creator's token refused";
   });
-  // Published without the accounts, so copy 1 is the creator's wallet's claim and no token's. The
-  // payer's stand-in, which it still holds, opens no second copy for the creator: the program
-  // refuses the creator before it reads the token.
-  await once("publish-seeker-only-unsealed", async () =>
-    send(c, [budget, await publish(unsealed, "seeker-unsealed")]),
-  );
-  await once("seeker-unsealed-creator-receipt", async () => {
-    const publication = await readPublication(c.endpoint, c.program.address, unsealed.edition);
-    assert.ok(publication, "The unsealed Seeker-only edition does not read");
-    assert.equal(publication.seekerOnly, true);
-    assert.equal(publication.sealedGenesis, null);
-    const walletKeyed = (await addresses(unsealed.program, unsealed.creator, unsealed.nonce)).receipt;
-    assert.equal(publication.creatorReceiptAddress, walletKeyed, "Copy 1 is not the creator's wallet's claim");
-    return `Seeker-only with nothing sealed; copy 1's receipt is the wallet's, ${walletKeyed}`;
-  });
-  await once("seeker-unsealed-creator-token-refused", async () =>
-    send(c, [budget, await creatorCollect(unsealed, 2, { mint: member.address, token: held })], [c.payer], /AlreadyCollected/),
-  );
   save();
   console.log("DEVNET LIFECYCLE COMPLETE");
 }

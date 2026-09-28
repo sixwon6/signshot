@@ -188,6 +188,17 @@ function sealedFor(program: string, requested: SealedTerms): SealedTerms {
   return { royaltyBps: 0, seekerOnly: false };
 }
 
+/**
+ * Whether a publication on `program` from this build can seal the creator's Genesis Token, which
+ * a Seeker-only edition needs: on mainnet only, where the token exists (`genesisAccounts`).
+ */
+export function canSealGenesis(program: string): boolean {
+  return cluster === "mainnet-beta" && programFeatures(program).genesis;
+}
+/** Whether `publish` is sent the creator's Genesis Token accounts: the mint the document names. */
+const sealsGenesis = (e: CoreMetadata): e is CoreMetadata & { genesisMint: string } =>
+  !!e.genesisMint && canSealGenesis(e.program);
+
 /** A pending attempt means wait; a terminal one means discard. Only discarding may pass a terminal attempt. */
 const ATTEMPT_PENDING =
   "The previous publishing attempt may still land. Wait a moment, then check again.";
@@ -371,6 +382,7 @@ export async function createDraft(
    * The creator's royalty (basis points) and whether only Seeker Genesis Token holders may collect.
    * Frozen here with the price, and sealed on chain at publish. Absent: `DEFAULT_ROYALTY_BPS` and
    * `DEFAULT_SEEKER_ONLY` on a program that seals them, `{ 0, false }` on one that cannot.
+   * Seeker-only is recorded only with the creator's Genesis Token to seal (`canSealGenesis`).
    */
   sealed?: SealedTerms,
 ): Promise<CoreDraft> {
@@ -466,7 +478,9 @@ export async function createDraft(
       // afterwards are the same record.
       ...(price ? { price } : {}),
       royaltyBps: chosenTerms.royaltyBps,
-      seekerOnly: chosenTerms.seekerOnly,
+      // The program takes a Seeker-only edition only sealed with the creator's Genesis Token, so
+      // without one to seal the edition is open.
+      seekerOnly: chosenTerms.seekerOnly && sealsGenesis(e),
       storage: "local",
     };
     await save(r, d);
@@ -834,14 +848,13 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
 /**
  * The Genesis Token accounts `publish` verifies and seals: the mint the document names and the
  * creator's token account for it, read from THIS cluster immediately before the quote. The token
- * exists on mainnet only, so a devnet edition publishes with the document's claim alone (every
- * reader checks that against mainnet) and the seal is exercised by the acceptance harness
+ * exists on mainnet only, so a devnet edition publishes open, with the document's claim alone
+ * (every reader checks that against mainnet), and the seal is exercised by the acceptance harness
  * against its stand-in. Refused, not dropped, when the wallet no longer holds the token: the
  * sealed document already names it, and the program would refuse the transaction anyway.
  */
 async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undefined> {
-  if (!e.genesisMint || cluster !== "mainnet-beta" || !programFeatures(e.program).genesis)
-    return undefined;
+  if (!sealsGenesis(e)) return undefined;
   const token = await findGenesisTokenAccount(RPC_ENDPOINT, e.genesisMint, e.creator);
   if (!token)
     throw new Error(

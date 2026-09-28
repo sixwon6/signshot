@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { mock } from "node:test";
 
 // Isolate synchronous URL parsing so a decoder regression cannot hang the test runner.
 if (!process.argv.includes("--worker")) {
   const result = spawnSync(process.execPath,
-    ["--import", "tsx", fileURLToPath(import.meta.url), "--worker"],
+    ["--experimental-test-module-mocks", "--disable-warning=ExperimentalWarning", "--import", "tsx",
+      fileURLToPath(import.meta.url), "--worker"],
     { encoding: "utf8", timeout: 10_000 });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -182,6 +183,87 @@ if (!process.argv.includes("--worker")) {
       /const rows = costRows\(prepared, apart\);[\s\S]*costSol\(rows\.cost\)[\s\S]*costSol\(rows\.accounts\)/);
     assert.match(readFileSync(new URL("../src/prints/PrintSheet.tsx", import.meta.url), "utf8"),
       /costRows\(quote\.prepared, quote\.storageLamports\)\.accounts/);
+  }
+  {
+    // A collect that failed on chain is forgotten, under the edition lock, and the edition answers
+    // for itself; one that may still land, or confirmed unseen, still stops the offer. The real
+    // collect.ts, with the build's cluster and AsyncStorage replaced (`mock.module` matches the
+    // resolved file URL, as in check-looks.mjs).
+    const require = createRequire(import.meta.url);
+    const storage = { items: new Map(), reads: 0 };
+    const AsyncStorage = {
+      getItem: async (key) => { storage.reads++; return storage.items.get(key) ?? null; },
+      setItem: async (key, value) => { storage.items.set(key, value); },
+      removeItem: async (key) => { storage.items.delete(key); },
+    };
+    const mocks = [
+      mock.module(new URL("../src/solana/cluster.ts", import.meta.url).href, { namedExports: {
+        CLUSTER_NAME: "devnet", RPC_ENDPOINT: "https://rpc.test", assertEndpointCluster: async () => {} } }),
+      mock.module(pathToFileURL(require.resolve("@react-native-async-storage/async-storage")).href,
+        { defaultExport: AsyncStorage }),
+    ];
+    const { getCollectState, isCollectWorking } = await import("../src/prints/collect.ts");
+    const { addresses } = await import("../publications/core/protocol.ts");
+    const { TRUSTED } = await import("../publications/deployments.ts");
+    // Required, not imported: the lock set is the one collect.ts loaded.
+    const { exclusive } = require("../publications/lifecycle.ts");
+    const { CORE_PROTOCOL } = await import("../publications/types.ts");
+    const program = TRUSTED.devnet[0], creator = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+    const collector = "6r7wvBV2WR8L1GHJ1FV41j4JrqBxYfxQN3Xj7L2dPAuv", nonce = "cd".repeat(32);
+    const keys = await addresses(program, creator, nonce);
+    const edition = { cluster: "devnet", program, creator, nonce, edition: keys.edition,
+      collection: keys.collection, title: "Sample", supply: 3 };
+    const collectable = (remaining) => ({ edition, minted: 3 - remaining, remaining, imageUri: "",
+      offer: null, seekerOnly: false, publication: {} });
+    const key = `es.core-collect.v1:devnet:${keys.edition}:${collector}`;
+    const saved = JSON.stringify({ version: 1, protocol: CORE_PROTOCOL, collector, edition: keys.edition,
+      asset: (await addresses(program, creator, nonce, 3, collector)).print, number: 3,
+      quoteId: "a".repeat(64), lastValidBlockHeight: "500", signature: "5".repeat(88) });
+    const chain = { status: null, height: 0 };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, options) => {
+      const { id, method } = JSON.parse(options.body);
+      const results = {
+        getAccountInfo: { context: { slot: 1 }, value: null },
+        getSignatureStatuses: { context: { slot: 1 }, value: [chain.status] },
+        getBlockHeight: chain.height,
+      };
+      if (!(method in results)) throw new Error(`the collect state is not expected to call ${method}`);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id, result: results[method] }));
+    };
+    const failedWith = (code) => ({ err: { InstructionError: [0, { Custom: code }] }, confirmationStatus: "confirmed" });
+    const stateAfter = async (status, remaining, height = 1_000) => {
+      storage.items.set(key, saved);
+      Object.assign(chain, { status, height });
+      return getCollectState(collectable(remaining), collector);
+    };
+    try {
+      const soldOut = await stateAfter(failedWith(6001), 0);
+      assert.ok(storage.reads > 0, "the collect state must be reading the fake storage");
+      assert.deepEqual([soldOut.eligibility, soldOut.reason, soldOut.attempt], ["soldOut", "Sold out.", null],
+        "a claim that lost the last copy says sold out, not reopen the link");
+      assert.equal(storage.items.has(key), false, "and its failed attempt is forgotten");
+      const token = await stateAfter(failedWith(6008), 1);
+      assert.equal(token.eligibility, "collect", "a claim refused on chain can be made again");
+      assert.equal(storage.items.has(key), false);
+      const pending = await stateAfter(null, 1, 400);
+      assert.equal(pending.eligibility, "wait");
+      assert.equal(storage.items.get(key), saved, "an attempt that may still land is kept");
+      const unseen = await stateAfter({ err: null, confirmationStatus: "confirmed" }, 1);
+      assert.equal(unseen.eligibility, "unavailable");
+      assert.equal(storage.items.get(key), saved, "a confirmed attempt without its receipt is kept");
+      let release;
+      const held = exclusive(`collect:devnet:${keys.edition}`, () => new Promise((done) => { release = done; }));
+      assert.equal(isCollectWorking(keys.edition), true, "the lock held is collect.ts's own");
+      const during = await stateAfter(failedWith(6001), 1);
+      release();
+      await held;
+      assert.equal(during.eligibility, "collect");
+      assert.equal(storage.items.get(key), saved, "a running collection's lock is never taken from under it");
+    } finally {
+      globalThis.fetch = realFetch;
+      for (const one of mocks) one.restore();
+    }
   }
   const { readPhotoMetadata, readSavedPhotoMetadata } = await import("../publications/core/metadataDocument.ts");
   const { canonicalize } = await import("../src/jcs.ts");

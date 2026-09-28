@@ -328,6 +328,20 @@ async function read(e: CoreMetadata, wallet: string): Promise<CollectAttempt | n
 const write = (attempt: CollectAttempt) =>
   AsyncStorage.setItem(attemptKey(attempt.edition, attempt.collector), JSON.stringify(attempt));
 
+/**
+ * Drop an attempt that failed on chain, under the edition lock and only while it is still the one
+ * judged. Skipped while a collection runs: that send replaces it.
+ */
+async function forgetFailed(e: CoreMetadata, wallet: string, failed: CollectAttempt) {
+  if (operationInProgress(lock(e.edition))) return;
+  await exclusive(lock(e.edition), async () => {
+    const current = await read(e, wallet);
+    if (current !== null && current.signature === failed.signature &&
+      current.quoteId === failed.quoteId && current.lastValidBlockHeight === failed.lastValidBlockHeight)
+      await AsyncStorage.removeItem(attemptKey(e.edition, wallet));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -363,7 +377,9 @@ const CANNOT_REPEAT =
  * The order is deliberate. The permanent receipt is asked about FIRST, because a wallet that has
  * already claimed can never claim again whatever else is true. This wallet's own saved attempt
  * comes next, since money that may still be in flight is the more urgent fact than a supply count
- * read a moment ago. Anything about that attempt other than `retryable` stops the offer:
+ * read a moment ago. A `terminal` attempt failed on chain, so nothing it signed can land and the
+ * receipt's `init` still refuses a second claim: it is forgotten, and the edition answers for
+ * itself (sold out, needs a Genesis Token, collect). Anything else but `retryable` stops the offer:
  * `checkAttempt`'s contract is that only `retryable` means "offer this again", so a classification
  * added to it later lands on the safe side by default.
  */
@@ -405,7 +421,10 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
       // again right now.
       if (standing === "confirmed")
         return { eligibility: "unavailable", attempt, reason: CONFIRMED_UNSEEN };
-      if (standing !== "retryable")
+      if (standing === "terminal") {
+        await forgetFailed(e, wallet, attempt);
+        attempt = null;
+      } else if (standing !== "retryable")
         return { eligibility: "unavailable", attempt, reason: CANNOT_REPEAT };
     }
 

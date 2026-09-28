@@ -62,6 +62,12 @@ const RPC_OVERRIDE = resolveRpcOverride(process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
 export const RPC_ENDPOINT: string =
   RPC_OVERRIDE ?? (IS_MAINNET ? PUBLIC_MAINNET_ENDPOINT : "https://api.devnet.solana.com");
 
+/**
+ * Set by `npm run release:apk` for each build, which then looks for it in the packaged bundle so
+ * a bundle Gradle kept from an earlier build is refused. Unset in any other build.
+ */
+export const BUILD_NONCE = process.env.EXPO_PUBLIC_BUILD_NONCE;
+
 /** Wallet UI supplies the MWA chain id, which differs from the RPC cluster spelling. */
 export const CLUSTER: SolanaCluster = IS_MAINNET
   ? createSolanaMainnet({ url: RPC_ENDPOINT })

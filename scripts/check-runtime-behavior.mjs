@@ -846,6 +846,97 @@ if (!process.argv.includes("--worker")) {
   assert.deepEqual(refusedEnvFiles(production), [...production].sort(),
     "the gate refuses every file Expo loads for a production export");
   const { readFileSync, readdirSync } = await import("node:fs");
+
+  {
+    // release:apk, around Gradle: the same env files refused again, and the bundle in the APK
+    // proven this build's, against a synthetic zip laid out as an APK is.
+    const artifact = await import("./release-artifact.mjs");
+    assert.deepEqual(artifact.refusedEnvFiles(envNames), refusedEnvFiles(envNames), "release:apk refuses what the gate refuses");
+    const { crc32, deflateRawSync } = await import("node:zlib");
+    const zipOf = (entries, { junk = Buffer.alloc(0), comment = "", count } = {}) => {
+      const locals = [], directory = [];
+      let offset = 0;
+      for (const { name, data, deflate = false, pad = 0, flags = 0 } of entries) {
+        const body = deflate ? deflateRawSync(data) : data;
+        const title = Buffer.from(name);
+        const local = Buffer.alloc(30), entry = Buffer.alloc(46);
+        local.writeUInt32LE(0x04034b50, 0);
+        entry.writeUInt32LE(0x02014b50, 0);
+        for (const [header, at] of [[local, 6], [entry, 8]]) {
+          header.writeUInt16LE(flags, at);
+          header.writeUInt16LE(deflate ? 8 : 0, at + 2);
+          header.writeUInt32LE(crc32(data), at + 8);
+          header.writeUInt32LE(body.length, at + 12);
+          header.writeUInt32LE(data.length, at + 16);
+          header.writeUInt16LE(title.length, at + 20);
+        }
+        // zipalign pads the local extra field only.
+        local.writeUInt16LE(pad, 28);
+        entry.writeUInt32LE(offset, 42);
+        locals.push(local, title, Buffer.alloc(pad), body);
+        directory.push(entry, title);
+        offset += 30 + title.length + pad + body.length;
+      }
+      const central = Buffer.concat(directory), end = Buffer.alloc(22);
+      end.writeUInt32LE(0x06054b50, 0);
+      end.writeUInt16LE(count ?? entries.length, 8);
+      end.writeUInt16LE(count ?? entries.length, 10);
+      end.writeUInt32LE(central.length, 12);
+      end.writeUInt32LE(offset + junk.length, 16);
+      end.writeUInt16LE(Buffer.byteLength(comment), 20);
+      return Buffer.concat([...locals, junk, central, end, Buffer.from(comment)]);
+    };
+    const NONCE = "9f0c2a7d41be8e35c6d0a1f47b2e9c58";
+    const RPC = "https://rpc.example.com/solana";
+    const PAYER = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+    // Hermes bytecode keeps each ASCII literal as its own bytes among binary ones.
+    const hermes = (...literals) => Buffer.concat([Buffer.from([0xc6, 0x1f, 0xbc, 0x03]), ...literals.map((s) => Buffer.concat([Buffer.from(s), Buffer.from([0])])), Buffer.alloc(4096, 7)]);
+    const bundle = hermes(NONCE, RPC, "https://api.mainnet.solana.com");
+    const manifest = Buffer.from("<manifest/>");
+    const apk = zipOf([
+      { name: "AndroidManifest.xml", data: manifest },
+      { name: "assets/index.android.bundle", data: bundle, deflate: true, pad: 3 },
+      { name: "classes.dex", data: Buffer.alloc(100, 1), deflate: true },
+    ], { junk: Buffer.concat([Buffer.alloc(16), Buffer.from("APK Sig Block 42")]), comment: "signed" });
+    assert.ok(artifact.readZipEntry(apk, "assets/index.android.bundle").equals(bundle), "a deflated, padded entry past other entries");
+    assert.ok(artifact.readZipEntry(apk, "AndroidManifest.xml").equals(manifest), "a stored entry");
+    assert.equal(artifact.readZipEntry(apk, "assets/other.bundle"), null);
+    const tampered = Buffer.from(zipOf([{ name: "assets/index.android.bundle", data: bundle }]));
+    tampered[30 + "assets/index.android.bundle".length + 5] ^= 1;
+    assert.throws(() => artifact.readZipEntry(tampered, "assets/index.android.bundle"), /checksum/);
+    assert.throws(() => artifact.readZipEntry(zipOf([{ name: "a", data: bundle, flags: 1 }]), "a"), /encrypted/);
+    assert.throws(() => artifact.readZipEntry(zipOf([{ name: "a", data: bundle }], { count: 0xffff }), "a"), /zip64/);
+    assert.throws(() => artifact.readZipEntry(Buffer.from("not a zip at all, just text"), "a"), /not a zip/);
+    assert.throws(() => artifact.readZipEntry(apk.subarray(0, apk.length - 1), "a"), /not a zip/, "a cut-off end record");
+
+    const refusal = (bytes, env) => artifact.bundleRefusal(artifact.readZipEntry(zipOf([{ name: "b", data: bytes, deflate: true }]), "b"), env);
+    assert.equal(refusal(bundle, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC, devnetPayer: PAYER }), null);
+    assert.equal(refusal(bundle, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: undefined }), null, "no RPC URL, nothing to find");
+    assert.match(refusal(hermes(RPC), { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC }), /not this build's/,
+      "a bundle Gradle kept from an earlier build");
+    assert.match(refusal(bundle, { nonce: undefined, cluster: "mainnet-beta" }), /not this build's/);
+    const otherRpc = refusal(hermes(NONCE, "https://old.example.com/solana"), { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC });
+    assert.match(otherRpc, /EXPO_PUBLIC_SOLANA_RPC_URL/);
+    assert.ok(!otherRpc.includes("example.com"), "the URL is never repeated");
+    const withPayer = hermes(NONCE, RPC, PAYER);
+    assert.match(refusal(withPayer, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC, devnetPayer: PAYER }), /EXPO_PUBLIC_DEVNET_TEST_PAYER/);
+    assert.equal(refusal(withPayer, { nonce: NONCE, cluster: "devnet", rpcUrl: RPC, devnetPayer: PAYER }), null, "a devnet session's build carries it");
+
+    // Metro inlines only a literal `process.env.NAME`, and the app always bundles cluster.ts.
+    const cluster = readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8");
+    assert.match(cluster, /^export const BUILD_NONCE = process\.env\.EXPO_PUBLIC_BUILD_NONCE;$/m);
+    assert.match(readFileSync(new URL("../App.tsx", import.meta.url), "utf8"), /from "\.\/src\/solana\/cluster";/);
+    const release = readFileSync(new URL("./release-apk.mjs", import.meta.url), "utf8");
+    const at = (text) => release.indexOf(text);
+    assert.ok(at("refusedEnvFiles(readdirSync(root))") > at("check-release-config.ts")
+      && at('for (const kind of ["assets", "res"])') > at("refusedEnvFiles(readdirSync(root))")
+      && at('rmSync(resolve(android, "app", "build", "generated", kind, "react", "release"), { recursive: true, force: true });') > 0
+      && at("env: { ...process.env, EXPO_PUBLIC_BUILD_NONCE: nonce },") > at('for (const kind of ["assets", "res"])')
+      && at('readZipEntry(readFileSync(APK), "assets/index.android.bundle")') > at(":app:assembleRelease")
+      && at("bundleRefusal(bundle, {") > at(":app:assembleRelease")
+      && at("rmSync(APK, { force: true });\n  process.exit(1);\n}") > at("bundleRefusal(bundle, {"),
+      "release:apk refuses env files, removes the bundle outputs and sets the nonce before Gradle, and checks the APK after it");
+  }
   assert.match(readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8"),
     /PUBLIC_MAINNET_ENDPOINT = "https:\/\/api\.mainnet\.solana\.com"/,
     "the public fallback is the host https://solana.com/docs/references/clusters names");

@@ -12,6 +12,7 @@ import {
   type SolanaCluster,
   type SolanaClusterId,
 } from "@wallet-ui/react-native-kit";
+import { GENESIS_HASH } from "../../publications/core/genesisToken";
 import { rpcWithTimeout } from "../../publications/rpc";
 
 /**
@@ -61,6 +62,12 @@ const RPC_OVERRIDE = resolveRpcOverride(process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
 export const RPC_ENDPOINT: string =
   RPC_OVERRIDE ?? (IS_MAINNET ? PUBLIC_MAINNET_ENDPOINT : "https://api.devnet.solana.com");
 
+/**
+ * Set by `npm run release:apk` for each build, which then looks for it in the packaged bundle so
+ * a bundle Gradle kept from an earlier build is refused. Unset in any other build.
+ */
+export const BUILD_NONCE = process.env.EXPO_PUBLIC_BUILD_NONCE;
+
 /** Wallet UI supplies the MWA chain id, which differs from the RPC cluster spelling. */
 export const CLUSTER: SolanaCluster = IS_MAINNET
   ? createSolanaMainnet({ url: RPC_ENDPOINT })
@@ -103,15 +110,6 @@ function getRpcSubscriptions(): RpcSubscriptions<SolanaRpcSubscriptionsApi> {
   }
   return rpcSubscriptions;
 }
-
-/**
- * Each cluster's genesis hash, the one value that says which chain an endpoint is really on. Read
- * with `getGenesisHash` from the public endpoints, since the Solana docs do not publish them.
- */
-const GENESIS_HASH: Record<ClusterName, string> = {
-  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
-  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
-};
 
 /** Named so a screen can tell a configuration error from "the network is having a moment". */
 class ClusterMismatchError extends Error {

@@ -36,6 +36,15 @@ export const SGT_GROUP_ADDRESS = SGT_METADATA_ADDRESS;
 /** Mainnet's genesis hash: the one value that says which chain an endpoint is really on. */
 export const MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
+/**
+ * Each cluster's genesis hash, read with `getGenesisHash` from the public endpoints, since the
+ * Solana docs do not publish them. The app's endpoint check and the release gate share it.
+ */
+export const GENESIS_HASH: Record<Cluster, string> = {
+  "mainnet-beta": MAINNET_GENESIS_HASH,
+  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+};
+
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
 /** What the document carries. */
@@ -273,6 +282,24 @@ async function mintSlice(endpoint: string, mint: string): Promise<Uint8Array | "
     mint,
     { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } },
   ]);
+  return sliceOf(account);
+}
+
+/** `getMultipleAccounts` takes at most 100 keys (https://solana.com/docs/rpc/http/getmultipleaccounts). */
+const MINT_BATCH = 100;
+
+/** `mintSlice` for up to `MINT_BATCH` mints in one request, in their order. */
+async function mintSlices(endpoint: string, mints: string[]): Promise<(Uint8Array | "other" | null)[]> {
+  const { value: accounts } = await request<{ value: unknown }>(endpoint, "getMultipleAccounts", [
+    mints,
+    { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } },
+  ]);
+  if (!Array.isArray(accounts) || accounts.length !== mints.length) throw new Error(INVALID);
+  return accounts.map(sliceOf);
+}
+
+/** One account as either read answers it: `null` for none, `"other"` for another program's. */
+function sliceOf(account: unknown): Uint8Array | "other" | null {
   if (account === null) return null;
   const info = object(account);
   if (!info || typeof info.owner !== "string") throw new Error(INVALID);
@@ -315,8 +342,13 @@ export function chooseGenesis<T extends { mint: string; member: bigint }>(found:
   return found.find(({ mint }) => mint === preferred) ?? found.reduce((a, b) => (b.member < a.member ? b : a));
 }
 
-/** Mint reads one lookup may make: a wallet with more single-unit Token-2022 holdings is not checked. */
-export const MAX_GENESIS_CANDIDATES = 32;
+/**
+ * Candidate mints one lookup reads, `MINT_BATCH` per request: a wallet with more single-unit
+ * Token-2022 holdings is not checked. Anyone can send a wallet such tokens, so the bound sits far
+ * above a real one. Through the collect page's proxy, the 1 MB bound on the token account listing
+ * (`MAX_UPSTREAM` in `site/functions/api/solana.ts`) is reached first, at roughly 1,500 accounts.
+ */
+export const MAX_GENESIS_CANDIDATES = 1000;
 
 /**
  * The Genesis Token `holder` holds on `cluster` now, and the token account it sits in: what a
@@ -357,15 +389,18 @@ export async function findHeldGenesisToken(
   }
   if (held.size > MAX_GENESIS_CANDIDATES) throw new Error("This wallet holds too many tokens to check.");
   const expected = genesisAddresses(cluster);
-  const found = (
-    await Promise.all(
-      [...held].map(async ([mint, token]) => {
-        const bytes = await mintSlice(endpoint, mint);
-        const member = bytes && bytes !== "other" ? seekerGenesisMember(bytes, mint, expected) : null;
-        return member === null ? null : { mint, token, member };
-      }),
-    )
-  ).filter((entry) => entry !== null);
+  const candidates = [...held];
+  const found: { mint: string; token: string; member: bigint }[] = [];
+  // One request after another: the collect page's proxy is rate-limited per visitor.
+  for (let i = 0; i < candidates.length; i += MINT_BATCH) {
+    const batch = candidates.slice(i, i + MINT_BATCH);
+    const slices = await mintSlices(endpoint, batch.map(([mint]) => mint));
+    batch.forEach(([mint, token], j) => {
+      const bytes = slices[j];
+      const member = bytes && bytes !== "other" ? seekerGenesisMember(bytes, mint, expected) : null;
+      if (member !== null) found.push({ mint, token, member });
+    });
+  }
   const chosen = chooseGenesis(found, preferred);
   return chosen && { mint: chosen.mint, token: chosen.token };
 }

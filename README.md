@@ -55,7 +55,13 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
 - **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
   address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
   length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a
-  provider (`release:check` refuses a public endpoint).
+  key-free HTTPS URL, a keyless proxy or a provider's key-free frontend URL, since the APK carries it
+  in plain text (`release:check` refuses a public endpoint, a query string, credentials and another
+  network). It must serve every method the app calls: `getAccountInfo`, `getBalance`,
+  `getBlockHeight`, `getFeeForMessage`, `getGenesisHash`, `getLatestBlockhash`,
+  `getMinimumBalanceForRentExemption`, `getMultipleAccounts`, `getProgramAccounts`,
+  `getRecentPrioritizationFees`, `getSignatureStatuses`, `getSignaturesForAddress`,
+  `getTokenAccountsByOwner`, `getTransaction` and `simulateTransaction`.
 - **Final APK:** `npm run release:check` (also Google's attestation roots), `npm run release:apk`
   with the upload key, a fresh install, an offline capture, one small mainnet publication — the
   first paid storage upload, so confirm Turbo credited the upload key from the publish transaction.
@@ -364,9 +370,9 @@ and run the checks before building. The existing prebuild gate checks permission
 and ProGuard rules; it is not a full comparison of every generated file.
 
 `npm run release:check` is the fourth gate, `scripts/check-release-config.ts`: it resolves the
-cluster and program a store artifact would be built against. It refuses while a `.env*.local` file
-is present and while no reviewed mainnet program is configured, so it belongs to a release build
-rather than to `npm test`.
+cluster and program a store artifact would be built against. It refuses while `.env`,
+`.env.production` or a `.env*.local` file is present and while no reviewed mainnet program is
+configured, so it belongs to a release build rather than to `npm test`.
 
 Three builds are separate commands: `npm run build:android-bundle` checks that the JavaScript
 bundle builds, `./gradlew :seeker-camera:compileDebugKotlin` from `android/` compiles the native

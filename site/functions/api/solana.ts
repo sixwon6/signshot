@@ -2,7 +2,7 @@
 // set, and Solana's public mainnet endpoint otherwise, which is rate-limited and "not intended for
 // production applications" (https://solana.com/docs/references/clusters); see site/README.md.
 // Read-only method allowlist: wallet submission goes through the wallet's own RPC, and the list
-// is exactly the twelve methods `site/collect/` calls — nothing wider gets to spend the
+// is exactly the thirteen methods `site/collect/` calls — nothing wider gets to spend the
 // operator's provider budget. It is exported so a test can assert that it
 // EQUALS the set of methods the page was observed using; Cloudflare routes only `onRequest*`
 // exports, so exporting a constant adds no endpoint.
@@ -23,18 +23,21 @@
 // proxy for devnet editions too, because the SGT exists on mainnet only. The same method, filtered
 // to the Token-2022 program instead, finds a collector's own SGT for a seeker-only edition
 // (`findHeldGenesisToken`): one wallet's Token-2022 accounts, whose size MAX_UPSTREAM bounds, and
-// then its candidate mints through the sliced `getAccountInfo` below. `getGenesisHash` is how
-// both confirm the upstream is mainnet before believing it (`assertMainnet`); no params.
+// then its candidate mints through `getMultipleAccounts`, at most 100 per request, each sliced to
+// its first 4096 bytes: about 560 KB of base64 at most, inside MAX_UPSTREAM. `getGenesisHash` is
+// how both confirm the upstream is mainnet before believing it (`assertMainnet`); no params.
 // `getSignaturesForAddress` and `getTransaction` are the device row's publication time
 // (`publicationTime` in `publications/core/attestationCheck.ts`): the history of one claim
 // receipt, normally a single entry, and the ~10 KB parsed transaction that created it.
-export const ALLOWED=new Set(['getAccountInfo','getLatestBlockhash','simulateTransaction','getFeeForMessage','getBalance','getSignatureStatuses','getBlockHeight','getRecentPrioritizationFees','getTokenAccountsByOwner','getGenesisHash','getSignaturesForAddress','getTransaction']);
+export const ALLOWED=new Set(['getAccountInfo','getLatestBlockhash','simulateTransaction','getFeeForMessage','getBalance','getSignatureStatuses','getBlockHeight','getRecentPrioritizationFees','getTokenAccountsByOwner','getMultipleAccounts','getGenesisHash','getSignaturesForAddress','getTransaction']);
 const MAX_BODY=16000;      // bytes, not UTF-16 code units: 16 000 astral characters is 64 000 bytes.
 export const MAX_UPSTREAM=1000000;// bytes of provider response this Function will buffer and re-serialise.
 const MAX_PARAMS=8;        // the widest call the collector makes passes two.
 const MAX_DEPTH=6;         // `simulateTransaction` nests params → options → accounts → addresses.
 const MAX_SLICE=262144;    // one ELF chunk (`CHUNK_BYTES`, `publications/programImage.ts`), the widest slice asked.
 const MAX_ACCOUNT=10485760;// Solana's largest account (10 MiB); no slice starts past it.
+const MAX_KEYS=100;        // `getMultipleAccounts`' own limit, and `MINT_BATCH` in `genesisToken.ts`.
+const MINT_SLICE=4096;     // `MINT_SLICE_BYTES` in `publications/core/genesisToken.ts`.
 const SECURITY={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
 const size=(value:string)=>new TextEncoder().encode(value).byteLength;
 const refuse=(message:string,status:number,extra:Record<string,string>)=>new Response(message,{status,headers:{...SECURITY,...extra,'Content-Type':'text/plain; charset=utf-8'}});
@@ -49,6 +52,7 @@ type Check=(value:unknown)=>boolean;
 const is=(expected:unknown):Check=>(value)=>value===expected;
 const base58=(min:number,max:number):Check=>(value)=>typeof value==='string'&&value.length>=min&&value.length<=max&&/^[1-9A-HJ-NP-Za-km-z]+$/.test(value);
 const pubkey=base58(32,44),signature=base58(64,88);
+const pubkeys=(max:number):Check=>(value)=>Array.isArray(value)&&value.length>=1&&value.length<=max&&value.every(pubkey);
 const int=(min:number,max:number):Check=>(value)=>Number.isSafeInteger(value)&&(value as number)>=min&&(value as number)<=max;
 /** An object of these keys only, `required` ones present, each passing its check. Own keys only. */
 const object=(fields:Record<string,Check>,required:readonly string[]):Check=>(value)=>
@@ -63,6 +67,8 @@ const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
  *                            `publications/programImage.ts` and `publications/core/genesisToken.ts`.
  *   getTokenAccountsByOwner  `genesisHolding` in `genesisToken.ts`: one wallet, one mint, parsed;
  *                            or `findHeldGenesisToken` there: one wallet, Token-2022 only, parsed.
+ *   getMultipleAccounts      `findHeldGenesisToken`'s candidate mints: 1 to 100, each sliced to
+ *                            the first `MINT_SLICE` bytes.
  *   getSignaturesForAddress  `publicationTime` in `publications/core/attestationCheck.ts`.
  *   getTransaction           the same, for the transaction that created the claim receipt.
  * The others take a fixed few scalars and keep the generic `shallow` bound.
@@ -70,6 +76,7 @@ const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const SHAPES:Record<string,readonly Check[]>={
   getAccountInfo:[pubkey,object({encoding:is('base64'),commitment:is('confirmed'),dataSlice:object({offset:int(0,MAX_ACCOUNT),length:int(0,MAX_SLICE)},['offset','length'])},['encoding','commitment'])],
   getTokenAccountsByOwner:[pubkey,either(object({mint:pubkey},['mint']),object({programId:is(TOKEN_2022)},['programId'])),object({encoding:is('jsonParsed'),commitment:is('confirmed')},['encoding','commitment'])],
+  getMultipleAccounts:[pubkeys(MAX_KEYS),object({encoding:is('base64'),commitment:is('confirmed'),dataSlice:object({offset:is(0),length:is(MINT_SLICE)},['offset','length'])},['encoding','commitment','dataSlice'])],
   getSignaturesForAddress:[pubkey,object({limit:int(1,1000),commitment:is('confirmed'),before:signature},['limit','commitment'])],
   getTransaction:[signature,object({encoding:is('jsonParsed'),maxSupportedTransactionVersion:is(0),commitment:is('confirmed')},['encoding','maxSupportedTransactionVersion','commitment'])],
 };
@@ -109,7 +116,9 @@ export async function onRequestPost({request,env}:{request:Request;env:Env}):Pro
   const text=await request.text();if(size(text)>MAX_BODY)return refuse('Request too large',413,visible);
   let body: {method?:string;params?:unknown;jsonrpc?:string};try{body=JSON.parse(text);}catch{return refuse('Invalid JSON',400,visible);}
   if(!body||Array.isArray(body)||body.jsonrpc!=='2.0'||!ALLOWED.has(body.method??'')||!Array.isArray(body.params))return refuse('Unsupported request',400,visible);
-  if(!shallow(body.params,1)||!shaped(body.method!,body.params))return refuse('Unsupported request',400,visible);
+  // `getMultipleAccounts`' key list is the one array wider than MAX_PARAMS; its shape bounds it.
+  const nested=body.method==='getMultipleAccounts'?body.params.slice(1):body.params;
+  if(!shallow(nested,1)||!shaped(body.method!,body.params))return refuse('Unsupported request',400,visible);
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
   try {
     const upstream=await fetch(upstreamUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:text,signal:controller.signal});

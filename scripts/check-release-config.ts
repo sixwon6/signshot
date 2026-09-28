@@ -4,16 +4,17 @@
  *   npx tsx scripts/check-release-config.ts [--allow-cluster devnet]
  *   npm run release:check
  *
- * EXPO_PUBLIC_* values are inlined into the bundle and `.env*.local` files are gitignored, so an
+ * EXPO_PUBLIC_* values are inlined into the bundle and every `.env*` file is gitignored, so an
  * unreviewed local file could silently decide the cluster or program of a signed release. This loads
  * the environment as `expo export:embed --dev false` does, resolves the cluster and program, prints
  * them and records them in `.expo/release/config.json`.
  *
- * Refuses when a `.env*.local` file exists, when the cluster is not mainnet-beta without
- * `--allow-cluster devnet`, when a mainnet build has no RPC override or names a public solana.com
- * endpoint, when no program is configured, or when Google's live attestation root list is not
- * exactly the roots this build pins (a network check, so not part of `npm test`). Never prints the
- * RPC URL, which can carry a provider key.
+ * Refuses when an env file a production bundle would load exists, when the cluster is not
+ * mainnet-beta without `--allow-cluster devnet`, when a mainnet build has no RPC override or names a
+ * public solana.com endpoint, when the RPC URL carries a query string or credentials, when no
+ * program is configured, and, with network checks that are not part of `npm test`, when the RPC
+ * endpoint is on another network or Google's live attestation root list is not exactly the roots
+ * this build pins. Never prints the RPC URL: a path can still carry a provider key.
  *
  * `resolveCluster` is duplicated from `src/solana/cluster.ts`, which cannot load under plain Node.
  */
@@ -26,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadProjectEnv, setNodeEnv } from "@expo/env";
 
+import { GENESIS_HASH } from "../publications/core/genesisToken";
 import type { Cluster } from "../publications/types";
 import { GOOGLE_ATTESTATION_ROOT_KEYS } from "../src/seeker/keyAttestation";
 
@@ -53,15 +55,18 @@ export function resolveCluster(raw: string | undefined): Cluster {
 }
 
 /**
- * Every `.env*.local` file in the project directory, sorted. These are the files Expo loads at
- * highest precedence and `.gitignore` hides, so an unreviewed one can silently reach a release
- * build.
+ * Of `names`, the env files a release refuses, sorted: the four a production bundle loads (`.env`,
+ * `.env.local`, `.env.production`, `.env.production.local`, per `@expo/env`'s `getFiles`) and any
+ * other `.env*.local`. `.gitignore` hides them all, so an unreviewed one can silently reach a
+ * release build; the values come from the command line instead. `scripts/release-artifact.mjs`
+ * refuses the same names again right before Gradle bundles.
  */
-function localEnvFiles(projectRoot: string): string[] {
-  if (!existsSync(projectRoot)) return [];
-  return readdirSync(projectRoot)
-    .filter((name) => /^\.env(?:\..+)?\.local$/.test(name))
-    .sort();
+export function refusedEnvFiles(names: readonly string[]): string[] {
+  return names.filter((name) => /^\.env(?:\.production)?$|^\.env(?:\..+)?\.local$/.test(name)).sort();
+}
+
+function envFiles(projectRoot: string): string[] {
+  return existsSync(projectRoot) ? refusedEnvFiles(readdirSync(projectRoot)) : [];
 }
 
 /** `--allow-cluster devnet`, and nothing else. */
@@ -101,30 +106,67 @@ function clusterRefusal(cluster: Cluster, allowCluster: Cluster | undefined): st
 }
 
 /**
- * The refusal for a mainnet build's RPC endpoint, or `null` when it is allowed. Without
- * `EXPO_PUBLIC_SOLANA_RPC_URL` the app falls back to Solana's public mainnet endpoint, which
+ * The refusal for a build's RPC endpoint, or `null` when it is allowed. Without
+ * `EXPO_PUBLIC_SOLANA_RPC_URL` a mainnet build falls back to Solana's public mainnet endpoint, which
  * https://solana.com/docs/references/clusters says is "not intended for production applications";
- * naming a public solana.com host outright is the same thing. The value is never repeated: it can
- * carry a provider key.
+ * naming a public solana.com host outright is the same thing. On any cluster the URL must be https
+ * and key-free: Expo inlines EXPO_PUBLIC_* values into the bundle in plain text
+ * (https://docs.expo.dev/guides/environment-variables/), so a query string or credentials in it
+ * would ship with every APK. The value is never repeated: a path can still carry a key.
  */
 export function rpcRefusal(cluster: Cluster, raw: string | undefined): string | null {
-  if (cluster !== "mainnet-beta") return null;
   const fix =
-    `    Set EXPO_PUBLIC_SOLANA_RPC_URL to the HTTPS proxy of a dedicated RPC provider; Solana's public\n` +
+    `    Set EXPO_PUBLIC_SOLANA_RPC_URL to the key-free HTTPS proxy of a dedicated RPC provider; Solana's public\n` +
     `    endpoints are "not intended for production applications" (https://solana.com/docs/references/clusters).`;
   if (raw === undefined || raw.trim() === "")
-    return `EXPO_PUBLIC_SOLANA_RPC_URL is not set, so this mainnet build would use Solana's public endpoint.\n${fix}`;
-  let host: string;
+    return cluster === "mainnet-beta"
+      ? `EXPO_PUBLIC_SOLANA_RPC_URL is not set, so this mainnet build would use Solana's public endpoint.\n${fix}`
+      : null;
+  let url: URL;
   try {
-    const url = new URL(raw);
-    if (url.protocol !== "https:") return `EXPO_PUBLIC_SOLANA_RPC_URL is not an https:// URL.\n${fix}`;
-    host = url.hostname.toLowerCase().replace(/\.$/, "");
+    url = new URL(raw);
   } catch {
     return `EXPO_PUBLIC_SOLANA_RPC_URL is not a URL.\n${fix}`;
   }
+  if (url.protocol !== "https:") return `EXPO_PUBLIC_SOLANA_RPC_URL is not an https:// URL.\n${fix}`;
+  if (url.username || url.password || url.search)
+    return (
+      `EXPO_PUBLIC_SOLANA_RPC_URL carries credentials or a query string, which the APK would publish.\n` +
+      `    Expo bundles EXPO_PUBLIC_* values in plain text (https://docs.expo.dev/guides/environment-variables/):\n` +
+      `    use a keyless proxy or the provider's key-free URL.`
+    );
+  if (cluster !== "mainnet-beta") return null;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
   if (host === "solana.com" || host.endsWith(".solana.com"))
     return `EXPO_PUBLIC_SOLANA_RPC_URL points at a public solana.com endpoint.\n${fix}`;
   return null;
+}
+
+/**
+ * The refusal for an RPC endpoint on another network than `cluster`, or `null`. The app refuses
+ * one at runtime (`assertEndpointCluster` in `src/solana/cluster.ts`), which would stop every
+ * operation of a shipped build; this asks `getGenesisHash` before building instead. Nothing `fetch`
+ * or the endpoint says is repeated but a status and a hash: an error can quote the URL.
+ */
+export async function genesisRefusal(cluster: Cluster, raw: string | undefined): Promise<string | null> {
+  if (raw === undefined || raw.trim() === "") return null;
+  const expected = GENESIS_HASH[cluster];
+  let hash: unknown;
+  try {
+    const response = await fetch(raw, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getGenesisHash", params: [] }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return `EXPO_PUBLIC_SOLANA_RPC_URL answered getGenesisHash with HTTP ${response.status}.`;
+    hash = (await response.json() as { result?: unknown } | null)?.result;
+  } catch {
+    return `EXPO_PUBLIC_SOLANA_RPC_URL did not answer getGenesisHash; run the check again with a network.`;
+  }
+  if (hash === expected) return null;
+  const said = typeof hash === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(hash) ? hash : "none";
+  return `EXPO_PUBLIC_SOLANA_RPC_URL is not on ${cluster} (genesis ${said}, expected ${expected}).`;
 }
 
 /**
@@ -217,11 +259,11 @@ async function main(argv: readonly string[]): Promise<void> {
   const { allowCluster } = parseArgs(argv);
 
   // BEFORE loading anything. An unreviewed file must be refused, not read.
-  const locals = localEnvFiles(ROOT);
-  if (locals.length > 0) {
+  const files = envFiles(ROOT);
+  if (files.length > 0) {
     fail(
-      `app/ holds ${locals.length} local environment file${locals.length === 1 ? "" : "s"}: ${locals.join(", ")}.\n` +
-        `    Expo loads these at the highest precedence and .gitignore hides them, so what they configure\n` +
+      `the project root holds ${files.length} environment file${files.length === 1 ? "" : "s"}: ${files.join(", ")}.\n` +
+        `    Expo loads these into a production bundle and .gitignore hides them, so what they configure\n` +
         `    never reaches a diff or a review — and what they configure is which program the user's wallet\n` +
         `    approves. Move or delete them for the release build and set the values on the command line if\n` +
         `    they are needed.`,
@@ -237,6 +279,8 @@ async function main(argv: readonly string[]): Promise<void> {
   if (refusal) fail(refusal);
   const rpc = rpcRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (rpc) fail(rpc);
+  const network = await genesisRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
+  if (network) fail(network);
   // The devnet funding tool (`src/dev/DevnetFunding.tsx`) is compiled in when these are set.
   for (const name of ["EXPO_PUBLIC_DEVNET_TEST_PAYER", "EXPO_PUBLIC_DEVNET_TEST_LAMPORTS"])
     if (cluster !== "devnet" && process.env[name])
@@ -269,7 +313,7 @@ async function main(argv: readonly string[]): Promise<void> {
   console.log("release config ok");
   console.log(`  cluster                  ${config.cluster}${cluster === "mainnet-beta" ? "" : "  (explicitly allowed)"}`);
   console.log(`  program                  ${config.program}`);
-  console.log(`  EXPO_PUBLIC_SOLANA_RPC_URL  ${config.rpcUrlConfigured ? "set (value not printed)" : "not set"}`);
+  console.log(`  EXPO_PUBLIC_SOLANA_RPC_URL  ${config.rpcUrlConfigured ? `set (value not printed), on ${config.cluster}` : "not set"}`);
   console.log(`  attestation roots        the ${GOOGLE_ATTESTATION_ROOT_KEYS.length} pinned roots are exactly Google's live list`);
   console.log(`  commit                   ${config.commit}`);
   console.log(`  record                   ${file}`);

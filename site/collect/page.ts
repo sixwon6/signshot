@@ -38,6 +38,7 @@ import { assertAttempt, checkAttempt } from "../../publications/lifecycle";
 import { PROGRAM_CHANGED } from "../../publications/programImage";
 import type { Cluster } from "../../publications/types";
 import { genesisDisplay, type GenesisCheck, type GenesisStanding } from "../../publications/core/genesisToken";
+import { sameReviewedTransaction } from "../../src/prints/quoteRefresh";
 import {
   MODERATION_URL,
   TERMS_VERSION,
@@ -361,12 +362,13 @@ export function run(adapter: Adapter) {
   const machine = adapter.edition;
   let loaded: Loaded | null = null,
     connection: Connection | null = null;
-  let quote: {
+  type Quote = {
     prepared: Awaited<ReturnType<typeof prepareTransaction>>;
     asset: string;
     number: number;
     price: Price | null;
-  } | null = null;
+  };
+  let quote: Quote | null = null;
   let busy = false,
     imageUrl: string | null = null,
     alreadyCollected = false,
@@ -764,15 +766,21 @@ export function run(adapter: Adapter) {
       } else if (previous === "pending")
         throw new Error("A previous collection may still land. Wait a moment and check again.");
     }
-    const number = loaded.minted + 1;
-    const claim = await adapter.claim(connection.address, number);
-    const prepared = await prepareTransaction(endpoint, connection.address, [claim.instruction]);
-    quote = { prepared, asset: claim.asset, number, price: claim.price };
-    const total = sol(prepared.estimatedLamports);
-    el("cost").textContent = claim.price
-      ? `Copy ${number} · Price ${sol(claim.price.priceLamports)} SOL · Estimated total ${total} SOL`
-      : `Copy ${number} · Estimated total ${total} SOL`;
+    quote = await quoteFor(connection.address, loaded.minted + 1);
+    showQuote(quote);
     message("Ready.");
+  }
+  /** Copy `number` for `wallet` at the live offer, on a fresh blockhash. */
+  async function quoteFor(wallet: string, number: number): Promise<Quote> {
+    const claim = await adapter.claim(wallet, number);
+    const prepared = await prepareTransaction(endpoint, wallet, [claim.instruction]);
+    return { prepared, asset: claim.asset, number, price: claim.price };
+  }
+  function showQuote(q: Quote) {
+    const total = sol(q.prepared.estimatedLamports);
+    el("cost").textContent = q.price
+      ? `Copy ${q.number} · Price ${sol(q.price.priceLamports)} SOL · Estimated total ${total} SOL`
+      : `Copy ${q.number} · Estimated total ${total} SOL`;
   }
   async function collect() {
     if (busy || !loaded || veil()) return;
@@ -794,23 +802,29 @@ export function run(adapter: Adapter) {
       }
       const current = quote;
       quote = null;
+      await adapter.assertProgram();
+      // The live offer on a fresh blockhash, right before the wallet opens: reading the quote, the
+      // program check and a slow approval can outlive the reviewed one (150 blocks). It is sent
+      // only as the reviewed transaction but for its lifetime, estimate included, which is the
+      // app's rule; the price, its revision and the copy number are in its bytes.
+      const fresh = await quoteFor(connection.address, current.number);
       const height = await request<number>(endpoint, "getBlockHeight", [{ commitment: "confirmed" }]);
-      if (BigInt(height) + 10n >= current.prepared.lastValidBlockHeight) {
-        await estimate();
+      if (!sameReviewedTransaction(current.prepared, fresh.prepared) || BigInt(height) + 10n >= fresh.prepared.lastValidBlockHeight) {
+        quote = fresh;
+        showQuote(fresh);
         message("Estimate refreshed. Tap again to approve.");
         return;
       }
       const p: Pending = {
         wallet: connection.address,
-        asset: current.asset,
-        lastValidBlockHeight: String(current.prepared.lastValidBlockHeight),
-        kind: current.price ? "buy" : "collect",
+        asset: fresh.asset,
+        lastValidBlockHeight: String(fresh.prepared.lastValidBlockHeight),
+        kind: fresh.price ? "buy" : "collect",
       };
-      await adapter.assertProgram();
       writePending(p); // If storage fails, do not send an unrecoverable wallet request.
-      message(current.price ? "Approve the purchase in your wallet…" : "Approve collection in your wallet…");
+      message(fresh.price ? "Approve the purchase in your wallet…" : "Approve collection in your wallet…");
       try {
-        p.signature = await connection.send(current.prepared.transaction, current.prepared.minContextSlot);
+        p.signature = await connection.send(fresh.prepared.transaction, fresh.prepared.minContextSlot);
       } catch (e) {
         // An explicit refusal proves nothing was sent, so the record written for it goes; any
         // other outcome (closed wallet, timeout) keeps it until the chain resolves it.
@@ -820,13 +834,13 @@ export function run(adapter: Adapter) {
       writePending(p);
       receipt(p.signature);
       message("Waiting for Solana confirmation…");
-      await confirmTransaction(endpoint, p.signature, current.prepared.lastValidBlockHeight);
+      await confirmTransaction(endpoint, p.signature, fresh.prepared.lastValidBlockHeight);
       alreadyCollected = await adapter.hasCollected(connection.address);
       if (!alreadyCollected)
         throw new Error("Receipt returned, but collection is not yet visible. Check again.");
       loaded = await adapter.load();
       showAvailability();
-      message(adapter.copy.collected(current.number, loaded.supply));
+      message(adapter.copy.collected(fresh.number, loaded.supply));
     } catch (e) {
       error(e);
     } finally {

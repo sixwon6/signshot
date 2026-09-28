@@ -47,8 +47,12 @@ export const HISTORICAL: Record<Cluster, readonly string[]> = {
  * `npm test` and the site build refuse a trusted address without it.
  */
 export type ProgramImage = {
-  /** SHA-256 of the deployed ELF: the ProgramData account's bytes after its 45-byte header. */
+  /**
+   * SHA-256 of the ProgramData account's bytes after its 45-byte header, read from the deployed
+   * account: the ELF alone only while the account's space is exactly 45 + the ELF's length.
+   */
   sha256: string;
+  /** The account's space − 45. */
   bytes: number;
   /** The ProgramData account's upgrade authority, or `null` for an immutable program. */
   upgradeAuthority: string | null;

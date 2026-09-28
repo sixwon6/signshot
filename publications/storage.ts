@@ -1,16 +1,23 @@
 import {
   AccountRole,
   address,
+  appendTransactionMessageInstructions,
+  blockhash,
+  compileTransaction,
+  createTransactionMessage,
+  getBase64Decoder,
   getCompiledTransactionMessageDecoder,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
   signature,
   type Instruction,
 } from "@solana/kit";
 import { utf8 } from "../src/arweave/codec";
 import { turboItemStatus, TurboError, TURBO_FREE_ITEM_BYTES } from "../src/arweave/turbo";
 import { matchesReviewedMessage, verifiedMessage } from "./core/transferReceipt";
-import { request } from "./rpc";
+import { NEEDS_SOL, request } from "./rpc";
 import { TURBO_PAYMENT_HOSTS, TURBO_UPLOAD_HOSTS } from "./turboHosts";
-import type { PublicationStorageProblem } from "./types";
+import type { CoreDraft, PublicationStorageProblem, StorageTopUp } from "./types";
 
 type StorageProblem = PublicationStorageProblem;
 type StorageItem = { id: string; bytes: Uint8Array };
@@ -76,7 +83,8 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
  * `freeTier`), and its 402 `FREE_TIER_EXHAUSTED` "is a PERMANENT condition" (upload OpenAPI). A
  * carrier NAT shares a subnet, and the edition is on chain before the upload, so a mainnet build
  * does not rely on it: the publication transaction itself buys the credit. The free tier is only
- * the last resort for a confirmed payment the service will not credit (`settleStoragePayment`).
+ * the fallback for a confirmed payment the service will not credit (`settleStoragePayment`), and a
+ * stand-alone payment (`storageTopUpTransaction`) buys storage again when that is refused too.
  *
  * The recipe is turbo-sdk's `SolanaToken.createAndSubmitTx`: a System transfer to the Solana address
  * the payment service advertises at `GET /info`, plus an spl-memo instruction
@@ -211,6 +219,53 @@ export function storagePaymentInstructions(payer: string, payment: StoragePaymen
     },
   ];
 }
+
+/**
+ * The stand-alone storage payment, as turbo-sdk's `SolanaToken.createAndSubmitTx` builds it: a
+ * legacy message holding the transfer and the credit-destination memo and nothing else, not even a
+ * compute budget, which two System and Memo instructions do not need. Refused before a wallet opens
+ * when the payer cannot cover it and the network fee.
+ */
+export async function storageTopUpTransaction(endpoint: string, payer: string, payment: StoragePayment) {
+  const instructions = storagePaymentInstructions(payer, payment);
+  const latest = await request<{ context?: { slot?: unknown }; value?: { blockhash?: unknown; lastValidBlockHeight?: unknown } }>(
+    endpoint, "getLatestBlockhash", [{ commitment: "confirmed" }]);
+  const slot = latest?.context?.slot, height = latest?.value?.lastValidBlockHeight;
+  if (typeof slot !== "number" || !Number.isSafeInteger(slot) || slot < 0 ||
+    typeof height !== "number" || !Number.isSafeInteger(height) || height < 0)
+    throw new Error("Invalid Solana response");
+  const lifetime = { blockhash: blockhash(String(latest.value?.blockhash)), lastValidBlockHeight: BigInt(height) };
+  const transaction = compileTransaction(appendTransactionMessageInstructions(instructions,
+    setTransactionMessageLifetimeUsingBlockhash(lifetime,
+      setTransactionMessageFeePayer(address(payer), createTransactionMessage({ version: "legacy" })))));
+  const [fee, balance] = await Promise.all([
+    request<{ value?: unknown }>(endpoint, "getFeeForMessage",
+      [getBase64Decoder().decode(transaction.messageBytes), { commitment: "confirmed" }]),
+    request<{ value?: unknown }>(endpoint, "getBalance", [payer, { commitment: "confirmed" }]),
+  ]);
+  if (fee?.value === null) throw new Error("Transaction expired. Try again.");
+  if (typeof fee?.value !== "number" || !Number.isSafeInteger(fee.value) ||
+    typeof balance?.value !== "number" || !Number.isSafeInteger(balance.value))
+    throw new Error("Invalid Solana response");
+  if (BigInt(balance.value) < payment.lamports + BigInt(fee.value)) throw new Error(NEEDS_SOL);
+  return { transaction, blockhash: lifetime.blockhash as string, lastValidBlockHeight: lifetime.lastValidBlockHeight, slot };
+}
+
+/**
+ * Whether a confirmed publication may buy storage again: the provider refused its upload (the free
+ * tier's refusal included) or found its credit short, and no stand-alone payment is still to land
+ * or to be credited. A check re-posts that one instead, so nothing is paid twice.
+ */
+export function storageTopUpOffered(
+  d: Pick<CoreDraft, "confirmedAt" | "storage" | "storageError" | "storageFunding" | "storageTopUp">,
+): boolean {
+  return d.confirmedAt !== undefined && d.storage !== "available" && d.storageError?.kind === "quota" &&
+    (!d.storageTopUp || d.storageFunding === "credit");
+}
+
+/** A stand-alone payment whose receipt is lost and which may still land. */
+export const storageTopUpPending = () => new PublicationStorageError({ kind: "unavailable", retryable: true,
+  message: "The storage payment may still land. Check again shortly." });
 
 type CreditAnswer =
   | { status: "credited"; destination: unknown }
@@ -371,6 +426,23 @@ export async function findStoragePayment(
   }
   throw new PublicationStorageError({ kind: "unavailable", retryable: true,
     message: "The publication's payment was not found. Check again shortly." });
+}
+
+/**
+ * The stand-alone payment when the wallet never returned its receipt: among the payer's transactions
+ * from the slot its blockhash was read at, the reviewed message, or one the wallet rewrote that
+ * `paysStorage` on that same blockhash. Every draft of a wallet names the same upload key, so the
+ * blockhash is what tells this payment from the publication's or another draft's. `null` if absent.
+ */
+export async function findStorageTopUp(
+  endpoint: string,
+  topUp: Pick<StorageTopUp, "quoteId" | "blockhash" | "slot">,
+  payment: { payer: string; destination: string },
+): Promise<string | null> {
+  return oldestMatching(endpoint, payment.payer, (message) =>
+    matchesReviewedMessage(message, topUp.quoteId) ? "reviewed"
+      : paysStorage(message, payment.payer, payment.destination, topUp.blockhash) ? "payment" : null,
+  topUp.slot);
 }
 
 /**

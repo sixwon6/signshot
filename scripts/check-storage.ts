@@ -28,6 +28,7 @@ import {
   generateKeyPairSigner,
   getBase64EncodedWireTransaction,
   getBase64Encoder,
+  getCompiledTransactionMessageDecoder,
   getSignatureFromTransaction,
   getTransactionDecoder,
   setTransactionMessageFeePayer,
@@ -53,12 +54,15 @@ import {
   SETTLE_BOUND_MS,
   TURBO_SOLANA_ADDRESS,
   findStoragePayment,
+  findStorageTopUp,
   paidStorage,
   paysStorage,
   quoteStoragePayment,
   settleStoragePayment,
   storagePaymentInstructions,
   storageProblem,
+  storageTopUpOffered,
+  storageTopUpTransaction,
   type StoragePayment,
 } from "../publications/storage";
 import type { CoreMetadata } from "../publications/types";
@@ -504,6 +508,133 @@ async function receiptTests() {
     paysStorage(messageOf(rewritten), payer.address, UPLOADER, "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k") &&
     !paysStorage(messageOf(rewritten), payer.address, UPLOADER, "11111111111111111111111111111111"));
 }
+// --- Buying storage again ---------------------------------------------------------------------------
+const BLOCKHASH = "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k";
+async function topUpTests() {
+  const rpc = (answers: Record<string, unknown>): Handler => (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    return json({ jsonrpc: "2.0", id: body.id, result: answers[body.method] });
+  };
+  const chainAnswers = (balance: bigint, fee: number | null = 5_000) => ({
+    getLatestBlockhash: { context: { slot: 500 }, value: { blockhash: BLOCKHASH, lastValidBlockHeight: 900 } },
+    getFeeForMessage: { context: { slot: 500 }, value: fee },
+    getBalance: { context: { slot: 500 }, value: Number(balance) },
+  });
+  stub([[/^https:\/\/rpc\.invalid/, rpc(chainAnswers(1_000_000_000n))]]);
+  const built = await storageTopUpTransaction("https://rpc.invalid", CREATOR, payment);
+  const message = getCompiledTransactionMessageDecoder().decode(built.transaction.messageBytes);
+  if (message.version !== "legacy" && message.version !== 0) throw new Error("Unexpected message version.");
+  const accounts = message.staticAccounts as readonly string[];
+  const [transfer, memo] = message.instructions;
+  const official = getTransferSolInstruction({ source: createNoopSigner(address(CREATOR)), destination: address(TURBO), amount: payment.lamports });
+  ok("the top-up is turbo-sdk's shape: a legacy message, the transfer then the memo, nothing else",
+    message.version === "legacy" && message.instructions.length === 2 && accounts[0] === CREATOR &&
+    !accounts.includes("ComputeBudget111111111111111111111111111111") &&
+    accounts[transfer.programAddressIndex] === "11111111111111111111111111111111" &&
+    Buffer.from(transfer.data!).equals(Buffer.from(official.data)) &&
+    transfer.accountIndices!.map((i) => accounts[i]).join() === `${CREATOR},${TURBO}` &&
+    accounts[memo.programAddressIndex] === "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" && !memo.accountIndices?.length &&
+    new TextDecoder().decode(new Uint8Array(memo.data!)) === `turboCreditDestinationAddress=${UPLOADER}`);
+  ok("the top-up carries the lifetime and slot its lost receipt is searched by",
+    message.lifetimeToken === BLOCKHASH && built.blockhash === BLOCKHASH && built.slot === 500 &&
+    built.lastValidBlockHeight === 900n && paysStorage(new Uint8Array(built.transaction.messageBytes), CREATOR, UPLOADER, BLOCKHASH));
+  stub([[/^https:\/\/rpc\.invalid/, rpc(chainAnswers(payment.lamports + 4_999n))]]);
+  ok("a payer that cannot cover the top-up and its fee is refused before the wallet",
+    (await rejection(storageTopUpTransaction("https://rpc.invalid", CREATOR, payment)) as Error)?.message ===
+      "This wallet needs more SOL for account creation and network fees.");
+  stub([[/^https:\/\/rpc\.invalid/, rpc(chainAnswers(1_000_000_000n))]]);
+  ok("a top-up over the ceiling is refused before anything is asked",
+    (await rejection(storageTopUpTransaction("https://rpc.invalid", CREATOR, { ...payment, lamports: MAX_STORAGE_LAMPORTS + 1n }))) !== undefined &&
+    calls.length === 0);
+
+  // A lost top-up receipt, on the payer's own history, told apart from every other payment to the key.
+  const payer = await generateKeyPairSigner();
+  const at = async (slot: number, instructions: Instruction[], hash: string, version: 0 | "legacy" = "legacy") => {
+    const signed = await signTransactionMessageWithSigners(appendTransactionMessageInstructions(instructions,
+      setTransactionMessageLifetimeUsingBlockhash({ blockhash: hash as Blockhash, lastValidBlockHeight: 0n },
+        setTransactionMessageFeePayerSigner(payer, createTransactionMessage({ version })))));
+    return {
+      signature: getSignatureFromTransaction(signed) as string,
+      quoteId: reviewedFingerprint(new Uint8Array(signed.messageBytes)), slot,
+      result: { slot, version, meta: { err: null }, transaction: [getBase64EncodedWireTransaction(signed), "base64"] },
+    };
+  };
+  const pay = storagePaymentInstructions(payer.address, payment);
+  const OTHER_HASH = "HepiT2k93CFQaSB7i3ZNXhybZKn5MeWiv3UkLsaJKk4i";
+  const publication = await at(100, [{ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new TextEncoder().encode("publish") }, ...pay], OTHER_HASH, 0);
+  const reviewed = await at(505, pay, BLOCKHASH);
+  const rewritten = await at(510, [getSetComputeUnitLimitInstruction({ units: 40_000 }), getSetComputeUnitPriceInstruction({ microLamports: 90_000n }), ...pay,
+    { programAddress: address("L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95"), accounts: [], data: new Uint8Array([1]) }], BLOCKHASH);
+  const otherDraft = await at(520, pay, "11111111111111111111111111111111");
+  const byId = new Map([publication, reviewed, rewritten, otherDraft].map((tx) => [tx.signature, tx.result]));
+  let read: string[] = [];
+  const history = (...txs: (typeof reviewed)[]): Handler => (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.method === "getSignaturesForAddress")
+      return json({ jsonrpc: "2.0", id: body.id, result: body.params[0] === payer.address
+        ? txs.map((tx) => ({ signature: tx.signature, err: null, slot: tx.slot, confirmationStatus: "finalized" })) : [] });
+    read.push(body.params[0]);
+    return json({ jsonrpc: "2.0", id: body.id, result: byId.get(body.params[0]) ?? null });
+  };
+  const find = (...txs: (typeof reviewed)[]) => {
+    read = [];
+    stub([[/^https:\/\/rpc\.invalid/, history(...txs)]]);
+    return findStorageTopUp("https://rpc.invalid", { quoteId: reviewed.quoteId, blockhash: BLOCKHASH, slot: 500 },
+      { payer: payer.address, destination: UPLOADER });
+  };
+  ok("a lost top-up receipt is found by its fingerprint",
+    (await find(otherDraft, reviewed, publication)) === reviewed.signature && !read.includes(publication.signature));
+  ok("a top-up the wallet rewrote is found by its transfer and memo on its own blockhash",
+    (await find(otherDraft, rewritten, publication)) === rewritten.signature);
+  ok("neither the publication's payment nor another draft's top-up is taken for it",
+    (await find(otherDraft, publication)) === null && !read.includes(publication.signature));
+
+  const refused = { kind: "quota" as const, message: "The storage provider refused this publication's payment.", retryable: false };
+  const topUp = { lastValidBlockHeight: "900", quoteId: reviewed.quoteId, blockhash: BLOCKHASH, slot: 500, lamports: "68229" };
+  const base = { confirmedAt: 1, storage: "pending" as const, storageError: refused };
+  const offered: [string, Parameters<typeof storageTopUpOffered>[0], boolean][] = [
+    ["the provider refused the upload", base, true],
+    ["the credit ran short", { ...base, storageFunding: "credit", storageError: { ...refused, message: "Storage credit ran short for this upload." } }, true],
+    ["a credited top-up ran short too", { ...base, storageFunding: "credit", storageTopUp: { ...topUp, signature: TX } }, true],
+    ["a top-up may still land", { ...base, storageTopUp: topUp }, false],
+    ["a landed top-up is still to be credited", { ...base, storageTopUp: { ...topUp, signature: TX } }, false],
+    ["the payment is settling", { ...base, storageError: { kind: "unavailable", message: "Storage payment is settling. Check again shortly.", retryable: true } }, false],
+    ["the edition is not confirmed", { ...base, confirmedAt: undefined }, false],
+    ["the upload finished", { ...base, storage: "available" }, false],
+  ];
+  for (const [name, draft, expected] of offered)
+    ok(`storage is ${expected ? "" : "not "}offered again when ${name}`, storageTopUpOffered(draft) === expected);
+
+  // The draft side and the screens.
+  const source = (...path: string[]) =>
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", ...path), "utf8").replace(/\r\n/g, "\n");
+  const creator = source("src", "prints", "creator.ts");
+  const pays = /export async function payStorage\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
+  const receipt = /async function topUpReceipt\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
+  const settle = /async function settleStorage\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
+  ok("creator.ts saves the top-up, with the path and clock cleared, before the wallet opens, and its signature after",
+    /d\.storageTopUp = \{[\s\S]*?\};\n\s*delete d\.storageFunding;\n\s*delete d\.storageSettling;\n\s*await save\(r, d\);\n\s*const sigs = await wallet\.signAndSendTransactions/.test(pays) &&
+    /d\.storageTopUp\.signature = getBase58Decoder\(\)\.decode\(sigs\[0\]\);\n\s*await save\(r, d\);/.test(pays) &&
+    /if \(!canPayStorage\(d\) \|\| !\(await isSigned\(d\)\)\)/.test(pays) &&
+    pays.indexOf("storageTopUpTransaction(") < pays.indexOf("signAndSendTransactions") &&
+    pays.indexOf("confirmTransaction(") < pays.indexOf("await uploadConfirmed(r, d)"));
+  ok("creator.ts settles a top-up before the publication's own payment, and searches a lost receipt before giving it up",
+    settle.indexOf("await topUpReceipt(r, d, signer.ownerBase58)") < settle.indexOf("d.attempt?.signature") &&
+    receipt.indexOf("findStorageTopUp(") < receipt.indexOf("checkAttempt(") &&
+    /if \(standing === "confirmed"\) return topUp\.signature!;\n\s*if \(standing === "pending"\) throw storageTopUpPending\(\);\n\s*delete d\.storageTopUp;/.test(receipt));
+  ok("creator.ts checks a saved top-up on the way in and keeps it across a stale screen",
+    /if \(d\.storageTopUp !== undefined\) \{\n\s*const t = d\.storageTopUp;\n\s*assertAttempt\(t\);/.test(creator) &&
+    /d\.storageTopUp = current\.storageTopUp;/.test(creator) &&
+    /export const canPayStorage = \(d: CoreDraft\) => paidStorage\(cluster\) && storageTopUpOffered\(d\);/.test(creator));
+  const label = /payStorage: \(amount: string\): string => `Pay storage \$\{amount\} SOL`/.test(source("src", "ui", "copy.ts"));
+  for (const screen of [["src", "prints", "PrintSheet.tsx"], ["src", "screens", "ReviewScreen.tsx"]]) {
+    const text = source(...screen);
+    ok(`${screen[screen.length - 1]} offers the top-up as one key with its amount, on the wallet path`,
+      label && /\{topUp && \(\n\s*<Pill\n\s*label=\{actions\.payStorage\(formatSol\(topUp\.lamports\)\)\}/.test(text) &&
+      /await payStorage\(\w+(\.record)?, (draft|d), session, topUp/.test(text) && /useStorageTopUp\(published \? draft : null\)|useStorageTopUp\(newPublished \? d : null\)/.test(text));
+  }
+}
+
 /** The message bytes out of a signed test transaction's `getTransaction` answer. */
 const messageOf = (tx: { result: { transaction: unknown[] } }) =>
   new Uint8Array(getTransactionDecoder().decode(getBase64Encoder().encode(tx.result.transaction[0] as string)).messageBytes);
@@ -514,6 +645,7 @@ void (async () => {
   await sizeTest();
   await creditTests();
   await receiptTests();
+  await topUpTests();
 })().then(
   () => {
     console.log(failures ? `\n${failures} check(s) failed.` : "\nstorage payment self-test passed.");

@@ -35,7 +35,6 @@ import {
   type ReviewedReceipt,
 } from "./reviewedReceipt";
 import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
-import { isSigningRefused } from "../solana/walletErrors";
 import {
   MAX_STORAGE_LAMPORTS,
   checkStorageCapacity,
@@ -743,18 +742,12 @@ export async function payStorage(
       delete d.storageFunding;
       delete d.storageSettling;
       await save(r, d);
-      const sigs = await wallet.signAndSendTransactions({
+      // Only an explicit refusal proves nothing was sent; the draft goes back to how it was.
+      const sigs = await forgetIfRefused(wallet.signAndSendTransactions({
         transactions: [prepared.transaction],
         minContextSlot: prepared.slot,
         skipPreflight: false,
-      }).catch(async (error: unknown) => {
-        // Only an explicit refusal proves nothing was sent; the draft goes back to how it was.
-        if (isSigningRefused(error)) {
-          Object.assign(d, kept);
-          await save(r, d);
-        }
-        throw error;
-      });
+      }), () => save(r, Object.assign(d, kept)));
       if (sigs.length !== 1 || sigs[0].length !== 64)
         throw new Error("No wallet receipt. Check before retrying.");
       d.storageTopUp.signature = getBase58Decoder().decode(sigs[0]);

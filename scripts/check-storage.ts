@@ -622,10 +622,10 @@ async function topUpTests() {
   const receipt = /async function topUpReceipt\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
   const settle = /async function settleStorage\([\s\S]*?\n\}/.exec(creator)?.[0] ?? "";
   ok("creator.ts saves the top-up, with the path and clock cleared, before the wallet opens, and its signature after; an explicit refusal puts the draft back",
-    /d\.storageTopUp = \{[\s\S]*?\};\n\s*delete d\.storageFunding;\n\s*delete d\.storageSettling;\n\s*await save\(r, d\);\n\s*const sigs = await wallet\.signAndSendTransactions/.test(pays) &&
+    /d\.storageTopUp = \{[\s\S]*?\};\n\s*delete d\.storageFunding;\n\s*delete d\.storageSettling;\n\s*await save\(r, d\);\n\s*(?:\/\/[^\n]*\n\s*)?const sigs = await forgetIfRefused\(wallet\.signAndSendTransactions/.test(pays) &&
     /d\.storageTopUp\.signature = getBase58Decoder\(\)\.decode\(sigs\[0\]\);\n\s*await save\(r, d\);/.test(pays) &&
     /const kept = \{ storageTopUp: d\.storageTopUp, storageFunding: d\.storageFunding, storageSettling: d\.storageSettling \};\n\s*d\.storageTopUp = \{/.test(pays) &&
-    /\}\)\.catch\(async \(error: unknown\) => \{\n\s*\/\/[^\n]*\n\s*if \(isSigningRefused\(error\)\) \{\n\s*Object\.assign\(d, kept\);\n\s*await save\(r, d\);\n\s*\}\n\s*throw error;/.test(pays) &&
+    /\}\), \(\) => save\(r, Object\.assign\(d, kept\)\)\);/.test(pays) &&
     /if \(!canPayStorage\(d\) \|\| !\(await isSigned\(d\)\)\)/.test(pays) &&
     pays.indexOf("storageTopUpTransaction(") < pays.indexOf("signAndSendTransactions") &&
     pays.indexOf("confirmTransaction(") < pays.indexOf("await uploadConfirmed(r, d)"));

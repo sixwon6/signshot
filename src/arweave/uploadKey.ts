@@ -133,11 +133,21 @@ export async function getUploadKey(wallet: string): Promise<UploadKey> {
   return started;
 }
 
+/** The base58 address of `wallet`'s upload key, or `null` when none is stored. Never creates one. */
+export async function uploadKeyAddress(wallet: string): Promise<string | null> {
+  const secureKey = uploadKeySecureStoreKey(wallet);
+  const hit = cached.get(secureKey);
+  if (hit !== undefined) return hit.ownerBase58;
+  const stored = await SecureStore.getItemAsync(secureKey, SECURE_STORE_OPTIONS);
+  return stored === null ? null : makeKey(parseSeed(stored, `SecureStore ${secureKey}`)).ownerBase58;
+}
+
 /**
  * Remove this wallet's upload seed. SecureStore's Android preference key names the wallet in
  * cleartext, so forgetting a wallet must delete it. Only safe when no upload is still owed: a
- * regenerated key cannot reproduce item ids already referenced on chain. Any unspent storage
- * credit (the headroom above each quote) stays with the deleted key's address.
+ * regenerated key cannot reproduce item ids already referenced on chain. Unspent storage credit
+ * (the headroom above each quote) would stay with the deleted key's address, so Settings keeps a
+ * key that holds any (`storageCreditHeld`).
  */
 export async function deleteUploadKey(wallet: string): Promise<void> {
   const secureKey = uploadKeySecureStoreKey(wallet);

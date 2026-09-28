@@ -18,7 +18,8 @@
  *   - `src/prints/creator.ts` records the path taken on the draft and resumes it as recorded;
  *   - buying storage again: turbo-sdk's legacy transfer and memo, offered only while no earlier one
  *     may still land or be credited, its lost receipt told apart from every other payment to the key;
- *   - the publication bundle: the signed data items whose ids the chain names.
+ *   - the publication bundle: the signed data items whose ids the chain names;
+ *   - forgetting a wallet: its upload key kept while its address holds credit, and on any doubt.
  */
 
 import {
@@ -66,6 +67,7 @@ import {
   paysStorage,
   quoteStoragePayment,
   settleStoragePayment,
+  storageCreditHeld,
   storagePaymentInstructions,
   storageProblem,
   storageTopUpOffered,
@@ -680,6 +682,42 @@ function bundleTests() {
     /publicationBundleDocument\(d, Date\.now\(\), items\)/.test(review));
 }
 
+// --- Forgetting a wallet ----------------------------------------------------------------------------
+async function forgetTests() {
+  const balance = (answer: Handler): [RegExp, Handler] => [/\/v1\/account\/balance\/solana\?address=/, answer];
+  const userNotFound = () => new Response("User Not Found", { status: 404 });
+  const held = (route: [RegExp, Handler]) => { stub([route]); return rejection(storageCreditHeld(UPLOADER)); };
+  stub([balance(() => json({ winc: "757526145", controlledWinc: "757526145", effectiveBalance: "757526145" }))]);
+  ok("a key holding credit is reported as holding it, asked by its own address",
+    (await storageCreditHeld(UPLOADER)) === true &&
+    calls[0].url === `https://turbo.ardrive.io/v1/account/balance/solana?address=${UPLOADER}` && calls[0].method === "GET");
+  stub([balance(() => json({ winc: "0" }))]);
+  ok("a key with no credit left is not", (await storageCreditHeld(UPLOADER)) === false);
+  stub([balance(userNotFound)]);
+  ok("the service's 404 User Not Found is no credit, as turbo-sdk reads it", (await storageCreditHeld(UPLOADER)) === false);
+  stub([[/^https:\/\/turbo\.ardrive\.io\//, () => new Response("Not Found", { status: 404 })], balance(userNotFound)]);
+  ok("any other 404 is not an answer: the next host is asked",
+    (await storageCreditHeld(UPLOADER)) === false && calls.some((call) => call.url.startsWith("https://payment.ardrive.io/")));
+  for (const [name, answer] of [
+    ["every host failing", () => new Response("down", { status: 503 })],
+    ["an unreadable balance", () => json({ winc: "12.5" })],
+    ["no balance at all", () => json({})],
+    ["no host answering", () => { throw new TypeError("fetch failed"); }],
+  ] as [string, Handler][])
+    ok(`fails closed, so the key is kept: ${name}`, (await held(balance(answer))) instanceof Error);
+  ok("an owner that is not an address is refused", (await rejection(storageCreditHeld("nope"))) !== undefined);
+
+  const settings = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "screens", "SettingsScreen.tsx"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const forget = /async function forgetUploadSeed\([\s\S]*?\n\}/.exec(settings)?.[0] ?? "";
+  ok("Settings deletes an upload key only when nothing is owed and its address holds no credit, keeping it on any error",
+    /try \{\n\s*if \(await walletOwesUpload\(wallet\)\) return;\n\s*const owner = await uploadKeyAddress\(wallet\);\n\s*if \(owner !== null && \(await storageCreditHeld\(owner\)\)\) return;\n\s*await deleteUploadKey\(wallet\);\n\s*\} catch \{/.test(forget));
+  const key = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "arweave", "uploadKey.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const peek = /export async function uploadKeyAddress\([\s\S]*?\n\}/.exec(key)?.[0] ?? "";
+  ok("reading the key's address never creates a key", peek.length > 0 && !/setItemAsync|load\(|randomSecretKey/.test(peek));
+}
+
 /** The message bytes out of a signed test transaction's `getTransaction` answer. */
 const messageOf = (tx: { result: { transaction: unknown[] } }) =>
   new Uint8Array(getTransactionDecoder().decode(getBase64Encoder().encode(tx.result.transaction[0] as string)).messageBytes);
@@ -692,6 +730,7 @@ void (async () => {
   await receiptTests();
   await topUpTests();
   bundleTests();
+  await forgetTests();
 })().then(
   () => {
     console.log(failures ? `\n${failures} check(s) failed.` : "\nstorage payment self-test passed.");

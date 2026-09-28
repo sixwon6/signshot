@@ -303,6 +303,29 @@ async function submitPayment(txId: string): Promise<CreditAnswer> {
 }
 
 /**
+ * Does this upload key's address hold Turbo credit, `winc` above zero at
+ * `GET /v1/account/balance/solana?address=`? The service's 404 "User Not Found" is no account, as
+ * turbo-sdk's `getBalance` reads it; anything else unreadable throws, so the caller keeps the key.
+ */
+export async function storageCreditHeld(owner: string): Promise<boolean> {
+  address(owner);
+  let last: unknown;
+  for (const host of TURBO_PAYMENT_HOSTS) {
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${host}/v1/account/balance/solana?address=${encodeURIComponent(owner)}`,
+        { signal: controller.signal });
+      if (response.status === 404 && (await response.text()).trim() === "User Not Found") return false;
+      if (!response.ok) throw new Error("Storage provider is unavailable.");
+      return winc(await response.json()) > 0n;
+    } catch (error) {
+      last = error;
+    } finally { clearTimeout(timer); }
+  }
+  throw last ?? new Error("Storage provider is unavailable.");
+}
+
+/**
  * How a confirmed publication's uploads are paid for, recorded on its draft so a resumed upload
  * takes the same path: `credit`, the credit its payment bought; `free`, Turbo's free tier, because
  * the payment service refused that payment for good.

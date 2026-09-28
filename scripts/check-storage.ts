@@ -9,7 +9,8 @@
  *     publication transaction still inside the mobile wallet's size budget with both added;
  *   - the credit: pending until the service credits the upload key, idempotent on a resume, and
  *     refused or misdirected credit re-posted with backoff, then the free tier for items within its
- *     size, never a second payment; unsettled credit reported rather than uploaded past;
+ *     size, never a second payment; unsettled credit reported rather than uploaded past, until ten
+ *     minutes after the service first left it uncredited, then the free tier as for a refusal;
  *   - the payment address: Turbo's pinned Solana address, and nothing else `/info` names;
  *   - the lost receipt: the publication transaction found by fingerprint in the creator's claim
  *     receipt's history first, then the edition's, and by its transfer and memo when a wallet
@@ -49,6 +50,7 @@ import { addresses, instruction, setOfferInstruction } from "../publications/cor
 import { reviewedFingerprint } from "../publications/core/transferReceipt";
 import {
   MAX_STORAGE_LAMPORTS,
+  SETTLE_BOUND_MS,
   TURBO_SOLANA_ADDRESS,
   findStoragePayment,
   paidStorage,
@@ -328,6 +330,41 @@ async function creditTests() {
   await rejection(settleStoragePayment(signature, UPLOADER, items, 0));
   ok("unreachable hosts end the wait at once instead of polling on", posts().length === 2);
 
+  // The bound: a payment never credited reaches the free tier, measured from the first uncredited
+  // answer the draft keeps for that transaction.
+  let clocked: string[] = [];
+  const clock = (ago: number) => async (tx: string) => { clocked.push(tx); return Date.now() - ago; };
+  const uncredited: [string, Handler][] = [
+    ["pending", pending],
+    ["not found (404)", () => new Response("Transaction ID not found!", { status: 404 })],
+    ["failing (503)", () => new Response("Error while processing transaction!", { status: 503 })],
+    ["unreachable", () => { throw new TypeError("fetch failed"); }],
+  ];
+  for (const [name, answer] of uncredited) {
+    stub([notHeld, uploadInfo(107_520), [/\/v1\/account\/balance\/solana$/, answer]]);
+    clocked = [];
+    const past = await settleStoragePayment(signature, UPLOADER, items, 0, clock(SETTLE_BOUND_MS));
+    const postsPast = posts().length;
+    stub([notHeld, uploadInfo(107_520), [/\/v1\/account\/balance\/solana$/, answer]]);
+    const within = storageProblem(await rejection(settleStoragePayment(signature, UPLOADER, items, 0, clock(SETTLE_BOUND_MS - 60_000))), true);
+    ok(`${name} past the bound goes to the free tier on the first answer; within it, still settling`,
+      past === "free" && postsPast <= 2 && clocked.every((tx) => tx === TX) && clocked.length === 2 &&
+      within.message === "Storage payment is settling. Check again shortly." && within.retryable);
+  }
+  stub([notHeld, sequence(credited)]);
+  clocked = [];
+  ok("a credit on the first answer never starts the clock",
+    (await settleStoragePayment(signature, UPLOADER, items, 0, clock(SETTLE_BOUND_MS))) === "credit" && clocked.length === 0);
+  stub([notHeld, sequence(pending, pending, credited)]);
+  clocked = [];
+  ok("the clock is read once per check, however many polls",
+    (await settleStoragePayment(signature, UPLOADER, items, 0, clock(0))) === "credit" && clocked.length === 1);
+  stub([notHeld, uploadInfo(4_096), [/\/v1\/account\/balance\/solana$/, pending]]);
+  const tooBig = storageProblem(await rejection(settleStoragePayment(signature, UPLOADER, items, 0, clock(SETTLE_BOUND_MS))), true);
+  ok("past the bound, an item over the free size ends as a refusal does",
+    tooBig.message === "The storage provider refused this publication's payment." && tooBig.kind === "quota");
+  ok("the bound is ten minutes", SETTLE_BOUND_MS === 600_000);
+
   const short = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"), true);
   const credit = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"), true, "credit");
   const free = storageProblem(new TurboError(402, "{}", "turbo: upload refused with HTTP 402"));
@@ -348,6 +385,11 @@ async function creditTests() {
   ok("creator.ts looks a lost receipt up at the creator's claim receipt (the sealed token's on a Seeker-only edition), then the edition",
     /const receipt = await claimReceiptAddress\(d\.edition\.program, d\.edition\.edition,\s*publisherClaimant\(d\.edition\.creator, d\.seekerOnly, /.test(settle) &&
     /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId,\s*\{ payer: d\.edition\.creator, destination: signer\.ownerBase58 \}\)/.test(settle));
+  ok("creator.ts keeps the settling clock on the draft per transaction, across a stale screen and a reload",
+    /\}, signer\.ownerBase58, \[img, meta\], undefined, async \(tx\) => \{/.test(settle) &&
+    /if \(d\.storageSettling\?\.tx !== tx\) \{\n\s*d\.storageSettling = \{ tx, since: Date\.now\(\) \};\n\s*await save\(r, d\);\n\s*\}\n\s*return d\.storageSettling\.since;/.test(settle) &&
+    /d\.storageSettling = current\.storageSettling;/.test(creator) &&
+    /d\.storageSettling !== undefined && \(!\/\^\[1-9A-HJ-NP-Za-km-z\]\{64,88\}\$\/\.test/.test(creator));
   ok("creator.ts keeps the path across a stale screen and a reload, and forgets it only when the free tier refuses",
     /d\.storageFunding = current\.storageFunding;/.test(creator) &&
     /d\.storageFunding !== undefined && d\.storageFunding !== "credit" && d\.storageFunding !== "free"/.test(creator) &&

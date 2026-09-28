@@ -168,6 +168,8 @@ export interface CoreDraft {
    * resumed upload neither re-posts a credited payment nor waits out a refusal again.
    */
   storageFunding?: "credit" | "free";
+  /** When the payment service first left the payment `tx` uncredited (`settleStoragePayment`). */
+  storageSettling?: { tx: string; since: number };
 }
 
 /**

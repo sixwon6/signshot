@@ -216,6 +216,9 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
   if (d.attempt) assertAttempt(d.attempt);
   if (d.storageFunding !== undefined && d.storageFunding !== "credit" && d.storageFunding !== "free")
     throw new Error("Saved edition draft does not match this photo.");
+  if (d.storageSettling !== undefined && (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(d.storageSettling?.tx) ||
+    !Number.isSafeInteger(d.storageSettling.since) || d.storageSettling.since <= 0))
+    throw new Error("Saved edition draft does not match this photo.");
   terms(d.edition.title, d.edition.supply);
   // A draft edited on disk must not smuggle unbounded or bidi-reversed text onto a screen.
   readDescription(d.edition.description);
@@ -627,7 +630,14 @@ async function settleStorage(r: CaptureRecord, d: CoreDraft) {
       { payer: d.edition.creator, destination: signer.ownerBase58 });
     await save(r, d);
     return d.attempt.signature;
-  }, signer.ownerBase58, [img, meta]);
+  }, signer.ownerBase58, [img, meta], undefined, async (tx) => {
+    // The first uncredited answer for this payment, kept across checks and restarts.
+    if (d.storageSettling?.tx !== tx) {
+      d.storageSettling = { tx, since: Date.now() };
+      await save(r, d);
+    }
+    return d.storageSettling.since;
+  });
   if (!funding) return;
   d.storageFunding = funding;
   await save(r, d);
@@ -759,6 +769,7 @@ async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
   d.storage = current.storage;
   d.storageError = current.storageError;
   d.storageFunding = current.storageFunding;
+  d.storageSettling = current.storageSettling;
 }
 export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   onProgress?: (stage: "network" | "publication" | "previous" | "storage" | "estimate") => void) {

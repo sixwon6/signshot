@@ -114,6 +114,14 @@ const CREDIT_POLLS = 12;
 const CREDIT_POLL_MS = 4_000;
 /** Re-posts of a refused or misdirected payment, waiting 1, 2 then 4 polls, before the free tier. */
 const REFUSED_REPOSTS = 3;
+/**
+ * How long a payment may stay uncredited (pending, not found, failing or unreachable), from the
+ * service's first answer, before the free tier is tried as for a refusal. turbo-sdk posts a payment
+ * once it is `finalized`; finalized trails confirmed by about 32 slots (~13 s), and a blockhash
+ * expires in 60–90 s (solana.com/developers/guides/advanced/confirmation). Ten minutes is far past
+ * both. A credit that posts later stays on the upload key.
+ */
+export const SETTLE_BOUND_MS = 10 * 60_000;
 
 const PRICE_UNAVAILABLE: StorageProblem = { kind: "unavailable", retryable: true,
   message: "Storage price unavailable. Try again." };
@@ -257,25 +265,29 @@ const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  *
  * A refusal (400) or a credit to another account is re-posted `REFUSED_REPOSTS` times with backoff.
  * If it stands, the edition is already on chain and paid for, so the free tier is tried rather than
- * stranding it: `free` when every pending item is within Turbo's free item size.
+ * stranding it: `free` when every pending item is within Turbo's free item size. So is a payment
+ * left uncredited `SETTLE_BOUND_MS` after `since(txId)`, the first uncredited answer the caller
+ * keeps for that transaction across checks.
  */
 export async function settleStoragePayment(
   receipt: () => Promise<string>,
   destination: string,
   items: StorageItem[],
   pollMs = CREDIT_POLL_MS,
+  since: (txId: string) => Promise<number> = async () => Date.now(),
 ): Promise<StorageFunding | null> {
   const pending = await pendingItems(items);
   if (!pending.length) return null;
   const txId = await receipt();
-  let polls = 0, refusals = 0;
+  let polls = 0, refusals = 0, first: number | undefined;
   while (true) {
     const answer = await submitPayment(txId);
     if (answer.status === "credited" && answer.destination === destination) return "credit";
-    // No host answered at all; a later check re-posts the same transaction.
-    if (answer.status === "unreachable") break;
-    if (answer.status === "pending") {
-      if (++polls >= CREDIT_POLLS) break;
+    if (answer.status === "unreachable" || answer.status === "pending") {
+      first ??= await since(txId);
+      if (Date.now() - first >= SETTLE_BOUND_MS) return freeTier(pending);
+      // No host answered at all; a later check re-posts the same transaction.
+      if (answer.status === "unreachable" || ++polls >= CREDIT_POLLS) break;
       await wait(pollMs);
       continue;
     }

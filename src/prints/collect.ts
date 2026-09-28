@@ -38,7 +38,7 @@ import {
 } from "@solana/kit";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
-import { isSigningRefused } from "../solana/walletErrors";
+import { forgetIfRefused } from "../solana/walletErrors";
 import { refreshedQuote } from "./quoteRefresh";
 import {
   addresses,
@@ -663,17 +663,12 @@ export async function sendCollect(
         lastValidBlockHeight: String(prepared.lastValidBlockHeight),
       };
       await write(attempt);
-      const signatures = await wallet.signAndSendTransactions({
+      // The edition lock still covers the removal, so another send cannot replace it.
+      const signatures = await forgetIfRefused(wallet.signAndSendTransactions({
         transactions: [prepared.transaction],
         minContextSlot: Number(prepared.minContextSlot),
         skipPreflight: false,
-      }).catch(async (error: unknown) => {
-        // This single-payload request was explicitly not signed. A closed association or
-        // timeout proves no such thing: retain those attempts until the chain resolves them.
-        // The edition lock still covers this removal, so another send cannot replace it.
-        if (isSigningRefused(error)) await AsyncStorage.removeItem(attemptKey(e.edition, collector));
-        throw error;
-      });
+      }), () => AsyncStorage.removeItem(attemptKey(e.edition, collector)));
       // MWA can return null or short signatures; saving one would make the attempt unreadable.
       if (signatures.length !== 1 || signatures[0].length !== 64)
         throw new Error("No wallet receipt. Check the collection before retrying.");

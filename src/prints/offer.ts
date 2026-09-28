@@ -28,6 +28,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { address, getBase58Decoder } from "@solana/kit";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
+import { forgetIfRefused } from "../solana/walletErrors";
 import { refreshedQuote } from "./quoteRefresh";
 import {
   readOfferAccount,
@@ -271,7 +272,7 @@ export async function sendOffer(
       throw new Error("The price review changed. Check this edition again.");
     if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
     if (!programFeatures(e.program).offers) throw new Error(NO_OFFERS);
-    await assertNoStandingAttempt(e);
+    const previous = await assertNoStandingAttempt(e);
     // Again right before the wallet opens: two header reads while the reviewed slot is cached.
     await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
 
@@ -302,11 +303,12 @@ export async function sendOffer(
         lastValidBlockHeight: String(prepared.lastValidBlockHeight),
       };
       await write(attempt);
-      const signatures = await wallet.signAndSendTransactions({
+      // Declined in the wallet: the attempt before this one comes back, under the edition lock.
+      const signatures = await forgetIfRefused(wallet.signAndSendTransactions({
         transactions: [prepared.transaction],
         minContextSlot: Number(prepared.minContextSlot),
         skipPreflight: false,
-      });
+      }), () => (previous ? write(previous) : AsyncStorage.removeItem(attemptKey(e.edition))));
       // MWA can return null or short signatures; saving one would make the attempt unreadable.
       if (signatures.length !== 1 || signatures[0].length !== 64)
         throw new Error("No wallet receipt. Check the price before retrying.");

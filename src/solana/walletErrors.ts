@@ -13,6 +13,18 @@ export function isSigningRefused(e: unknown): boolean {
 }
 
 /**
+ * A single-payload signing request. An explicit refusal sent nothing, so `forget` puts the saved
+ * attempt back as it was before the wallet opened; a timeout, a closed session or anything else
+ * keeps it, because a signed transaction may still land. Call it inside the operation's lock.
+ */
+export function forgetIfRefused<T>(signing: Promise<T>, forget: () => Promise<unknown>): Promise<T> {
+  return signing.catch(async (error: unknown) => {
+    if (isSigningRefused(error)) await forget();
+    throw error;
+  });
+}
+
+/**
  * Did the user back out, rather than something breaking? A cancellation must never render as an
  * error. The shapes, and where each comes from:
  *

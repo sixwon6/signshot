@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { address, getBase58Decoder } from "@solana/kit";
 import type { CaptureRecord } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
+import { forgetIfRefused } from "../solana/walletErrors";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import { isSigned, type PublicationDraft } from "./creator";
 import { publicationLockKey } from "./coordinator";
@@ -298,12 +299,15 @@ export async function sendTransfer(
       if (selected.address !== quote.owner) throw new Error("Use the wallet shown in the transfer review.");
       // Refreshed on every approval: the wallet's sheet can outlast a blockhash.
       const { prepared, quoteId } = await refreshed(quote, previousMessages);
+      // Read under the lock: a declined approval puts exactly this back, live messages included.
+      const previous = await read(d);
       attempt = { version: 1, protocol: CORE_PROTOCOL, owner: quote.owner, recipient: quote.recipient,
         asset: quote.asset, quoteId,
         lastValidBlockHeight: String(prepared.lastValidBlockHeight), previousMessages };
       await write(d, attempt);
-      const signatures = await wallet.signAndSendTransactions({ transactions: [prepared.transaction],
-        minContextSlot: Number(prepared.minContextSlot), skipPreflight: false });
+      const signatures = await forgetIfRefused(wallet.signAndSendTransactions({ transactions: [prepared.transaction],
+        minContextSlot: Number(prepared.minContextSlot), skipPreflight: false }),
+        () => (previous ? write(d, previous) : AsyncStorage.removeItem(key(d))));
       if (signatures.length !== 1 || signatures[0].length !== 64) throw new Error("No wallet receipt. Check the transfer before retrying.");
       attempt.signature = getBase58Decoder().decode(signatures[0]);
       await write(d, attempt);

@@ -9,6 +9,7 @@ import { address, getBase58Decoder, type Instruction } from "@solana/kit";
 import { getUploadKey } from "../arweave";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
+import { forgetIfRefused } from "../solana/walletErrors";
 import {
   confirmTransaction,
   OPERATION_FLOOR_LAMPORTS,
@@ -277,10 +278,14 @@ export async function createAlbum(
         quoteId: reviewedQuoteId(prepared.transaction.messageBytes),
       };
       await saveAlbum(record);
-      const signatures = await wallet.signAndSendTransactions({
+      // Declined in the wallet: the record goes back to its previous attempt, under the album lock.
+      const signatures = await forgetIfRefused(wallet.signAndSendTransactions({
         transactions: [prepared.transaction],
         minContextSlot: Number(prepared.minContextSlot),
         skipPreflight: false,
+      }), async () => {
+        record.attempt = saved?.attempt;
+        await saveAlbum(record);
       });
       // A malformed signature would make the saved attempt unreadable on the next load.
       if (signatures.length !== 1 || signatures[0].length !== 64)

@@ -19,6 +19,7 @@ import {
 import { canonicalize, type JcsValue } from "../jcs";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
+import { forgetIfRefused } from "../solana/walletErrors";
 import {
   prepareTransaction,
   confirmTransaction,
@@ -936,12 +937,17 @@ export async function sendSetup(
         lastValidBlockHeight: String(prepared.lastValidBlockHeight),
         quoteId: reviewedQuoteId(prepared.transaction.messageBytes),
       };
+      const previous = d.attempt;
       d.attempt = attempt;
       await save(r, d);
-      const sigs = await wallet.signAndSendTransactions({
+      // Declined in the wallet: the draft goes back to its previous attempt, under the photo's lock.
+      const sigs = await forgetIfRefused(wallet.signAndSendTransactions({
         transactions: [prepared.transaction],
         minContextSlot: Number(prepared.minContextSlot),
         skipPreflight: false,
+      }), async () => {
+        d.attempt = previous;
+        await save(r, d);
       });
       // MWA can return null or short signatures; saving one would make the attempt unreadable.
       if (sigs.length !== 1 || sigs[0].length !== 64)

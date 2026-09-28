@@ -86,6 +86,33 @@ if (!process.argv.includes("--worker")) {
   assert.equal(isSigningRefused(new SolanaMobileWalletAdapterProtocolError(
     1, SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SUBMITTED, "Submission uncertain")), false);
   {
+    // A decline in the wallet puts the saved attempt back at once; nothing else touches it, since
+    // a signed transaction may still land. Every flow that opens a wallet to sign goes through it.
+    const { forgetIfRefused } = await import("../src/solana/walletErrors.ts");
+    let forgotten = 0;
+    const forget = async () => { forgotten++; };
+    await assert.rejects(forgetIfRefused(Promise.reject(refused), forget), (error) => error === refused);
+    assert.equal(forgotten, 1, "a refusal forgets the attempt once, then rethrows it");
+    for (const kept of [new Error("Timed out waiting for response"),
+      new SolanaMobileWalletAdapterError(SolanaMobileWalletAdapterErrorCode.ERROR_SESSION_CLOSED, "Closed"),
+      { code: -3 },
+      new SolanaMobileWalletAdapterProtocolError(1, SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SUBMITTED, "Submission uncertain")])
+      await assert.rejects(forgetIfRefused(Promise.reject(kept), forget), (error) => error === kept);
+    assert.equal(forgotten, 1, "a timeout, a closed session or an unknown error keeps the attempt");
+    assert.deepEqual(await forgetIfRefused(Promise.resolve(["signature"]), forget), ["signature"]);
+    assert.equal(forgotten, 1);
+    const { readFileSync } = await import("node:fs");
+    for (const flow of ["collect", "creator", "offer", "albums", "transfer"]) {
+      const text = readFileSync(new URL(`../src/prints/${flow}.ts`, import.meta.url), "utf8");
+      const sends = text.split("wallet.signAndSendTransactions(").length - 1;
+      assert.ok(sends >= 1 && text.split("forgetIfRefused(wallet.signAndSendTransactions(").length - 1 === sends,
+        `${flow}.ts forgets a declined attempt`);
+    }
+    const transferFlow = readFileSync(new URL("../src/prints/transfer.ts", import.meta.url), "utf8");
+    assert.match(transferFlow, /const previous = await read\(d\);[\s\S]*?previous \? write\(d, previous\) : AsyncStorage\.removeItem\(key\(d\)\)/,
+      "a declined send restores the attempt before it, with its still-live messages");
+  }
+  {
     // The estimate is the payer's simulated balance delta, so a buy's already holds its price: the
     // total is the estimate alone, its rows add up to it, and a wallet holding exactly it passes.
     const { prepareTransaction, NEEDS_SOL } = await import("../publications/rpc.ts");

@@ -865,6 +865,14 @@ if (!process.argv.includes("--worker")) {
     assert.deepEqual([...bullet.matchAll(/`(\w+)`/g)].map((m) => m[1]).filter((name) => known.includes(name)).sort(), called,
       "README's RPC line lists every method the app calls");
     assert.ok(called.includes("getProgramAccounts") && called.includes("getMultipleAccounts") && !called.includes("sendTransaction"));
+
+    // The program pin is the deployed ProgramData tail, as MAINNET.md step 9 says to read it.
+    const mainnet = readFileSync(new URL("programs/editions/MAINNET.md", root), "utf8").replace(/\s+/g, " ");
+    const image = readFileSync(new URL("publications/programImage.ts", root), "utf8");
+    assert.match(mainnet, /`bytes` is the account's space − 45 and `sha256` is the SHA-256 of everything after its 45-byte header/);
+    assert.match(mainnet, /On a first deploy assert space == 45 \+ the step 6 ELF's size/);
+    assert.ok(image.includes("const PROGRAM_DATA_HEADER = 45;") && image.includes("const length = PROGRAM_DATA_HEADER + image.bytes;")
+      && image.includes("sha256(data.subarray(PROGRAM_DATA_HEADER))"), "programImage.ts hashes the whole tail at space − 45");
   }
 
   {

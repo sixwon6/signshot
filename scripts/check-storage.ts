@@ -12,7 +12,8 @@
  *     size, never a second payment; unsettled credit reported rather than uploaded past;
  *   - the payment address: Turbo's pinned Solana address, and nothing else `/info` names;
  *   - the lost receipt: the publication transaction found by fingerprint in the creator's claim
- *     receipt's history first, then the edition's;
+ *     receipt's history first, then the edition's, and by its transfer and memo when a wallet
+ *     rewrote it;
  *   - `src/prints/creator.ts` records the path taken on the draft and resumes it as recorded.
  */
 
@@ -27,6 +28,7 @@ import {
   getBase64EncodedWireTransaction,
   getBase64Encoder,
   getSignatureFromTransaction,
+  getTransactionDecoder,
   setTransactionMessageFeePayer,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -50,6 +52,7 @@ import {
   TURBO_SOLANA_ADDRESS,
   findStoragePayment,
   paidStorage,
+  paysStorage,
   quoteStoragePayment,
   settleStoragePayment,
   storagePaymentInstructions,
@@ -344,7 +347,7 @@ async function creditTests() {
     upload.indexOf("await settleStorage(r, d)") < upload.indexOf("await publish(d)"));
   ok("creator.ts looks a lost receipt up at the creator's claim receipt (the sealed token's on a Seeker-only edition), then the edition",
     /const receipt = await claimReceiptAddress\(d\.edition\.program, d\.edition\.edition,\s*publisherClaimant\(d\.edition\.creator, d\.seekerOnly, /.test(settle) &&
-    /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId\)/.test(settle));
+    /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId,\s*\{ payer: d\.edition\.creator, destination: signer\.ownerBase58 \}\)/.test(settle));
   ok("creator.ts keeps the path across a stale screen and a reload, and forgets it only when the free tier refuses",
     /d\.storageFunding = current\.storageFunding;/.test(creator) &&
     /d\.storageFunding !== undefined && d\.storageFunding !== "credit" && d\.storageFunding !== "free"/.test(creator) &&
@@ -354,12 +357,19 @@ async function creditTests() {
 // --- The lost receipt ------------------------------------------------------------------------------
 async function receiptTests() {
   const payer = await generateKeyPairSigner();
-  const signed = async (memo: string) => {
+  const other = await generateKeyPairSigner();
+  const LIGHTHOUSE = address("L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95");
+  const note = (text: string): Instruction =>
+    ({ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new TextEncoder().encode(text) });
+  const assertion: Instruction = { programAddress: LIGHTHOUSE, accounts: [{ address: payer.address, role: AccountRole.READONLY }], data: new Uint8Array([9, 1, 2]) };
+  const pay = (from = payer.address, destination = UPLOADER) =>
+    storagePaymentInstructions(from, { ...payment, destination });
+  const signed = async (content: string | Instruction[], by = payer, blockhash = "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k") => {
     const message = appendTransactionMessageInstructions(
-      [{ programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new TextEncoder().encode(memo) }],
+      typeof content === "string" ? [note(content)] : content,
       setTransactionMessageLifetimeUsingBlockhash(
-        { blockhash: "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k" as Blockhash, lastValidBlockHeight: 0n },
-        setTransactionMessageFeePayerSigner(payer, createTransactionMessage({ version: 0 })),
+        { blockhash: blockhash as Blockhash, lastValidBlockHeight: 0n },
+        setTransactionMessageFeePayerSigner(by, createTransactionMessage({ version: 0 })),
       ),
     );
     const transaction = await signTransactionMessageWithSigners(message);
@@ -373,11 +383,21 @@ async function receiptTests() {
   const publication = await signed("the publication");
   const later = await signed("a later collect");
   const failed = await signed("a failed attempt");
+  // What the wallet approved: the publication with its storage transfer and memo. What landed: the
+  // same, rewritten by the wallet with a compute budget and Lighthouse assertions around them.
+  const reviewed = await signed([note("the publication"), ...pay()]);
+  const rewritten = await signed([getSetComputeUnitLimitInstruction({ units: 300_000 }), getSetComputeUnitPriceInstruction({ microLamports: 20_000n }),
+    note("the publication"), assertion, ...pay(), assertion]);
+  const elsewhere = await signed([note("the publication"), ...pay(payer.address, CREATOR)]);
+  const byOther = await signed([note("the publication"), ...pay(other.address)], other);
+  const memoOnly = await signed([note("the publication"), pay()[1]]);
+  const toOther = await signed([note("the publication"), { ...pay()[0], accounts: [pay()[0].accounts![0], { address: address(CREATOR), role: AccountRole.WRITABLE }] }, pay()[1]]);
   const history = [later, failed, publication, prefund].map((tx) => ({
     signature: tx.signature, err: tx === failed ? { InstructionError: [0, "Custom"] } : null, slot: 7,
     confirmationStatus: "finalized",
   }));
-  const byId = new Map([prefund, publication, later, failed].map((tx) => [tx.signature, tx.result]));
+  const byId = new Map([prefund, publication, later, failed, reviewed, rewritten, elsewhere, byOther, memoOnly, toOther]
+    .map((tx) => [tx.signature, tx.result]));
   // The creator's claim receipt and the edition, by address; each answers its own history.
   const RECEIPT = "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77", EDITION = CREATOR;
   const at = { receipt: RECEIPT, edition: EDITION };
@@ -396,7 +416,7 @@ async function receiptTests() {
   const search = async (histories: Record<string, unknown[]>, quoteId = publication.quoteId, unreadable?: string) => {
     fetched = []; searched = [];
     stub([[/^https:\/\/rpc\.invalid/, chain(histories, unreadable)]]);
-    return findStoragePayment("https://rpc.invalid", at, quoteId);
+    return findStoragePayment("https://rpc.invalid", at, quoteId, { payer: payer.address, destination: UPLOADER });
   };
 
   ok("the claim receipt is searched first, and the edition not at all when it holds the publication",
@@ -420,9 +440,31 @@ async function receiptTests() {
   fetched = []; searched = [];
   const full = Array.from({ length: 1000 }, () => entry(later));
   stub([[/^https:\/\/rpc\.invalid/, chain({ [RECEIPT]: full, [EDITION]: full })]]);
-  await rejection(findStoragePayment("https://rpc.invalid", at, publication.quoteId));
+  await rejection(findStoragePayment("https://rpc.invalid", at, publication.quoteId, { payer: payer.address, destination: UPLOADER }));
   ok("each address's history is walked at most five pages", searched.length === 10);
+
+  // A wallet that rewrote the publication: the fingerprint no longer matches, the payment does.
+  ok("the reviewed publication is found by its fingerprint, storage payment and all",
+    (await search({ [RECEIPT]: [entry(reviewed)] }, reviewed.quoteId)) === reviewed.signature);
+  ok("a publication the wallet rewrote (compute budget, Lighthouse) is found by its transfer and memo",
+    (await search({ [RECEIPT]: [entry(later), entry(rewritten), entry(prefund)] }, reviewed.quoteId)) === rewritten.signature);
+  ok("the same, at the edition when the claim receipt does not hold it",
+    (await search({ [RECEIPT]: [entry(prefund)], [EDITION]: [entry(rewritten)] }, reviewed.quoteId)) === rewritten.signature);
+  ok("an exact match wins over an older payment-shaped transaction",
+    (await search({ [RECEIPT]: [entry(reviewed), entry(rewritten)] }, reviewed.quoteId)) === reviewed.signature);
+  for (const [name, tx] of [["a memo naming another key", elsewhere], ["a transfer from another payer", byOther],
+    ["a memo with no transfer", memoOnly], ["a transfer to another address", toOther]] as const) {
+    const problem = storageProblem(await rejection(search({ [RECEIPT]: [entry(tx)] }, reviewed.quoteId)), true);
+    ok(`not taken for the storage payment: ${name}`,
+      problem.message === "The publication's payment was not found. Check again shortly.");
+  }
+  ok("paysStorage holds the payment to the message's own blockhash when asked",
+    paysStorage(messageOf(rewritten), payer.address, UPLOADER, "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k") &&
+    !paysStorage(messageOf(rewritten), payer.address, UPLOADER, "11111111111111111111111111111111"));
 }
+/** The message bytes out of a signed test transaction's `getTransaction` answer. */
+const messageOf = (tx: { result: { transaction: unknown[] } }) =>
+  new Uint8Array(getTransactionDecoder().decode(getBase64Encoder().encode(tx.result.transaction[0] as string)).messageBytes);
 
 void (async () => {
   await quoteTests();

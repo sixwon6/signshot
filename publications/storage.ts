@@ -1,7 +1,13 @@
-import { AccountRole, address, signature, type Instruction } from "@solana/kit";
+import {
+  AccountRole,
+  address,
+  getCompiledTransactionMessageDecoder,
+  signature,
+  type Instruction,
+} from "@solana/kit";
 import { utf8 } from "../src/arweave/codec";
 import { turboItemStatus, TurboError, TURBO_FREE_ITEM_BYTES } from "../src/arweave/turbo";
-import { verifiedTransferReceipt } from "./core/transferReceipt";
+import { matchesReviewedMessage, verifiedMessage } from "./core/transferReceipt";
 import { request } from "./rpc";
 import { TURBO_PAYMENT_HOSTS, TURBO_UPLOAD_HOSTS } from "./turboHosts";
 import type { PublicationStorageProblem } from "./types";
@@ -295,8 +301,39 @@ async function freeTier(items: StorageItem[]): Promise<StorageFunding> {
   return "free";
 }
 
+/**
+ * Does this message pay Turbo for `destination`'s credit, however a wallet dressed it: a top-level
+ * System transfer from `payer`, its fee payer, to `TURBO_SOLANA_ADDRESS`, and the spl-memo naming
+ * `destination`. Accounts are read from the static list only; a lookup-table index matches nothing.
+ * `blockhash`, when given, must be the message's own.
+ */
+export function paysStorage(message: Uint8Array, payer: string, destination: string, blockhash?: string): boolean {
+  try {
+    const decoded = getCompiledTransactionMessageDecoder().decode(message);
+    if (decoded.version !== 0 && decoded.version !== "legacy") return false;
+    if (blockhash !== undefined && decoded.lifetimeToken !== blockhash) return false;
+    const accounts = decoded.staticAccounts as readonly string[];
+    const memo = utf8(`turboCreditDestinationAddress=${destination}`);
+    let transfer = false, credited = false;
+    for (const { programAddressIndex, accountIndices = [], data = new Uint8Array(0) } of decoded.instructions) {
+      const program = accounts[programAddressIndex];
+      if (program === SYSTEM_PROGRAM && data.length === 12 && accountIndices.length === 2 &&
+        data[0] === 2 && data[1] === 0 && data[2] === 0 && data[3] === 0 && data.slice(4).some(byte => byte !== 0) &&
+        accounts[accountIndices[0]] === payer && accounts[accountIndices[1]] === TURBO_SOLANA_ADDRESS)
+        transfer = true;
+      if (program === MEMO_PROGRAM && data.length === memo.length && memo.every((byte, i) => data[i] === byte))
+        credited = true;
+    }
+    return accounts[0] === payer && transfer && credited;
+  } catch {
+    return false;
+  }
+}
+
 /** How far back each address's history is walked, and how many of its oldest transactions are read. */
 const HISTORY_PAGES = 5, HISTORY_PAGE = 1000, OLDEST_READ = 20;
+/** How a read transaction answers a search: the reviewed message, a storage payment, or neither. */
+type Verdict = "reviewed" | "payment" | null;
 
 /**
  * The publication transaction when the wallet never returned its receipt: the oldest successful
@@ -304,22 +341,36 @@ const HISTORY_PAGES = 5, HISTORY_PAGE = 1000, OLDEST_READ = 20;
  * `recoverTransferReceipt` checks a transfer's. The creator's claim receipt is searched first:
  * `publish` creates it and nothing else normally touches it, while every collect writes the edition.
  * The edition is searched after. Pre-funding either address can put transfers ahead of the
- * publication, so several of the oldest are read.
+ * publication, so several of the oldest are read. A wallet that added its own instructions (compute
+ * budget, Lighthouse) changes the fingerprint, so failing that, the oldest that `paysStorage` is taken.
  */
 export async function findStoragePayment(
   endpoint: string,
   publication: { receipt: string; edition: string },
   quoteId: string,
+  payment: { payer: string; destination: string },
 ): Promise<string> {
+  const judge = (message: Uint8Array): Verdict =>
+    matchesReviewedMessage(message, quoteId) ? "reviewed"
+      : paysStorage(message, payment.payer, payment.destination) ? "payment" : null;
   for (const account of [publication.receipt, publication.edition]) {
-    const found = await oldestMatching(endpoint, account, quoteId);
+    const found = await oldestMatching(endpoint, account, judge);
     if (found) return found;
   }
   throw new PublicationStorageError({ kind: "unavailable", retryable: true,
     message: "The publication's payment was not found. Check again shortly." });
 }
 
-async function oldestMatching(endpoint: string, account: string, quoteId: string): Promise<string | null> {
+/**
+ * The oldest judged transaction at `account` from `fromSlot` on: a reviewed match before a payment.
+ * Only a transaction whose signature verifies over its message (`verifiedMessage`) is judged.
+ */
+async function oldestMatching(
+  endpoint: string,
+  account: string,
+  judge: (message: Uint8Array) => Verdict,
+  fromSlot = 0,
+): Promise<string | null> {
   const landed: { signature: string; slot: number }[] = [];
   let before: string | undefined;
   for (let page = 0; page < HISTORY_PAGES; page += 1) {
@@ -328,28 +379,30 @@ async function oldestMatching(endpoint: string, account: string, quoteId: string
     if (!Array.isArray(batch)) throw new Error("Invalid Solana response");
     for (const entry of batch) {
       if (typeof entry?.signature !== "string" || entry.err !== null ||
-        !Number.isSafeInteger(entry.slot) || entry.slot < 0 ||
+        !Number.isSafeInteger(entry.slot) || entry.slot < fromSlot ||
         (entry.confirmationStatus !== "confirmed" && entry.confirmationStatus !== "finalized")) continue;
       try { signature(entry.signature); } catch { continue; }
       landed.push({ signature: entry.signature, slot: entry.slot });
     }
-    const last = batch[batch.length - 1]?.signature;
-    if (batch.length < HISTORY_PAGE || typeof last !== "string") break;
-    before = last;
+    const last = batch[batch.length - 1];
+    if (batch.length < HISTORY_PAGE || typeof last?.signature !== "string" || !(last.slot >= fromSlot)) break;
+    before = last.signature;
   }
   // RPC lists newest first; the publication created both accounts, so it is among the oldest. A
   // read that fails is a candidate not confirmed, never an error.
   const oldest = landed.reverse().slice(0, OLDEST_READ);
-  const matches = await Promise.all(oldest.map(async (entry) => {
+  const verdicts = await Promise.all(oldest.map(async (entry): Promise<Verdict> => {
     try {
       const result = await request<unknown>(endpoint, "getTransaction", [entry.signature,
         { commitment: "confirmed", encoding: "base64", maxSupportedTransactionVersion: 0 }]);
-      return verifiedTransferReceipt(result, entry.signature, quoteId, entry.slot) !== null;
+      const message = verifiedMessage(result, entry.signature, entry.slot);
+      return message ? judge(message) : null;
     } catch {
-      return false;
+      return null;
     }
   }));
-  return oldest.find((_, index) => matches[index])?.signature ?? null;
+  const first = (verdict: Verdict) => oldest.find((_, index) => verdicts[index] === verdict)?.signature;
+  return first("reviewed") ?? first("payment") ?? null;
 }
 
 export function storageProblem(error: unknown, paid = false, funding?: StorageFunding): StorageProblem {

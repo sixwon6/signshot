@@ -623,7 +623,8 @@ async function settleStorage(r: CaptureRecord, d: CoreDraft) {
     // The creator's receipt, keyed on the sealed Genesis Token on a Seeker-only edition.
     const receipt = await claimReceiptAddress(d.edition.program, d.edition.edition,
       publisherClaimant(d.edition.creator, d.seekerOnly, d.edition.genesisSealed ? d.edition.genesisMint ?? null : null));
-    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId);
+    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId,
+      { payer: d.edition.creator, destination: signer.ownerBase58 });
     await save(r, d);
     return d.attempt.signature;
   }, signer.ownerBase58, [img, meta]);

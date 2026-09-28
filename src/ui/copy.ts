@@ -507,6 +507,7 @@ export const collect = {
   /** A seeker-only edition: the rule as a value, and the one line for a wallet without a token. */
   collectorsLabel: "COLLECTORS",
   seekerOnly: "Seeker holders only",
+  anyone: "Anyone",
   needsGenesis: "Needs a Seeker Genesis Token.",
   /** The states `getCollectState` reports. One sentence each, and never a claim of failure. */
   already: "Already collected by this wallet.",

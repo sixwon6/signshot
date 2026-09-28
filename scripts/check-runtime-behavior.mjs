@@ -1042,6 +1042,8 @@ if (!process.argv.includes("--worker")) {
     // Seeker-only only with the creator's Genesis Token to seal, which the program requires (6011).
     assert.match(sheet, /setSealable\(!!features && canSealGenesis\(configuredProgram\(cluster\)\)\)/);
     assert.match(sheet, /\{!solo && sealable && \(/, "the switch is absent where no Genesis Token can be sealed");
+    assert.match(sheet, /value=\{draft\.seekerOnly \? collectCopy\.seekerOnly : collectCopy\.anyone\}/,
+      "the review states who may collect either way, so an unsealable request reads as Anyone");
     assert.match(creator, /export function canSealGenesis\(program: string\): boolean \{\s*return cluster === "mainnet-beta" && programFeatures\(program\)\.genesis;/);
     assert.match(creator, /const sealsGenesis = [^\n]*\n\s*!!e\.genesisMint && canSealGenesis\(e\.program\);/);
     assert.match(creator, /seekerOnly: chosenTerms\.seekerOnly && sealsGenesis\(e\),/, "the draft records Seeker-only only with a token to seal");
@@ -1057,7 +1059,7 @@ if (!process.argv.includes("--worker")) {
     assert.match(sheet, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
     assert.match(sheet, /Math\.max\(0, bps - 100\)/, "down to 0%");
     assert.match(sheet, /value=\{copy\.royaltyValue\(draft\.royaltyBps\)\}/, "the review reads the royalty back off the draft");
-    assert.match(sheet, /\{draft\.seekerOnly && draft\.edition\.supply > 1 && \(/, "and the rule, where there is a copy to collect");
+    assert.match(sheet, /royaltiesAndSeekerOnly && draft\.edition\.supply > 1 && \(/, "and the rule, where there is a copy to collect");
     const collectFlow = source("../src/prints/collect.ts");
     assert.equal(collectFlow.split("await claimedCopy(").length - 1, 2, "the eligibility and the confirmation both read the claim's own receipt");
     assert.match(collectFlow, /claimGenesis\(RPC_ENDPOINT, cluster, c\.seekerOnly, wallet\)/, "the rule comes off the loaded edition");

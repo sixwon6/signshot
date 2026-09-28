@@ -965,8 +965,10 @@ export function PrintSheet({
                 {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && (
                   <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
                 )}
-                {draft.seekerOnly && draft.edition.supply > 1 && (
-                  <Row label={copy.rowCollectors} value={collectCopy.seekerOnly} />
+                {/* Always stated: the switch may ask for Seeker-only on a wallet with no token to seal. */}
+                {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && draft.edition.supply > 1 && (
+                  <Row label={copy.rowCollectors}
+                    value={draft.seekerOnly ? collectCopy.seekerOnly : collectCopy.anyone} />
                 )}
                 {!!draft.edition.description && (
                   <Row label={copy.rowMoment} value={draft.edition.description} />

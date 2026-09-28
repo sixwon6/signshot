@@ -85,6 +85,77 @@ if (!process.argv.includes("--worker")) {
   assert.equal(isSigningRefused({code: -3}), false, "unverified errors must not erase transaction state");
   assert.equal(isSigningRefused(new SolanaMobileWalletAdapterProtocolError(
     1, SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SUBMITTED, "Submission uncertain")), false);
+  {
+    // The estimate is the payer's simulated balance delta, so a buy's already holds its price: the
+    // total is the estimate alone, its rows add up to it, and a wallet holding exactly it passes.
+    const { prepareTransaction, NEEDS_SOL } = await import("../publications/rpc.ts");
+    const { costRows } = await import("../src/prints/price.ts");
+    const realFetch = globalThis.fetch;
+    const payer = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+    // Core's fee, mainnet rent for the 193-byte print and the 106-byte receipt, and the network fee.
+    const price = 1_000_000_000, costs = 1_500_000 + 1_630_680 + 1_188_720 + 5_000;
+    const chain = { balance: 0, accounts: undefined };
+    const payerAfter = () => [{ lamports: chain.balance - price - costs, owner: "11111111111111111111111111111111",
+      executable: false, rentEpoch: 0, space: 0, data: ["", "base64"] }];
+    globalThis.fetch = async (_url, options) => {
+      const { id, method } = JSON.parse(options.body);
+      const context = { slot: 100 };
+      const answers = {
+        getLatestBlockhash: () => ({ context, value: { blockhash: "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k", lastValidBlockHeight: 200 } }),
+        simulateTransaction: () => ({ context, value: { err: null, logs: [], unitsConsumed: 50_000, returnData: null,
+          accounts: chain.accounts === undefined ? payerAfter() : chain.accounts } }),
+        getRecentPrioritizationFees: () => [],
+        getFeeForMessage: () => ({ context, value: 5_000 }),
+        getBalance: () => ({ context, value: chain.balance }),
+      };
+      if (!answers[method]) throw new Error(`the estimate is not expected to call ${method}`);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id, result: answers[method]() }),
+        { headers: { "Content-Type": "application/json" } });
+    };
+    const memo = [{ programAddress: kit.address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new Uint8Array([1]) }];
+    const quote = (balance, accounts) => {
+      Object.assign(chain, { balance, accounts });
+      return prepareTransaction("https://rpc.test", payer, memo);
+    };
+    try {
+      const reviewed = await quote(10_000_000_000);
+      const estimate = reviewed.estimatedLamports;
+      assert.ok(estimate > BigInt(price + costs) - 10_000n && estimate < BigInt(price + costs) + 60_000n,
+        "the estimate holds the price once");
+      const rows = costRows(reviewed, BigInt(price));
+      assert.equal(rows.total, estimate, "a buy's total is the estimate alone");
+      assert.equal(BigInt(price) + rows.cost, rows.total, "the price and the costs line add up to the total");
+      assert.equal(rows.networkFee + rows.accounts + rows.allowance, rows.cost, "the cost rows add up to the costs line");
+      assert.equal((await quote(Number(estimate))).estimatedLamports, estimate,
+        "a wallet holding exactly the price and the costs passes");
+      await assert.rejects(quote(Number(estimate) - 1), { message: NEEDS_SOL });
+      // No post-state for the payer is refused, never read as free; `null` is an account gone
+      // afterwards, which is zero lamports and so more than the wallet holds.
+      for (const accounts of [null, [], [{ ...payerAfter()[0], lamports: undefined }]])
+        await assert.rejects(quote(10_000_000_000, accounts), /did not report this transaction's cost/);
+      await assert.rejects(quote(10_000_000_000, [null]), { message: NEEDS_SOL });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    // A publish holds its storage payment the way a buy holds its price.
+    const breakdown = (accountCost) => ({ networkFee: 5_000n, accountCost, allowance: 50_000n, floor: 0n });
+    const publish = costRows({ estimatedLamports: 16_050_000n, estimateBreakdown: breakdown(16_000_000n) }, 2_000_000n);
+    assert.equal(publish.networkFee + publish.accounts + 2_000_000n + publish.allowance, publish.total);
+    // A transfer creates nothing: its delta is the fee, which is not counted twice.
+    const send = costRows({ estimatedLamports: 55_000n, estimateBreakdown: breakdown(5_000n) });
+    assert.deepEqual([send.accounts, send.networkFee + send.allowance], [0n, send.total]);
+    assert.equal(costRows({ estimatedLamports: 55_000n, estimateBreakdown: breakdown(0n) }, 1n).accounts, 0n, "clamped at zero");
+    // The screens read the same rows (they cannot load under node).
+    const { readFileSync } = await import("node:fs");
+    const collectSheet = readFileSync(new URL("../src/prints/CollectSheet.tsx", import.meta.url), "utf8");
+    assert.match(collectSheet, /<CostEstimate prepared=\{quote\.prepared\} apart=\{quote\.priceLamports\}/);
+    assert.match(collectSheet, /priceCopy\.totalLabel\}\s*value=\{priceCopy\.value\(formatSol\(quote\.prepared\.estimatedLamports\)\)\}/);
+    assert.doesNotMatch(collectSheet, /priceLamports \+/, "the price is never added to an estimate that holds it");
+    assert.match(readFileSync(new URL("../src/prints/CostEstimate.tsx", import.meta.url), "utf8"),
+      /const rows = costRows\(prepared, apart\);[\s\S]*costSol\(rows\.cost\)[\s\S]*costSol\(rows\.accounts\)/);
+    assert.match(readFileSync(new URL("../src/prints/PrintSheet.tsx", import.meta.url), "utf8"),
+      /costRows\(quote\.prepared, quote\.storageLamports\)\.accounts/);
+  }
   const { readPhotoMetadata, readSavedPhotoMetadata } = await import("../publications/core/metadataDocument.ts");
   const { canonicalize } = await import("../src/jcs.ts");
   const legacyCommitment = {

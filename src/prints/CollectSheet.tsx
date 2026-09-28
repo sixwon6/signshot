@@ -12,7 +12,7 @@ import { sheetStyles } from "./sheetStyles";
  * pays only Solana's network fee, the account rent and the Metaplex Core fee, which is what
  * `estimate` itemises. A PRICED edition is bought, and then there are two amounts on the screen:
  * the publisher's price, which reaches the publisher, and those same costs, which do not. They are
- * shown as separate lines and added up only at the end, so neither can be read as the other.
+ * shown as separate lines above the simulated total, so neither can be read as the other.
  */
 import { useEffect, useRef, useState } from "react";
 import { Linking, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -485,11 +485,12 @@ export function CollectSheet({
                 {quote.kind === "buy" && (
                   <Row label={priceCopy.label} value={priceCopy.value(formatSol(quote.priceLamports))} />
                 )}
-                <CostEstimate prepared={quote.prepared} expanded={showCost}
+                {/* A buy's estimate already holds its price, so the total is the estimate alone. */}
+                <CostEstimate prepared={quote.prepared} apart={quote.priceLamports} expanded={showCost}
                   onToggle={() => setShowCost(v => !v)} />
                 {quote.kind === "buy" && (
                   <Row label={priceCopy.totalLabel}
-                    value={priceCopy.value(formatSol(quote.priceLamports + quote.prepared.estimatedLamports))} />
+                    value={priceCopy.value(formatSol(quote.prepared.estimatedLamports))} />
                 )}
               </>
             )}

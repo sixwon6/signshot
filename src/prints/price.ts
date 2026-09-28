@@ -9,6 +9,7 @@
  * the client reads from the cluster (`minimumPriceLamports`), never from a constant.
  */
 import { request } from "../../publications/rpc";
+import type { PreparedQuote } from "./quoteRefresh";
 
 /** 1 SOL = 1,000,000,000 lamports. https://solana.com/docs/references/terminology#lamport */
 const LAMPORTS_PER_SOL = 1_000_000_000n;
@@ -94,4 +95,26 @@ export function checkPriceMinimum(lamports: bigint, minimum: bigint): bigint {
   if (lamports !== 0n && lamports < minimum)
     throw new Error(`The lowest price is ${formatSol(minimum)} SOL.`);
   return lamports;
+}
+
+/**
+ * An estimate as rows that add up to it. `accountCost` is the payer's whole simulated balance
+ * delta, so it already holds the network fee and `apart` — a price or a storage payment shown on a
+ * row of its own — and both come out of the accounts row. Rows are clamped at zero.
+ */
+export function costRows(
+  prepared: Pick<PreparedQuote, "estimatedLamports" | "estimateBreakdown">,
+  apart = 0n,
+) {
+  const { networkFee, accountCost, allowance } = prepared.estimateBreakdown;
+  const less = (from: bigint, by: bigint) => (from > by ? from - by : 0n);
+  return {
+    /** What leaves the wallet, `apart` included. */
+    total: prepared.estimatedLamports,
+    /** Everything but `apart`. */
+    cost: less(prepared.estimatedLamports, apart),
+    networkFee,
+    accounts: less(accountCost, networkFee + apart),
+    allowance,
+  };
 }

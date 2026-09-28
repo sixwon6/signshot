@@ -1,5 +1,6 @@
 import { Pressable, Text } from "react-native";
 import { estimate } from "../ui/copy";
+import { costRows } from "./price";
 import type { PreparedQuote } from "./quoteRefresh";
 import { sheetStyles as s } from "./sheetStyles";
 
@@ -12,6 +13,7 @@ export function CostEstimate({
   suffix = "",
   label = estimate.label,
   includeAccountCost = true,
+  apart = 0n,
 }: {
   prepared: Pick<PreparedQuote, "estimatedLamports" | "estimateBreakdown">;
   expanded: boolean;
@@ -20,8 +22,10 @@ export function CostEstimate({
   label?: string;
   /** Core transfers create no accounts. */
   includeAccountCost?: boolean;
+  /** Inside the estimate but shown on its own row: a purchase's price. */
+  apart?: bigint;
 }) {
-  const breakdown = prepared.estimateBreakdown;
+  const rows = costRows(prepared, apart);
   return (
     <>
       <Pressable
@@ -33,16 +37,16 @@ export function CostEstimate({
       >
         <Text style={s.label}>{label}</Text>
         <Text style={s.costValue}>
-          {costSol(prepared.estimatedLamports)} SOL{suffix ? ` · ${suffix}` : ""} {expanded ? "−" : "+"}
+          {costSol(rows.cost)} SOL{suffix ? ` · ${suffix}` : ""} {expanded ? "−" : "+"}
         </Text>
       </Pressable>
       {expanded && (
         <Text style={s.help}>
-          {estimate.networkFee} {costSol(breakdown.networkFee)} SOL ·{" "}
+          {estimate.networkFee} {costSol(rows.networkFee)} SOL ·{" "}
           {includeAccountCost && (
-            <>{estimate.accountCost} {costSol(breakdown.accountCost)} SOL ·{" "}</>
+            <>{estimate.accountCost} {costSol(rows.accounts)} SOL ·{" "}</>
           )}
-          {estimate.allowance} {costSol(breakdown.allowance)} SOL
+          {estimate.allowance} {costSol(rows.allowance)} SOL
         </Text>
       )}
     </>

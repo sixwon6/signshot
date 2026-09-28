@@ -762,18 +762,18 @@ export async function prepareTransaction(
       .send({ abortSignal })),
   ]);
   if (fee.value === null) throw new Error("Transaction expired. Try again.");
-  const after = simulation.value.accounts?.[0]?.lamports;
-  const simulated =
-    after === undefined
-      ? 0n
-      : balance.value > after
-        ? balance.value - after
-        : 0n;
+  // One entry per requested address, `null` when the payer's account is gone afterwards. No entry
+  // at all leaves nothing to check the balance against, so it is refused rather than read as free.
+  const payerAfter = simulation.value.accounts?.[0];
+  const after = payerAfter === null ? 0n : payerAfter?.lamports;
+  if (typeof after !== "bigint")
+    throw new Error("The network did not report this transaction's cost.");
+  const simulated = balance.value > after ? balance.value - after : 0n;
   // The simulation priced the probe prelude; adjust by the priority-fee difference to the signed
   // one, clamped at zero.
   const probePriority = priorityFeeLamports(COMPUTE_UNIT_LIMIT, COMPUTE_UNIT_PRICE);
   const adjusted = simulated + priorityFee - probePriority;
-  const accountCost = after === undefined ? 0n : adjusted > 0n ? adjusted : 0n;
+  const accountCost = adjusted > 0n ? adjusted : 0n;
   // Simulation already debits the network fee. `transferReceipt.ts` bounds fee rewrites by the
   // same allowance.
   const cost = (accountCost > fee.value ? accountCost : fee.value) + FEE_ALLOWANCE_LAMPORTS;

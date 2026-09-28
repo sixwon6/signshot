@@ -43,7 +43,7 @@ import {
   type AlbumSetup,
 } from "./albums";
 import { readPhotoEdit } from "./photoStorage";
-import { formatSol, parseSolPrice } from "./price";
+import { costRows, formatSol, parseSolPrice } from "./price";
 import { shortAddress } from "./photoPresentation";
 import {
   configuredProgram,
@@ -998,15 +998,11 @@ export function PrintSheet({
                       label={estimate.networkFee}
                       value={`${sol(quote.prepared.estimateBreakdown.networkFee)} SOL`}
                     />
-                    {/* The simulated balance delta contains the storage transfer; it is stated
-                        on its own row rather than twice. */}
+                    {/* The simulated balance delta contains the network fee and the storage
+                        transfer; each is stated on its own row rather than twice. */}
                     <Row
                       label={estimate.accountCost}
-                      value={`${sol(
-                        quote.prepared.estimateBreakdown.accountCost > quote.storageLamports
-                          ? quote.prepared.estimateBreakdown.accountCost - quote.storageLamports
-                          : 0n,
-                      )} SOL`}
+                      value={`${sol(costRows(quote.prepared, quote.storageLamports).accounts)} SOL`}
                     />
                     {quote.storageLamports > 0n && (
                       <Row label={estimate.storage} value={`${sol(quote.storageLamports)} SOL`} />

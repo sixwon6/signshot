@@ -1,3 +1,5 @@
+import { getBase64Decoder } from "@solana/kit";
+import { serializedDataItemId } from "../arweave/dataItem";
 import type { CoreDraft } from "../../publications/types";
 
 /**
@@ -7,7 +9,7 @@ import type { CoreDraft } from "../../publications/types";
  */
 
 /** The bundle's own schema. Changing the shape means changing this. */
-const PUBLICATION_BUNDLE_SCHEMA = "seedshot-publication-bundle/1" as const;
+const PUBLICATION_BUNDLE_SCHEMA = "seedshot-publication-bundle/2" as const;
 
 /**
  * Everything except the image bytes. The native side adds `printImage` after re-hashing the file
@@ -32,6 +34,12 @@ interface PublicationBundleDocument {
   imageId: string;
   /** What the on-chain `uri` resolves to once the upload completes. */
   uri: string;
+  /**
+   * The signed ANS-104 data items the ids above name, base64. The ids come from the upload key's
+   * signatures, so only these bytes can complete the upload; they hold no key. Absent when this
+   * phone could not rebuild them to those ids.
+   */
+  dataItems?: { metadata: string; image: string };
   /** The whole durable draft, unaltered. */
   draft: CoreDraft;
   /** What this file is, for whoever opens it outside the app. */
@@ -40,14 +48,30 @@ interface PublicationBundleDocument {
 
 const NOTE =
   "Signshot publication bundle. The edition is on Solana; its metadata document and public " +
-  "image have not finished uploading to Arweave. This file is the only copy of both: the app " +
-  "does not back them up and cannot read this file back in. Keep it until the upload completes.";
+  "image have not finished uploading to Arweave. dataItems holds both as the signed data items " +
+  "the chain names: POST each, base64-decoded, as application/octet-stream to " +
+  "https://turbo.ardrive.io/tx to complete the upload. The app does not back them up and cannot " +
+  "read this file back in. Keep it until the upload completes.";
 
-/** The document for this draft. */
+/**
+ * The document for this draft, with the signed items (`publicationDataItems`) when their ids are
+ * the ones the chain names.
+ */
 export function publicationBundleDocument(
   draft: CoreDraft,
   now: number,
+  items?: { metadata: Uint8Array; image: Uint8Array },
 ): PublicationBundleDocument {
+  let dataItems: PublicationBundleDocument["dataItems"];
+  try {
+    if (items && serializedDataItemId(items.metadata) === draft.metadataId &&
+      `https://arweave.net/${serializedDataItemId(items.image)}` === draft.edition.image) {
+      const base64 = getBase64Decoder();
+      dataItems = { metadata: base64.decode(items.metadata), image: base64.decode(items.image) };
+    }
+  } catch {
+    // Not data items at all: the bundle still carries the bytes.
+  }
   return {
     schema: PUBLICATION_BUNDLE_SCHEMA,
     exportedAtMs: now,
@@ -59,6 +83,7 @@ export function publicationBundleDocument(
     metadataId: draft.metadataId,
     imageId: draft.edition.image,
     uri: `https://arweave.net/${draft.metadataId}`,
+    ...(dataItems ? { dataItems } : {}),
     draft,
     note: NOTE,
   };

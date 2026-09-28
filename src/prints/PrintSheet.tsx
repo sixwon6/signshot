@@ -23,10 +23,12 @@ import {
   discardDraft,
   getPrintsAvailability,
   getPublicationState,
+  payStorage,
   savedDraftPresent,
   type PublicationDraft,
   type PublicationState,
 } from "./creator";
+import { useStorageTopUp } from "./useStorageTopUp";
 import { terms } from "../../publications/core/protocol";
 import { deviceName, securityLevelName } from "../../publications/core/attestation";
 import { deviceValue, useDeviceVerdict } from "../seeker/useDeviceVerdict";
@@ -177,6 +179,8 @@ export function PrintSheet({
   }>({ enabled: false });
   // The review's Device row: a draft not yet sent is judged now, a published one at its block time.
   const device = useDeviceVerdict(draft?.edition, published);
+  // Storage bought again, once the provider refused the upload or found its credit short.
+  const topUp = useStorageTopUp(published ? draft : null);
 
   async function applyPublicationState(state: PublicationState) {
     setDraft(state.draft);
@@ -424,6 +428,34 @@ export function PrintSheet({
     } finally {
       running.current = false;
       setBusy(false);
+    }
+  }
+
+  async function payForStorage() {
+    if (!draft || !topUp || running.current) return;
+    running.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await payStorage(record, draft, session, topUp, (phase) =>
+        setStatus(
+          {
+            wallet: "Review and approve in your wallet…",
+            confirming: "Waiting for Solana confirmation…",
+            uploading: "Uploading the public photo and details…",
+          }[phase],
+        ),
+      );
+      setStatus("");
+    } catch (e) {
+      setError(isUserCancellation(e) ? "" : safeErrorText(e));
+      setStatus("");
+    } finally {
+      const current = await getPublicationState(record).catch(() => null);
+      if (current) await applyPublicationState(current);
+      running.current = false;
+      setBusy(false);
+      onChanged?.();
     }
   }
 
@@ -1107,6 +1139,13 @@ export function PrintSheet({
                           ? copy.needAlbum
                           : copy.needCount}
                   </Text>
+                )}
+                {topUp && (
+                  <Pill
+                    label={actions.payStorage(formatSol(topUp.lamports))}
+                    disabled={busy}
+                    onPress={() => void payForStorage()}
+                  />
                 )}
                 {complete || (published && !storageCanRetry) ? (
                   <Pill label={actions.viewPhotograph} onPress={onClose} />

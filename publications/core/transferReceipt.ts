@@ -186,9 +186,24 @@ export function verifiedTransferReceipt(
   quoteId: string,
   expectedSlot?: number,
 ): TransferReceipt | null {
+  if (!/^[a-f0-9]{64}$/.test(quoteId)) return null;
+  const message = verifiedMessage(result, expectedSignature, expectedSlot);
+  if (!message || !matchesReviewedMessage(message, quoteId)) return null;
+  return { status: "confirmed", signature: expectedSignature, slot: Number((result as { slot: number }).slot) };
+}
+
+/**
+ * The message of a successful transaction RPC returned for `expectedSignature`, with that signature
+ * verified over it by the fee payer's key; `null` for anything else.
+ */
+export function verifiedMessage(
+  result: unknown,
+  expectedSignature: string,
+  expectedSlot?: number,
+): Uint8Array | null {
   try {
     signature(expectedSignature);
-    if (!/^[a-f0-9]{64}$/.test(quoteId) || !object(result) ||
+    if (!object(result) ||
       !Number.isSafeInteger(result.slot) || Number(result.slot) < 0 ||
       (expectedSlot !== undefined && result.slot !== expectedSlot) ||
       !object(result.meta) || result.meta.err !== null ||
@@ -217,9 +232,8 @@ export function verifiedTransferReceipt(
       // Verifying it over the message bytes with the fee payer's key is what makes a returned
       // body evidence of a real transaction rather than an assembled one.
       !ed25519.verify(new Uint8Array(firstSignature), message,
-        new Uint8Array(getBase58Encoder().encode(feePayer))) ||
-      !matchesReviewedMessage(message, quoteId)) return null;
-    return { status: "confirmed", signature: expectedSignature, slot: Number(result.slot) };
+        new Uint8Array(getBase58Encoder().encode(feePayer)))) return null;
+    return message;
   } catch {
     return null;
   }

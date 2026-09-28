@@ -100,6 +100,18 @@ export interface PublicationAttempt {
   signature?: string;
 }
 
+/**
+ * A stand-alone storage payment (`storageTopUpTransaction`), persisted before opening a wallet. The
+ * blockhash and the slot it was read at find a lost receipt (`findStorageTopUp`).
+ */
+export interface StorageTopUp extends PublicationAttempt {
+  quoteId: string;
+  blockhash: string;
+  slot: number;
+  /** Lamports paid to Turbo, as a decimal string. */
+  lamports: string;
+}
+
 /** Storage failure details retained with a publication draft. */
 export interface PublicationStorageProblem {
   kind: "quota" | "size" | "integrity" | "unavailable";
@@ -168,6 +180,10 @@ export interface CoreDraft {
    * resumed upload neither re-posts a credited payment nor waits out a refusal again.
    */
   storageFunding?: "credit" | "free";
+  /** When the payment service first left the payment `tx` uncredited (`settleStoragePayment`). */
+  storageSettling?: { tx: string; since: number };
+  /** Mainnet: storage bought again after the provider refused the upload or found its credit short. */
+  storageTopUp?: StorageTopUp;
 }
 
 /**

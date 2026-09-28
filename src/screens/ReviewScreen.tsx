@@ -44,9 +44,13 @@ import {
   forgetPublicationDraft,
   getPublicationState,
   getSavedPublicationState,
+  payStorage,
+  publicationDataItems,
   retryPublicationStorage,
   isPublicationWorking,
 } from "../prints/creator";
+import { useStorageTopUp } from "../prints/useStorageTopUp";
+import { isUserCancellation } from "../solana/walletErrors";
 import {
   forgetTransferAttempt,
   getTransferState,
@@ -312,17 +316,19 @@ export function ReviewScreen() {
     });
   }
   /**
-   * One JSON file (metadata, image, draft) for a confirmed publication whose upload is unfinished,
-   * re-hashed natively against the signed `image_hash`, then shared. There is no import.
+   * One JSON file (metadata, image, signed data items, draft) for a confirmed publication whose
+   * upload is unfinished, re-hashed natively against the signed `image_hash`, then shared. There is
+   * no import. Items that cannot be rebuilt leave the rest of the bundle.
    */
   async function exportBundle(entry: PhotoEntry) {
     const d = entry.publication.draft;
     if (!d) return;
+    const items = await publicationDataItems(d).catch(() => undefined);
     const uri = await SeekerCamera.exportPublicationBundle(
       entry.record.baseName,
       `file://${d.imagePath}`,
       d.edition.imageHash,
-      JSON.stringify(publicationBundleDocument(d, Date.now())),
+      JSON.stringify(publicationBundleDocument(d, Date.now(), items)),
     );
     await Sharing.shareAsync(uri, {
       mimeType: "application/json",
@@ -437,6 +443,19 @@ export function ReviewScreen() {
   useEffect(() => {
     if (openBaseName === null) resumedFor.current = null;
   }, [openBaseName]);
+  /** Storage bought again, once the provider refused the upload or found its credit short. */
+  const topUp = useStorageTopUp(newPublished ? d : null);
+  async function payForStorage(entry: PhotoEntry) {
+    const draft = entry.publication.draft;
+    if (!draft || !topUp) return;
+    try {
+      await payStorage(entry.record, draft, session, topUp);
+    } catch (e) {
+      if (!isUserCancellation(e)) throw e;
+    } finally {
+      await load(entry.record);
+    }
+  }
   /** The price of the open, published photograph. One read, and never a wallet. */
   useEffect(() => {
     if (!d || !newPublished) {
@@ -716,6 +735,13 @@ export function ReviewScreen() {
               )}
               {d?.storageError && (
                 <Text style={s.error}>{d.storageError.message}</Text>
+              )}
+              {topUp && (
+                <Pill
+                  label={actions.payStorage(formatSol(topUp.lamports))}
+                  disabled={busy}
+                  onPress={() => void perform(() => payForStorage(detail))}
+                />
               )}
               <View style={s.actionRow}>
                 <Pill

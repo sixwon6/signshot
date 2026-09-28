@@ -21,6 +21,8 @@ export const actions = {
   details: "Details",
   completeUpload: "Complete public upload",
   checkUpload: "Check upload availability",
+  /** Mainnet: buys the upload's storage again, after the provider refused it or found it short. */
+  payStorage: (amount: string): string => `Pay storage ${amount} SOL`,
   /** The only way the bytes of a confirmed, un-uploaded publication can leave this phone. */
   exportBundle: "Export backup",
   exportingBundle: "Exporting…",

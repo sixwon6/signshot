@@ -32,8 +32,9 @@ import {
 } from "../solana/walletErrors";
 import { useSeekerIdentity } from "../seeker/useSeekerIdentity";
 import { useShareStampPref } from "../seeker/shareStampPref";
-import { deleteUploadKey } from "../arweave/uploadKey";
+import { deleteUploadKey, uploadKeyAddress } from "../arweave/uploadKey";
 import { walletOwesUpload } from "../prints/creator";
+import { storageCreditHeld } from "../../publications/storage";
 import { SUPPORT_EMAIL, TERMS_URL } from "../moderation/core";
 
 /**
@@ -49,12 +50,15 @@ function shortAddress(address: string): string {
 /**
  * Removes a disconnected wallet's upload seed, whose cleartext SecureStore entry name contains the
  * address. Kept while any publication owes an upload: its data-item ids are already on chain and a
- * new seed cannot reproduce them. Best effort, and fails closed.
+ * new seed cannot reproduce them. Kept too while its address holds paid storage credit, which
+ * nothing else can spend. Best effort, and fails closed.
  */
 async function forgetUploadSeed(wallet: string | null): Promise<void> {
   if (wallet === null) return;
   try {
     if (await walletOwesUpload(wallet)) return;
+    const owner = await uploadKeyAddress(wallet);
+    if (owner !== null && (await storageCreditHeld(owner))) return;
     await deleteUploadKey(wallet);
   } catch {
     /* The seed stays. Keeping one is a preference entry; removing one wrongly is permanent. */

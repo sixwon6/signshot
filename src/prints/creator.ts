@@ -35,14 +35,21 @@ import {
   type ReviewedReceipt,
 } from "./reviewedReceipt";
 import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
+import { isSigningRefused } from "../solana/walletErrors";
 import {
+  MAX_STORAGE_LAMPORTS,
   checkStorageCapacity,
   findStoragePayment,
+  findStorageTopUp,
   paidStorage,
   quoteStoragePayment,
   settleStoragePayment,
   storagePaymentInstructions,
   storageProblem,
+  storageTopUpOffered,
+  storageTopUpPending,
+  storageTopUpTransaction,
+  type StoragePayment,
 } from "../../publications/storage";
 import {
   MAX_PRINT_EDGE,
@@ -228,6 +235,17 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
   if (d.attempt) assertAttempt(d.attempt);
   if (d.storageFunding !== undefined && d.storageFunding !== "credit" && d.storageFunding !== "free")
     throw new Error("Saved edition draft does not match this photo.");
+  if (d.storageSettling !== undefined && (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(d.storageSettling?.tx) ||
+    !Number.isSafeInteger(d.storageSettling.since) || d.storageSettling.since <= 0))
+    throw new Error("Saved edition draft does not match this photo.");
+  if (d.storageTopUp !== undefined) {
+    const t = d.storageTopUp;
+    assertAttempt(t);
+    if (!/^[a-f0-9]{64}$/.test(t.quoteId) || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(t.blockhash) ||
+      !Number.isSafeInteger(t.slot) || t.slot < 0 || !/^\d{1,20}$/.test(t.lamports) ||
+      BigInt(t.lamports) <= 0n || BigInt(t.lamports) > MAX_STORAGE_LAMPORTS)
+      throw new Error("Saved edition draft does not match this photo.");
+  }
   terms(d.edition.title, d.edition.supply);
   // A draft edited on disk must not smuggle unbounded or bidi-reversed text onto a screen.
   readDescription(d.edition.description);
@@ -613,6 +631,11 @@ async function publicationItems(d: CoreDraft) {
     throw new Error("Saved publication identifiers changed.");
   return { signer, img, meta };
 }
+/** The signed data items the chain names, for the publication bundle. */
+export async function publicationDataItems(d: CoreDraft) {
+  const { img, meta } = await publicationItems(d);
+  return { metadata: meta.bytes, image: img.bytes };
+}
 /**
  * Before any approval. Devnet: the free allowance, advisory. Mainnet: the storage payment the
  * publication transaction will carry, or `null` when the bundler already holds both items.
@@ -624,27 +647,126 @@ async function checkStorage(d: CoreDraft) {
   return null;
 }
 /**
- * Mainnet, after confirmation: claim the credit the publication transaction bought. A wallet that
- * never returned its receipt is answered from the chain, by the fingerprint saved before it opened.
- * The path taken is saved before any upload, and a saved one is resumed as it is.
+ * Mainnet, after confirmation: claim the credit the publication transaction bought, or the
+ * stand-alone payment made since (`payStorage`). A wallet that never returned its receipt is
+ * answered from the chain, by the fingerprint saved before it opened. The path taken is saved before
+ * any upload, and a saved one is resumed as it is.
  */
 async function settleStorage(r: CaptureRecord, d: CoreDraft) {
   if (d.storageFunding) return;
   const { signer, img, meta } = await publicationItems(d);
   const funding = await settleStoragePayment(async () => {
+    const topUp = await topUpReceipt(r, d, signer.ownerBase58);
+    if (topUp) return topUp;
     if (d.attempt?.signature) return d.attempt.signature;
     const quoteId = (d.attempt as ReviewedAttempt | undefined)?.quoteId;
     if (!d.attempt || !quoteId) throw new Error("This publication's wallet receipt is missing.");
     // The creator's receipt, keyed on the sealed Genesis Token on a Seeker-only edition.
     const receipt = await claimReceiptAddress(d.edition.program, d.edition.edition,
       publisherClaimant(d.edition.creator, d.seekerOnly, d.edition.genesisSealed ? d.edition.genesisMint ?? null : null));
-    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId);
+    d.attempt.signature = await findStoragePayment(RPC_ENDPOINT, { receipt, edition: d.edition.edition }, quoteId,
+      { payer: d.edition.creator, destination: signer.ownerBase58 });
     await save(r, d);
     return d.attempt.signature;
-  }, signer.ownerBase58, [img, meta]);
+  }, signer.ownerBase58, [img, meta], undefined, async (tx) => {
+    // The first uncredited answer for this payment, kept across checks and restarts.
+    if (d.storageSettling?.tx !== tx) {
+      d.storageSettling = { tx, since: Date.now() };
+      await save(r, d);
+    }
+    return d.storageSettling.since;
+  });
   if (!funding) return;
   d.storageFunding = funding;
   await save(r, d);
+}
+/**
+ * The stand-alone payment's signature once it has landed. A lost receipt is looked up on chain
+ * first; one that failed, or expired without landing, is forgotten (`null`) so storage can be bought
+ * again, and one that may still land stops here, so it is never paid for twice.
+ */
+async function topUpReceipt(r: CaptureRecord, d: CoreDraft, destination: string): Promise<string | null> {
+  const topUp = d.storageTopUp;
+  if (!topUp) return null;
+  if (!topUp.signature) {
+    const found = await findStorageTopUp(RPC_ENDPOINT, topUp, { payer: d.edition.creator, destination });
+    if (found) {
+      topUp.signature = found;
+      await save(r, d);
+    }
+  }
+  const standing = await checkAttempt(RPC_ENDPOINT, topUp);
+  if (standing === "confirmed") return topUp.signature!;
+  if (standing === "pending") throw storageTopUpPending();
+  delete d.storageTopUp;
+  await save(r, d);
+  return null;
+}
+/** Can this draft buy its storage again (`storageTopUpOffered`)? Mainnet only. */
+export const canPayStorage = (d: CoreDraft) => paidStorage(cluster) && storageTopUpOffered(d);
+/** What buying the storage again costs: the items still pending, priced as a publication's are. */
+export async function quoteStorageTopUp(d: CoreDraft): Promise<StoragePayment | null> {
+  if (!canPayStorage(d)) return null;
+  const { signer, img, meta } = await publicationItems(d);
+  return quoteStoragePayment(signer.ownerBase58, [img, meta]);
+}
+/**
+ * Buy storage again for a confirmed publication, with one stand-alone payment
+ * (`storageTopUpTransaction`), then settle and upload as after publishing. The attempt is saved
+ * before the wallet opens, with the recorded path and clock cleared so the next check settles it.
+ */
+export async function payStorage(
+  r: CaptureRecord,
+  d: CoreDraft,
+  session: WalletSession,
+  payment: StoragePayment,
+  onProgress?: (stage: PublishProgress) => void,
+) {
+  return exclusive(lock(r), async () => {
+    await assertCurrent(r, d);
+    if (!canPayStorage(d) || !(await isSigned(d)))
+      throw new Error("Storage cannot be bought for this publication now.");
+    onProgress?.("wallet");
+    await session.connectAnd(async (wallet) => {
+      const owner = await session.authorizeSession(wallet);
+      if (owner.address !== d.edition.creator)
+        throw new Error("Use the wallet chosen for this edition.");
+      const prepared = await storageTopUpTransaction(RPC_ENDPOINT, d.edition.creator, payment);
+      const kept = { storageTopUp: d.storageTopUp, storageFunding: d.storageFunding, storageSettling: d.storageSettling };
+      d.storageTopUp = {
+        lastValidBlockHeight: String(prepared.lastValidBlockHeight),
+        quoteId: reviewedQuoteId(prepared.transaction.messageBytes),
+        blockhash: prepared.blockhash,
+        slot: prepared.slot,
+        lamports: payment.lamports.toString(),
+      };
+      delete d.storageFunding;
+      delete d.storageSettling;
+      await save(r, d);
+      const sigs = await wallet.signAndSendTransactions({
+        transactions: [prepared.transaction],
+        minContextSlot: prepared.slot,
+        skipPreflight: false,
+      }).catch(async (error: unknown) => {
+        // Only an explicit refusal proves nothing was sent; the draft goes back to how it was.
+        if (isSigningRefused(error)) {
+          Object.assign(d, kept);
+          await save(r, d);
+        }
+        throw error;
+      });
+      if (sigs.length !== 1 || sigs[0].length !== 64)
+        throw new Error("No wallet receipt. Check before retrying.");
+      d.storageTopUp.signature = getBase58Decoder().decode(sigs[0]);
+      await save(r, d);
+    });
+    if (!d.storageTopUp?.signature)
+      throw new Error("No wallet receipt. Check before retrying.");
+    onProgress?.("confirming");
+    await confirmTransaction(RPC_ENDPOINT, d.storageTopUp.signature, BigInt(d.storageTopUp.lastValidBlockHeight));
+    onProgress?.("uploading");
+    await uploadConfirmed(r, d);
+  });
 }
 async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
@@ -773,6 +895,8 @@ async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
   d.storage = current.storage;
   d.storageError = current.storageError;
   d.storageFunding = current.storageFunding;
+  d.storageSettling = current.storageSettling;
+  d.storageTopUp = current.storageTopUp;
 }
 export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   onProgress?: (stage: "network" | "publication" | "previous" | "storage" | "estimate") => void) {

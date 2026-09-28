@@ -775,21 +775,97 @@ if (!process.argv.includes("--worker")) {
   }
 
   // A mainnet release needs its own RPC: unset, or a public solana.com host, fails release:check.
-  const { rpcRefusal } = await import("./check-release-config.ts");
+  const { genesisRefusal, refusedEnvFiles, rpcRefusal } = await import("./check-release-config.ts");
   for (const value of [undefined, "", " "])
     assert.match(rpcRefusal("mainnet-beta", value), /not set/);
   for (const value of ["https://api.mainnet.solana.com", "https://api.mainnet-beta.solana.com/", "https://API.Mainnet.Solana.com./"])
     assert.match(rpcRefusal("mainnet-beta", value), /public solana\.com endpoint/);
   assert.match(rpcRefusal("mainnet-beta", "http://rpc.example.com"), /https/);
-  assert.equal(rpcRefusal("mainnet-beta", "https://rpc.example.com/?api-key=1"), null);
   assert.equal(rpcRefusal("mainnet-beta", "https://notsolana.com"), null);
+  assert.equal(rpcRefusal("mainnet-beta", "https://rpc.example.com/solana"), null, "a key-free proxy path");
   assert.equal(rpcRefusal("devnet", undefined), null, "a devnet build may use the public devnet endpoint");
-  assert.ok(!rpcRefusal("mainnet-beta", "https://api.mainnet.solana.com/?api-key=SECRET").includes("SECRET"),
-    "the refusal never repeats a value that can carry a provider key");
-  const { readFileSync } = await import("node:fs");
+  // Expo bundles EXPO_PUBLIC_* in plain text: a query string or credentials would ship in the APK.
+  for (const cluster of ["mainnet-beta", "devnet"])
+    for (const value of ["https://rpc.example.com/?api-key=SECRET", "https://rpc.example.com?SECRET",
+      "https://SECRET@rpc.example.com", "https://user:SECRET@rpc.example.com/"]) {
+      const refusal = rpcRefusal(cluster, value);
+      assert.match(refusal, /credentials or a query string/, `${cluster} ${value}`);
+      assert.ok(!refusal.includes("SECRET"), "the refusal never repeats a value that can carry a provider key");
+    }
+  assert.match(rpcRefusal("devnet", "http://rpc.example.com"), /https/, "the app refuses http at start-up on any cluster");
+  assert.ok(!rpcRefusal("mainnet-beta", "https://api.mainnet.solana.com/SECRET").includes("SECRET"));
+
+  // The endpoint's own chain, asked before the build: getGenesisHash, never repeating the URL.
+  {
+    const realFetch = globalThis.fetch;
+    const URL_SECRET = "https://rpc.example.com/SECRET";
+    let asked = [];
+    const answering = (answer) => async (url, init) => {
+      asked.push({ url: String(url), method: init?.method, body: JSON.parse(init?.body) });
+      return answer();
+    };
+    const hash = (result) => answering(() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result })));
+    try {
+      globalThis.fetch = hash("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d");
+      assert.equal(await genesisRefusal("mainnet-beta", URL_SECRET), null);
+      assert.deepEqual(asked, [{ url: URL_SECRET, method: "POST", body: { jsonrpc: "2.0", id: 1, method: "getGenesisHash", params: [] } }]);
+      assert.match(await genesisRefusal("devnet", URL_SECRET), /not on devnet \(genesis 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d, expected EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG\)/,
+        "a devnet test build pointed at mainnet would spend real SOL");
+      globalThis.fetch = hash("EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG");
+      assert.equal(await genesisRefusal("devnet", URL_SECRET), null);
+      assert.match(await genesisRefusal("mainnet-beta", URL_SECRET), /not on mainnet-beta \(genesis EtWT/);
+      const refusals = [];
+      globalThis.fetch = hash(URL_SECRET);
+      refusals.push(await genesisRefusal("mainnet-beta", URL_SECRET));
+      assert.match(refusals[0], /genesis none/);
+      globalThis.fetch = answering(() => new Response(`upstream ${URL_SECRET} failed`, { status: 502 }));
+      refusals.push(await genesisRefusal("mainnet-beta", URL_SECRET));
+      assert.match(refusals[1], /HTTP 502/);
+      globalThis.fetch = answering(() => { throw new TypeError(`Failed to parse URL from ${URL_SECRET}`); });
+      refusals.push(await genesisRefusal("mainnet-beta", URL_SECRET));
+      assert.match(refusals[2], /did not answer getGenesisHash/);
+      globalThis.fetch = answering(() => new Response("<html>", { status: 200 }));
+      refusals.push(await genesisRefusal("mainnet-beta", URL_SECRET));
+      assert.ok(refusals.every((refusal) => refusal && !refusal.includes("SECRET")), "no refusal repeats the URL");
+      asked = [];
+      assert.equal(await genesisRefusal("devnet", undefined), null);
+      assert.equal(asked.length, 0, "no URL, nothing to ask: the app uses the public devnet endpoint");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // Every env file a production bundle loads (@expo/env's getFiles), and any other .local one.
+  const { getEnvFiles } = await import("@expo/env");
+  const envNames = [".env", ".env.local", ".env.production", ".env.production.local", ".env.development",
+    ".env.development.local", ".env.test", ".env.example", ".envrc", "env.local", ".env.local.bak"];
+  assert.deepEqual(refusedEnvFiles(envNames),
+    [".env", ".env.development.local", ".env.local", ".env.production", ".env.production.local"]);
+  const production = getEnvFiles({ mode: "production", silent: true });
+  assert.equal(production.length, 4);
+  assert.deepEqual(refusedEnvFiles(production), [...production].sort(),
+    "the gate refuses every file Expo loads for a production export");
+  const { readFileSync, readdirSync } = await import("node:fs");
   assert.match(readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8"),
     /PUBLIC_MAINNET_ENDPOINT = "https:\/\/api\.mainnet\.solana\.com"/,
     "the public fallback is the host https://solana.com/docs/references/clusters names");
+  {
+    // The README names exactly the Solana methods the app calls, read from the code: a request's
+    // method string or a Kit client call. Devnet tooling (`src/dev/`, `publications/devnet/`) is not the app.
+    const root = new URL("../", import.meta.url);
+    const known = readdirSync(new URL("node_modules/@solana/rpc-api/dist/types/", root))
+      .filter((file) => /^[a-z]\w+\.d\.ts$/.test(file) && file !== "index.d.ts").map((file) => file.slice(0, -".d.ts".length));
+    const app = ["src", "publications"].flatMap((dir) => readdirSync(new URL(`${dir}/`, root), { recursive: true })
+      .filter((file) => /\.tsx?$/.test(file) && !/^(dev|devnet)[\\/]/.test(file))
+      .map((file) => readFileSync(new URL(`${dir}/${file.replace(/\\/g, "/")}`, root), "utf8")))
+      .concat(readFileSync(new URL("App.tsx", root), "utf8")).join("\n");
+    const called = known.filter((method) => app.includes(`"${method}"`) || app.includes(`.${method}(`)).sort();
+    const readme = readFileSync(new URL("README.md", root), "utf8");
+    const bullet = /`EXPO_PUBLIC_SOLANA_RPC_URL` at a\s+key-free[\s\S]*?\n- /.exec(readme)?.[0] ?? "";
+    assert.deepEqual([...bullet.matchAll(/`(\w+)`/g)].map((m) => m[1]).filter((name) => known.includes(name)).sort(), called,
+      "README's RPC line lists every method the app calls");
+    assert.ok(called.includes("getProgramAccounts") && called.includes("getMultipleAccounts") && !called.includes("sendTransaction"));
+  }
 
   {
     // The price floor is the cluster's rent-exempt minimum for an empty account, read, never kept.

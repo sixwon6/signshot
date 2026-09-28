@@ -12,6 +12,7 @@ import {
   type SolanaCluster,
   type SolanaClusterId,
 } from "@wallet-ui/react-native-kit";
+import { GENESIS_HASH } from "../../publications/core/genesisToken";
 import { rpcWithTimeout } from "../../publications/rpc";
 
 /**
@@ -103,15 +104,6 @@ function getRpcSubscriptions(): RpcSubscriptions<SolanaRpcSubscriptionsApi> {
   }
   return rpcSubscriptions;
 }
-
-/**
- * Each cluster's genesis hash, the one value that says which chain an endpoint is really on. Read
- * with `getGenesisHash` from the public endpoints, since the Solana docs do not publish them.
- */
-const GENESIS_HASH: Record<ClusterName, string> = {
-  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
-  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
-};
 
 /** Named so a screen can tell a configuration error from "the network is having a moment". */
 class ClusterMismatchError extends Error {

@@ -36,6 +36,15 @@ export const SGT_GROUP_ADDRESS = SGT_METADATA_ADDRESS;
 /** Mainnet's genesis hash: the one value that says which chain an endpoint is really on. */
 export const MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
+/**
+ * Each cluster's genesis hash, read with `getGenesisHash` from the public endpoints, since the
+ * Solana docs do not publish them. The app's endpoint check and the release gate share it.
+ */
+export const GENESIS_HASH: Record<Cluster, string> = {
+  "mainnet-beta": MAINNET_GENESIS_HASH,
+  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+};
+
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
 /** What the document carries. */

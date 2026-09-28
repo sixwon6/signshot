@@ -21,6 +21,7 @@ import { extension, getMintEncoder, getTokenEncoder, AccountState, type Extensio
 import { canonicalize, type JcsValue } from "../src/jcs";
 import {
   DEVNET_GENESIS_GROUP,
+  GENESIS_HASH,
   GENESIS_SCHEMA,
   MAINNET_GENESIS_HASH,
   MAX_GENESIS_CANDIDATES,
@@ -158,8 +159,12 @@ ok("the devnet stand-in the readers accept is the devnet program build's and the
     && /METADATA_ADDRESS\s*:\s*Pubkey\s*=\s*pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\)/.exec(devnetGenesis)?.[1] === DEVNET_GENESIS_GROUP
     && genesisAddresses("devnet").groupAddress === DEVNET_GENESIS_GROUP && genesisAddresses("devnet").metadataAddress === DEVNET_GENESIS_GROUP
     && genesisAddresses("mainnet-beta").groupAddress === SGT_GROUP_ADDRESS && genesisAddresses("mainnet-beta").metadataAddress === SGT_METADATA_ADDRESS);
-ok("the app's own cluster check knows the same mainnet genesis hash",
-  readFileSync(resolve(here, "..", "src", "solana", "cluster.ts"), "utf8").includes(`"mainnet-beta": "${MAINNET_GENESIS_HASH}"`));
+ok("the app's own cluster check and the release gate read the same genesis hashes",
+  GENESIS_HASH["mainnet-beta"] === MAINNET_GENESIS_HASH && GENESIS_HASH.devnet === "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+    && /import \{ GENESIS_HASH \} from "\.\.\/\.\.\/publications\/core\/genesisToken";[\s\S]*const expected = GENESIS_HASH\[CLUSTER_NAME\];/
+      .test(readFileSync(resolve(here, "..", "src", "solana", "cluster.ts"), "utf8"))
+    && /import \{ GENESIS_HASH \} from "\.\.\/publications\/core\/genesisToken";[\s\S]*const expected = GENESIS_HASH\[cluster\];/
+      .test(readFileSync(resolve(here, "check-release-config.ts"), "utf8")));
 
 // --- The document ----------------------------------------------------------------------------------
 const fixture = JSON.parse(readFileSync(resolve(here, "fixtures", "attestation-sample.json"), "utf8")) as AttestationBundle & { note: string; syntheticRootKey: string };

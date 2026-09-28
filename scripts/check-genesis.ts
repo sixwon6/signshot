@@ -503,7 +503,11 @@ type Chain = {
   wallet?: unknown[];
   /** An endpoint that sends whole accounts whatever slice was asked for. */
   ignoreSlice?: boolean;
+  /** An endpoint that answers a batch with one account fewer than it was asked for. */
+  shortBatch?: boolean;
   fail?: boolean;
+  /** Fail this one method only. */
+  failOn?: string;
 };
 const calls: string[] = [];
 const batches: string[][] = [];
@@ -515,7 +519,7 @@ function stub(chain: Chain) {
   globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
     const { id, method, params } = JSON.parse(String(init?.body)) as { id: unknown; method: string; params: any[] };
     calls.push(method);
-    if (chain.fail) return new Response("upstream down", { status: 502 });
+    if (chain.fail || chain.failOn === method) return new Response("upstream down", { status: 502 });
     const read = (key: string, config?: { dataSlice?: { offset: number; length: number } }) => {
       const account = chain.accounts?.[key];
       if (!account) return null;
@@ -528,7 +532,8 @@ function stub(chain: Chain) {
     const result =
       method === "getGenesisHash" ? chain.genesisHash ?? MAINNET_GENESIS_HASH
       : method === "getAccountInfo" ? { context, value: read(params[0], params[1]) }
-      : method === "getMultipleAccounts" ? (batches.push(params[0]), { context, value: params[0].map((key: string) => read(key, params[1])) })
+      : method === "getMultipleAccounts" ? (batches.push(params[0]),
+        { context, value: params[0].slice(0, chain.shortBatch ? -1 : undefined).map((key: string) => read(key, params[1])) })
       : method === "getTokenAccountsByOwner" ? { context, value: "mint" in params[1] ? chain.holdings : chain.wallet }
       : undefined;
     return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), { status: 200, headers: { "content-type": "application/json" } });
@@ -647,9 +652,9 @@ async function collectorChecks() {
   });
   stub(both());
   const found = await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta");
-  ok("collector: on mainnet, the real SGT and the account it sits in, once mainnet says it is mainnet",
+  ok("collector: on mainnet, the real SGT and the account it sits in, once mainnet says it is mainnet, its candidates read in one batch",
     found?.mint === B && found.token === TB && calls[0] === "getGenesisHash"
-      && asked() === "getTokenAccountsByOwner,getAccountInfo,getAccountInfo,getAccountInfo");
+      && asked() === "getTokenAccountsByOwner,getMultipleAccounts" && batches.length === 1 && [...batches[0]].sort().join() === [A, B, N].sort().join());
   stub(both());
   const standIn = await findHeldGenesisToken("https://devnet-collector.invalid", HOLDER, "devnet");
   ok("collector: on devnet, the acceptance's stand-in and never a real SGT, with no mainnet check",
@@ -666,10 +671,27 @@ async function collectorChecks() {
   stub({ wallet: [heldIn(key(37), key(38), HOLDER, "0")], accounts: {} });
   ok("collector: nothing held, no mint reads", (await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) === null
     && asked() === "getTokenAccountsByOwner");
-  const crowd = Array.from({ length: MAX_GENESIS_CANDIDATES + 1 }, (_, i) => key(60 + i));
-  stub({ wallet: crowd.map((mint) => heldIn(mint, mint)), accounts: {} });
+  // A wallet full of single-unit tokens, which anyone can send it: `key` has only 256 addresses.
+  const nth = (n: number) => { const bytes = new Uint8Array(32).fill(9); new DataView(bytes.buffer).setUint32(0, n); return getAddressDecoder().decode(bytes); };
+  const crowd = (count: number, sgt: number) => {
+    const mints = Array.from({ length: count }, (_, i) => nth(i));
+    return { mints, chain: { wallet: mints.map((mint) => heldIn(mint, mint)),
+      accounts: Object.fromEntries(mints.map((mint, i) => [mint, i === sgt ? sgtAt(mint, 7n) : plainAt()])) } };
+  };
+  for (const [count, sgt, sizes] of [[33, 32, "33"], [150, 120, "100,50"], [MAX_GENESIS_CANDIDATES, MAX_GENESIS_CANDIDATES - 1, "100,".repeat(9) + "100"]] as const) {
+    const { mints, chain } = crowd(count, sgt);
+    stub(chain);
+    const among = await findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta");
+    ok(`collector: an SGT among ${count} single-unit holdings is found, at most 100 mints per read (${sizes})`,
+      among?.mint === mints[sgt] && among.token === mints[sgt] && batches.map((batch) => batch.length).join() === sizes);
+  }
+  stub(crowd(MAX_GENESIS_CANDIDATES + 1, 0).chain);
   ok(`collector: more than ${MAX_GENESIS_CANDIDATES} candidates throws, never reads as none`,
-    await rejects(findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) && asked() === "getTokenAccountsByOwner");
+    MAX_GENESIS_CANDIDATES === 1000 && await rejects(findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")) && asked() === "getTokenAccountsByOwner");
+  stub({ ...crowd(150, 120).chain, shortBatch: true });
+  ok("collector: a batch answered with fewer accounts than asked throws", await rejects(findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")));
+  stub({ ...crowd(150, 120).chain, failOn: "getMultipleAccounts" });
+  ok("collector: a failed mint read throws, never reads as none", await rejects(findHeldGenesisToken("https://collector.invalid", HOLDER, "mainnet-beta")));
   stub({ ...both(), fail: true });
   ok("collector: an RPC failure throws", await rejects(findHeldGenesisToken("https://collector-down.invalid", HOLDER, "devnet")));
   stub({ genesisHash: DEVNET_HASH, ...both() });

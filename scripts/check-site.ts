@@ -75,7 +75,7 @@ import { ALLOWED, MAX_UPSTREAM as RPC_MAX_UPSTREAM, onRequestPost, PUBLIC_MAINNE
 import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
 import { extension, getMintEncoder } from "@solana-program/token-2022";
 import { addresses, loadTrustedEdition } from "../publications/core/protocol";
-import { DEVNET_GENESIS_GROUP, MAINNET_GENESIS_HASH, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, findHeldGenesisToken, verifyGenesisToken } from "../publications/core/genesisToken";
+import { DEVNET_GENESIS_GROUP, MAINNET_GENESIS_HASH, MINT_SLICE_BYTES, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, findHeldGenesisToken, verifyGenesisToken } from "../publications/core/genesisToken";
 import { publicationTime } from "../publications/core/attestationCheck";
 import { assertReviewedProgram } from "../publications/programImage";
 import { LEGACY_WITHOUT_PUBLISHED_AT, PROGRAM_IMAGES } from "../publications/deployments";
@@ -417,8 +417,8 @@ ok("bundle knows the devnet stand-in group and says what a collector without a t
 ok("bundle carries the moderation list's address and the Blocked and Hidden words",
   bundled.includes(MODERATION_URL) && bundled.includes(`"${MODERATION_WORDS.blocked}"`) && bundled.includes(`"${MODERATION_WORDS.hidden}"`));
 const proxy = readFileSync(resolve(site, "functions", "api", "solana.ts"), "utf8");
-ok("the mainnet proxy allows the three methods the Genesis Token check calls",
-  ["getGenesisHash", "getAccountInfo", "getTokenAccountsByOwner"].every((method) => new RegExp(`ALLOWED=new Set\\(\\[[^\\]]*'${method}'`).test(proxy)));
+ok("the mainnet proxy allows the four methods the Genesis Token checks call",
+  ["getGenesisHash", "getAccountInfo", "getTokenAccountsByOwner", "getMultipleAccounts"].every((method) => new RegExp(`ALLOWED=new Set\\(\\[[^\\]]*'${method}'`).test(proxy)));
 ok("the mainnet proxy allows the two reads the device row's publication time makes",
   /ALLOWED=new Set\(\[[^\]]*'getSignaturesForAddress'[^\]]*'getTransaction'[^\]]*\]\)/.test(proxy));
 ok("the bundle reads the revocation list same-origin, never from Google (no CORS there)",
@@ -532,11 +532,14 @@ async function pageRequests(): Promise<string[]> {
       }
       case "getGenesisHash": return MAINNET_GENESIS_HASH;
       // By mint (the publisher's check): nothing held. By program (a collector's lookup): the SGT,
-      // so its mint is read through the sliced `getAccountInfo` as well.
+      // so its mint is read through the sliced `getMultipleAccounts` as well.
       case "getTokenAccountsByOwner": return { context, value: params[1]?.programId ? [{
         pubkey: TOKEN_ACCOUNT,
         account: { data: { program: "spl-token-2022", parsed: { type: "account", info: { mint, owner: holder, state: "frozen", tokenAmount: { amount: "1", decimals: 0 } } } } },
       }] : [] };
+      // A collector's candidate mints, in the order asked.
+      case "getMultipleAccounts": return { context, value: (params[0] as string[]).map((key) =>
+        key === mint ? held("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", sgt) : null) };
       // A full first page, so the second asks with `before`.
       case "getSignaturesForAddress": return params[1]?.before ? [] : Array.from({ length: 1000 }, () => ({ signature: SIG, err: null, slot: 7 }));
       case "getTransaction": return null;
@@ -586,11 +589,13 @@ async function shapeChecks() {
     methods.size === ALLOWED.size && [...methods].every((method) => ALLOWED.has(method)));
   const shapes = (method: string) => bodies.filter((body) => JSON.parse(body).method === method).map((body) => JSON.stringify(JSON.parse(body).params));
   const tokenReads = shapes("getTokenAccountsByOwner");
-  ok("the recording reached the sliced ELF chunks, the paged history, and the token reads by mint and by Token-2022",
+  ok("the recording reached the sliced ELF chunks, the paged history, the token reads by mint and by Token-2022, and the batched mint read",
     shapes("getAccountInfo").some((params) => params.includes('"dataSlice":{"offset":262144,"length":')) &&
     shapes("getSignaturesForAddress").some((params) => params.includes('"before"')) && tokenReads.length === 2 &&
     tokenReads.some((params) => params.includes('{"mint":')) &&
-    tokenReads.some((params) => params.includes('{"programId":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"}')));
+    tokenReads.some((params) => params.includes('{"programId":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"}')) &&
+    shapes("getMultipleAccounts").join() === JSON.stringify([["21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH"],
+      { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } }]));
   const passed = await Promise.all(bodies.map(async (body) => (await viaProxy(body, rpcAnswer)).response.status));
   const failed = bodies.filter((_, index) => passed[index] !== 200);
   ok(`every request the page sends passes the proxy, byte for byte (${bodies.length} requests)`, failed.length === 0);
@@ -598,6 +603,16 @@ async function shapeChecks() {
 
   const OWNER = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT", MINT = "21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH", SIG = "5".repeat(88);
   const call = (method: string, params: unknown[]) => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
+  // The widest batch the page sends: 100 distinct addresses, each mint sliced as `findHeldGenesisToken` asks.
+  const hundred = Array.from({ length: 100 }, (_, i) => getAddressDecoder().decode(new Uint8Array(32).fill(i + 1)));
+  const mintSlice = { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MINT_SLICE_BYTES } };
+  const widest = await viaProxy(call("getMultipleAccounts", [hundred, mintSlice]), rpcAnswer);
+  ok("the proxy forwards a batch of 100 mints, past the eight-item bound every other list keeps",
+    widest.response.status === 200 && widest.target === PUBLIC_MAINNET);
+  const fullBatch = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { context: { apiVersion: "3.0.0", slot: 400_000_000 },
+    value: hundred.map(() => ({ data: [Buffer.alloc(MINT_SLICE_BYTES, 255).toString("base64"), "base64"], executable: false,
+      lamports: 1_000_000_000_000, owner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", rentEpoch: 18446744073709551615, space: 10_485_760 })) } })).byteLength;
+  ok(`the answer to a full batch fits the proxy's upstream bound (${fullBatch} of ${RPC_MAX_UPSTREAM} bytes)`, fullBatch < RPC_MAX_UPSTREAM);
   const nearMisses: [string, string][] = [
     ["token accounts of the SPL Token program", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed", commitment: "confirmed" }])],
     ["token accounts by program as base64", call("getTokenAccountsByOwner", [OWNER, { programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }, { encoding: "base64", commitment: "confirmed" }])],
@@ -622,7 +637,19 @@ async function shapeChecks() {
     ["an account with an extra option", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", minContextSlot: 1 }])],
     ["an account option named after Object.prototype", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed", toString: 1 }])],
     ["an account read with a third param", call("getAccountInfo", [OWNER, { encoding: "base64", commitment: "confirmed" }, {}])],
-    ["accounts in a batch the page never sends", call("getMultipleAccounts", [[OWNER], { encoding: "base64", commitment: "confirmed" }])],
+    ["accounts in a batch with no slice", call("getMultipleAccounts", [[OWNER], { encoding: "base64", commitment: "confirmed" }])],
+    ["a batch of 101 accounts", call("getMultipleAccounts", [[...hundred, OWNER], mintSlice])],
+    ["an empty batch", call("getMultipleAccounts", [[], mintSlice])],
+    ["a batch naming something that is not an address", call("getMultipleAccounts", [[OWNER, "x"], mintSlice])],
+    ["a batch of one address that is not in a list", call("getMultipleAccounts", [OWNER, mintSlice])],
+    ["a batch as jsonParsed", call("getMultipleAccounts", [[OWNER], { ...mintSlice, encoding: "jsonParsed" }])],
+    ["a batch with no commitment", call("getMultipleAccounts", [[OWNER], { encoding: "base64", dataSlice: mintSlice.dataSlice }])],
+    ["a batch sliced past the mint's first bytes", call("getMultipleAccounts", [[OWNER], { ...mintSlice, dataSlice: { offset: 1, length: MINT_SLICE_BYTES } }])],
+    ["a batch sliced wider than a mint", call("getMultipleAccounts", [[OWNER], { ...mintSlice, dataSlice: { offset: 0, length: MINT_SLICE_BYTES + 1 } }])],
+    ["a batch with an extra option", call("getMultipleAccounts", [[OWNER], { ...mintSlice, minContextSlot: 1 }])],
+    ["a batch with a third param", call("getMultipleAccounts", [[OWNER], mintSlice, {}])],
+    ["a batch nesting a list in its options", call("getMultipleAccounts", [[OWNER], { ...mintSlice, dataSlice: [0, MINT_SLICE_BYTES] }])],
+    ["nine statuses at once, past the bound every other list keeps", call("getSignatureStatuses", [Array(9).fill(SIG), { searchTransactionHistory: true }])],
   ];
   const refusedStatus = await Promise.all(nearMisses.map(async ([, body]) => {
     const { response, target } = await viaProxy(body, rpcAnswer);

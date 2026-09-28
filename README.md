@@ -37,21 +37,22 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
   network prompt, then Seed Vault signs and declines); cancel, time out and background the wallet
   mid-publish and mid-upload, and recover. Judge the looks in daylight with a face and something
   red in frame; check Camcorder's smear in both landscapes; save one photograph per look and
-  compare it with the preview. Open the wallet screen's grid and a print with a wallet that holds
-  copies, and connect a wallet from that screen. Publish from the wallet that holds the Genesis
+  compare it with the preview. Open a print from the wallet screen, and connect a wallet from that
+  screen. A buy's Total equals what the wallet shows; decline in the wallet, then publish, price and
+  send again at once. Publish from the wallet that holds the Genesis
   Token and read its row on the review, the Proof sheet and the collect page. Read the Device row
   of a release-build publication, and of a draft left past its certificates (Continue renews it).
   Terms and Agree before the first publish and collect; Report; Block and Unblock; an edition in
   `moderation.json` reads Hidden.
 - **Site:** redeploy `site/` (page, `/api/solana`, `/api/attestation-status`, `/terms/`,
-  `/moderation.json`); the live page refuses a document that names a Genesis Token until then.
+  `/moderation.json`) in one deploy, since the page now batches `getMultipleAccounts`, which the old
+  Function refuses; the live page refuses a document that names a Genesis Token until then.
   Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint), apply
   `site/cloudflare/rate-limit-rule.json` again (now 120 requests per 10 s), and route mail for
   support@erashot.app.
 - **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`, about 2.4
-  devnet SOL, more than one faucet request grants): the listed devnet programs predate the Genesis
-  Token accounts, the price floor and the recorded publication time. Then record its address,
-  digest and upgrade authority.
+  devnet SOL, more than one faucet request grants): the listed devnet programs predate the
+  Seeker-only publish rule (`6caa4a2`). Then record its address, digest and upgrade authority.
 - **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
   address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
   length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a
@@ -61,10 +62,12 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
   `getBlockHeight`, `getFeeForMessage`, `getGenesisHash`, `getLatestBlockhash`,
   `getMinimumBalanceForRentExemption`, `getMultipleAccounts`, `getProgramAccounts`,
   `getRecentPrioritizationFees`, `getSignatureStatuses`, `getSignaturesForAddress`,
-  `getTokenAccountsByOwner`, `getTransaction` and `simulateTransaction`.
+  `getTokenAccountsByOwner`, `getTransaction` and `simulateTransaction`. Check the fixed 5,000
+  µlamport/CU priority price against that provider's fee data.
 - **Final APK:** `npm run release:check` (also Google's attestation roots), `npm run release:apk`
   with the upload key, a fresh install, an offline capture, one small mainnet publication — the
-  first paid storage upload, so confirm Turbo credited the upload key from the publish transaction.
+  first paid storage upload, so confirm Turbo credited the upload key from the publish transaction
+  (otherwise it goes to the free tier after ten minutes, or Pay storage buys it on its own).
 - **dApp Store:** the mainnet build above; publisher identity verification and a publisher wallet
   with about 0.2 SOL; terms URL https://erashot.app/terms/; the opaque 512×512 icon in
   `dapp-store/icon-512.png`, a 1200×600 banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a

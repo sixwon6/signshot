@@ -426,14 +426,16 @@ function publish(d: Draft, options: { album?: string; genesis?: GenesisAccounts;
 
 /**
  * `publish`'s instruction data with the title and the trailing `royalty_bps` / `seeker_only`
- * replaced: what the client's own gates (`terms`, `checkSealedTerms`) refuse to build.
+ * replaced: what the client's own gates (`terms`, `checkSealedTerms`, and Seeker-only without the
+ * creator's Genesis Token) refuse to build.
  */
-const rewrite = (from: string, to: { title?: string; royaltyBps?: number }) => (ix: Instruction): Instruction => {
+const rewrite = (from: string, to: { title?: string; royaltyBps?: number; seekerOnly?: boolean }) => (ix: Instruction): Instruction => {
   const data = new Uint8Array(ix.data!);
   const head = data.subarray(0, 40);
   const oldTitle = new TextEncoder().encode(from).length;
   const tail = new Uint8Array(data.subarray(44 + oldTitle));
   if (to.royaltyBps !== undefined) new DataView(tail.buffer).setUint16(tail.length - 3, to.royaltyBps, true);
+  if (to.seekerOnly !== undefined) tail[tail.length - 1] = to.seekerOnly ? 1 : 0;
   const title = new TextEncoder().encode(to.title ?? from);
   const length = new Uint8Array(4);
   new DataView(length.buffer).setUint32(0, title.length, true);
@@ -852,21 +854,35 @@ async function royaltiesAndSeekers(program: Address, build: string, sgts: Minter
   const albumNonce = hex32();
   await settles("an album", send(creator, [await createAlbumInstruction({ program, creator: creator.address, nonce: albumNonce, name: "Royal" })]));
   const album = await albumAddress(program, creator.address, albumNonce);
-  const inAlbum = await draft(program, creator, 2, undefined, { royaltyBps: 250, seekerOnly: true });
-  const albumOutcome = await publish(inAlbum, { album });
+  const albumUnsealed = await draft(program, creator, 2, undefined, { royaltyBps: 250, seekerOnly: false });
+  const albumUnsealedOutcome = await publish(albumUnsealed, { album, edit: rewrite(albumUnsealed.e.title, { seekerOnly: true }) });
+  ok("publish_in_album Seeker-only without a Genesis Token -> GenesisTokenRequired; nothing created",
+    refused(albumUnsealedOutcome, E.GenesisTokenRequired) && (await read(albumUnsealed.e.edition)) === null &&
+    (await read(albumUnsealed.e.collection)) === null, albumUnsealedOutcome);
+  const creatorSgt = await sgts.mint(creator);
+  const inAlbum = await draft(program, creator, 2, creatorSgt.mint, { royaltyBps: 250, seekerOnly: true });
+  const albumOutcome = await publish(inAlbum, { album, genesis: creatorSgt });
   const albumRead = await readPublication(SVM_RPC, program, inAlbum.e.edition);
-  ok("publish_in_album: the royalty survives AddCollectionsToGroupV1, UpdateCollectionV1 and AddCollectionPluginV1; Seeker-only recorded",
+  ok("publish_in_album: the royalty survives AddCollectionsToGroupV1, UpdateCollectionV1 and AddCollectionPluginV1; Seeker-only recorded, sealed with the creator's Genesis Token",
     albumOutcome.ok && albumRead?.royalty?.basisPoints === 250 && albumRead.seekerOnly && albumRead.album?.group === album &&
-    albumRead.creatorReceiptAddress === await claimReceiptAddress(program, inAlbum.e.edition, creator.address), albumOutcome);
+    albumRead.sealedGenesis === creatorSgt.mint &&
+    albumRead.creatorReceiptAddress === await claimReceiptAddress(program, inAlbum.e.edition, creatorSgt.mint), albumOutcome);
 
   console.log(`\n${build}: Seeker-only claims`);
   const host = await wallet();
-  const seeker = await draft(program, host, 8, undefined, { royaltyBps: 500, seekerOnly: true });
-  const seekerOutcome = await publish(seeker);
+  const unsealed = await draft(program, host, 8);
+  const unsealedOutcome = await publish(unsealed, { edit: rewrite(unsealed.e.title, { seekerOnly: true }) });
+  ok("publish Seeker-only without a Genesis Token -> GenesisTokenRequired; nothing created",
+    refused(unsealedOutcome, E.GenesisTokenRequired) && (await read(unsealed.e.edition)) === null &&
+    (await read(unsealed.e.collection)) === null, unsealedOutcome);
+  const hostSgt = await sgts.mint(host);
+  const seeker = await draft(program, host, 8, hostSgt.mint, { royaltyBps: 500, seekerOnly: true });
+  const seekerOutcome = await publish(seeker, { genesis: hostSgt });
   const seekerRead = await readPublication(SVM_RPC, program, seeker.e.edition);
-  ok("publish Seeker-only without a Genesis Token: seeker_only 1 at byte 181; the creator's receipt keyed on their wallet",
+  ok("publish Seeker-only with the creator's Genesis Token: seeker_only 1 at byte 181; the token sealed and the creator's receipt keyed on it",
     seekerOutcome.ok && (await recorded(seeker.e.edition)).seekerOnly === 1 && seekerRead?.seekerOnly === true &&
-    seekerRead.creatorReceiptAddress === await claimReceiptAddress(program, seeker.e.edition, host.address), seekerOutcome);
+    seekerRead.sealedGenesis === hostSgt.mint &&
+    seekerRead.creatorReceiptAddress === await claimReceiptAddress(program, seeker.e.edition, hostSgt.mint), seekerOutcome);
   const [alice, bob, carol, dave, henry] = [await wallet(), await wallet(), await wallet(), await wallet(), await wallet()];
   const [aliceSgt, bobSgt, daveSgt, henrySgt] = [await sgts.mint(alice), await sgts.mint(bob), await sgts.mint(dave), await sgts.mint(henry)];
   ok("Token-2022 minted four Genesis Tokens of this build's group", aliceSgt.made && bobSgt.made && daveSgt.made && henrySgt.made);
@@ -958,14 +974,28 @@ async function royaltiesAndSeekers(program: Address, build: string, sgts: Minter
   const makerSecond = await sgts.mint(maker);
   const second = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2, makerSecond))]);
   ok("the creator collecting it with a second Genesis Token they hold -> AlreadyCollected", refused(second, E.AlreadyCollected), second);
-  // An unsealed Seeker-only edition: copy 1's receipt is on the creator's wallet, so no token
-  // receipt stands in the way; only the creator rule does.
-  const hostSgt = await sgts.mint(host);
-  const unsealed = await send(host, [byCreator(host)(await collectInstruction(seeker.e, carol.address, 6, hostSgt))]);
-  const unsealedBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSgt))]);
-  ok("the creator of an unsealed Seeker-only edition collecting or buying it with a Genesis Token they hold -> AlreadyCollected",
-    hostSgt.made && refused(unsealed, E.AlreadyCollected) && refused(unsealedBuy, E.AlreadyCollected) &&
-    (await read(await claimReceiptAddress(program, seeker.e.edition, hostSgt.mint))) === null, unsealed.ok ? unsealedBuy : unsealed);
+  // A second token of the creator's meets no receipt; only the creator rule stops it, on `buy` too.
+  const hostBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSgt))]);
+  const hostSecond = await sgts.mint(host);
+  const secondCollect = await send(host, [byCreator(host)(await collectInstruction(seeker.e, carol.address, 6, hostSecond))]);
+  const secondBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSecond))]);
+  const hostTries = [hostBuy, secondCollect, secondBuy];
+  ok("the creator buying it with the token it was sealed with, or collecting or buying it with a second one -> AlreadyCollected",
+    hostSecond.made && hostTries.every((o) => refused(o, E.AlreadyCollected)) &&
+    (await read(await claimReceiptAddress(program, seeker.e.edition, hostSecond.mint))) === null,
+    hostTries.find((o) => !refused(o, E.AlreadyCollected)));
+  // The creator's sealed token in another wallet of theirs: copy 1's receipt is the token's.
+  const hostOther = await wallet();
+  const carriedHost = await moveSgt(hostSgt, host, hostOther, sgts.authority);
+  const otherTries = [
+    await send(hostOther, [await collectInstruction(seeker.e, hostOther.address, 6, carriedHost)]),
+    await send(hostOther, [await buyInstruction(seeker.e, hostOther.address, 6, floor, 1, carriedHost)]),
+  ];
+  ok("the creator's sealed token moved to another wallet, collecting or buying from there -> AlreadyCollected; copy 1 still the token's",
+    otherTries.every((o) => refused(o, E.AlreadyCollected)) &&
+    (await collectedCopy(SVM_RPC, seeker.e, hostOther.address, carriedHost.mint))?.number === 1 &&
+    (await readPublication(SVM_RPC, program, seeker.e.edition))?.state.minted === 5,
+    otherTries.find((o) => !refused(o, E.AlreadyCollected)));
   const openOwn = await send(host, [byCreator(host)(await collectInstruction(open.e, carol.address, 4))]);
   ok("the creator of an open edition collecting it -> AlreadyCollected", refused(openOwn, E.AlreadyCollected), openOwn);
   const openSealed = await draft(program, maker, 2, makerSgt.mint);

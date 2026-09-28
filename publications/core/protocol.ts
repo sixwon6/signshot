@@ -392,6 +392,8 @@ export interface SealedTerms {
 export const ROYALTY_RANGE = "Use a royalty from 0% to 10%.";
 /** Said wherever a royalty or a Seeker-only edition is asked of a program that predates both. */
 export const NO_ROYALTIES = "Royalties and Seeker-only editions are not available on this network's program yet.";
+/** A Seeker-only publish without the publisher's Genesis Token, which the program refuses (6011). */
+export const SEEKER_ONLY_NEEDS_GENESIS = "A Seeker-only edition needs this wallet's Seeker Genesis Token.";
 
 /** The program's own `validate_royalty` (`InvalidRoyalty`, 6010), restated before any upload. */
 export function checkSealedTerms(sealed: SealedTerms): void {
@@ -414,9 +416,10 @@ export function checkSealedTerms(sealed: SealedTerms): void {
  *
  * A deployment with `programFeatures().royaltiesAndSeekerOnly` takes two more ARGUMENTS after
  * `supply`, `royalty_bps` (u16) and `seeker_only` (bool), which `sealed` must carry: the data grows
- * by 3 bytes and nothing before them moves. On a Seeker-only edition published with the
- * creator's Genesis Token, the creator's receipt is keyed on that mint (`publisherClaimant`). An
- * older deployment is sent neither, and refuses anything but `{ royaltyBps: 0, seekerOnly: false }`.
+ * by 3 bytes and nothing before them moves. A Seeker-only edition is published only with the
+ * creator's Genesis Token, which the program requires (`GenesisTokenRequired`), and the creator's
+ * receipt is keyed on that mint (`publisherClaimant`). An older deployment is sent neither, and
+ * refuses anything but `{ royaltyBps: 0, seekerOnly: false }`.
  */
 export async function instruction(
   e: CoreMetadata,
@@ -453,6 +456,8 @@ export async function instruction(
   } else if (sealed && (sealed.royaltyBps !== 0 || sealed.seekerOnly !== false))
     throw new Error(NO_ROYALTIES);
   const extended = features.royaltiesAndSeekerOnly && sealed ? sealed : null;
+  // Refused before a wallet signs: the program would refuse it after the review.
+  if (extended?.seekerOnly && !genesis) throw new Error(SEEKER_ONLY_NEEDS_GENESIS);
   const data = concat(
     disc(album ? "global:publish_in_album" : "global:publish"),
     hexToBytes(e.nonce),

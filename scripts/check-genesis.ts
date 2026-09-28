@@ -50,6 +50,7 @@ import {
   GENESIS_ATTRIBUTE,
   NO_ROYALTIES,
   ROYALTY_RANGE,
+  SEEKER_ONLY_NEEDS_GENESIS,
   SYSTEM_PROGRAM,
   addresses,
   buyInstruction,
@@ -328,10 +329,11 @@ const failure = async (p: Promise<unknown>) => {
   try { await p; return null; } catch (error) { return error instanceof Error ? error.message : String(error); }
 };
 async function sealedTests() {
-  const data = async (program: string, sealed?: SealedTerms | null) => [...(await publishIx(program, undefined, undefined, MINT, sealed)).data!];
+  const data = async (program: string, sealed?: SealedTerms | null, genesis?: GenesisAccounts) =>
+    [...(await publishIx(program, genesis, undefined, MINT, sealed)).data!];
   // The v1 arguments: discriminator, nonce, title, uri, both hashes, supply (185 bytes at an 8-byte title).
   const v1 = 8 + 32 + 4 + e.title.length + 4 + URI.length + 32 + 32 + 2;
-  const sealed = await data(GENESIS_PROGRAM, { royaltyBps: 1000, seekerOnly: true });
+  const sealed = await data(GENESIS_PROGRAM, { royaltyBps: 1000, seekerOnly: true }, GENESIS);
   const before = await data(TIMED_PROGRAM);
   ok("three bytes more on a current program, the u16 royalty and the bool last, nothing before them moved",
     sealed.length === v1 + 3 && sealed.slice(-3).join() === "232,3,1" && sealed.slice(0, v1).join() === before.join());
@@ -351,10 +353,18 @@ async function sealedTests() {
   const tokenReceipt = await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, MINT);
   const publisherReceipt = async (seekerOnly: boolean, genesis?: GenesisAccounts) =>
     (await publishIx(GENESIS_PROGRAM, genesis, undefined, MINT, { ...OPEN, seekerOnly })).accounts![4].address;
-  ok("the publisher's receipt is keyed on the sealed mint only on a Seeker-only edition with a Genesis Token",
-    (await publisherReceipt(true, GENESIS)) === tokenReceipt && (await publisherReceipt(true)) === keys.receipt &&
-    (await publisherReceipt(false, GENESIS)) === keys.receipt &&
+  ok("the publisher's receipt is keyed on the sealed mint on a Seeker-only edition, on the wallet otherwise",
+    (await publisherReceipt(true, GENESIS)) === tokenReceipt && (await publisherReceipt(false, GENESIS)) === keys.receipt &&
+    (await publisherReceipt(false)) === keys.receipt &&
     (await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, e.creator)) === keys.receipt);
+  // The program refuses Seeker-only without the creator's Genesis Token (`GenesisTokenRequired`).
+  const seekerOnly: SealedTerms = { ...OPEN, seekerOnly: true };
+  ok("refuses: a Seeker-only publish or publish_in_album without the publisher's Genesis Token",
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS &&
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, OTHER, MINT, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS &&
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, null, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS);
+  ok("a Seeker-only publish_in_album with it keys the receipt on the mint",
+    (await publishIx(GENESIS_PROGRAM, GENESIS, OTHER, MINT, seekerOnly)).accounts![4].address === tokenReceipt);
 
   const item = async (program: string): Promise<CoreMetadata> => {
     const k = await addresses(program, e.creator, e.nonce);

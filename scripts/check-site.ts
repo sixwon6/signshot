@@ -72,9 +72,10 @@ import {
 import { MAX_UPSTREAM, onRequestGet as attestationStatus, UPSTREAM } from "../site/functions/api/attestation-status";
 import { admitMwaMarkup, MWA_FONTS, MWA_MARKUP } from "../site/collect/mwa";
 import { ALLOWED, MAX_UPSTREAM as RPC_MAX_UPSTREAM, onRequestPost, PUBLIC_MAINNET } from "../site/functions/api/solana";
-import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, some } from "@solana/kit";
+import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, some, type Instruction } from "@solana/kit";
 import { extension, getMintEncoder } from "@solana-program/token-2022";
-import { addresses, loadTrustedEdition } from "../publications/core/protocol";
+import { addresses, buyInstruction, collectInstruction, loadTrustedEdition } from "../publications/core/protocol";
+import { sameReviewedTransaction } from "../src/prints/quoteRefresh";
 import { DEVNET_GENESIS_GROUP, MAINNET_GENESIS_HASH, MINT_SLICE_BYTES, SGT_GROUP_ADDRESS, SGT_METADATA_ADDRESS, findHeldGenesisToken, verifyGenesisToken } from "../publications/core/genesisToken";
 import { publicationTime } from "../publications/core/attestationCheck";
 import { assertReviewedProgram } from "../publications/programImage";
@@ -681,10 +682,76 @@ async function streamChecks() {
   const declared = await viaProxy(heightCall, () => new Response("{}", { headers: { "Content-Length": String(RPC_MAX_UPSTREAM + 1) } }));
   ok("a declared oversize upstream body is refused unread", declared.response.status === 502);
 }
+/**
+ * The page re-quotes right before the wallet opens and sends only what the collector reviewed:
+ * the app's rule (`sameReviewedTransaction`), exact estimate and identical bytes but for the
+ * blockhash. A claim's price, revision and copy number are in its bytes. `collect()` needs a DOM,
+ * so its order is held as text.
+ */
+async function requoteChecks() {
+  const ENDPOINT = "https://erashot.app/api/solana";
+  const collector = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
+  const quoted = async (ix: Instruction, blockhash: string, spend = 1_000_000) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const { id, method } = JSON.parse(String(init?.body));
+      const context = { slot: 100 };
+      const result =
+        method === "getLatestBlockhash" ? { context, value: { blockhash, lastValidBlockHeight: 1_150 } }
+        : method === "simulateTransaction" ? { context, value: { err: null, logs: [], unitsConsumed: 50_000, returnData: null,
+          accounts: [{ lamports: 10_000_000_000 - spend, owner: "11111111111111111111111111111111", executable: false, rentEpoch: 0, space: 0, data: ["", "base64"] }] } }
+        : method === "getRecentPrioritizationFees" ? []
+        : method === "getFeeForMessage" ? { context, value: 5_000 }
+        : method === "getBalance" ? { context, value: 10_000_000_000 }
+        : undefined;
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      return await prepareTransaction(ENDPOINT, collector, [ix]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+  const [first, later] = ["EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k", "4sGjMW1sUnHzSxGspuhpqLDx6wiyjNtZAMdL4VZHirAn"];
+  const keys = await addresses(e.program, e.creator, e.nonce);
+  const priced: CoreMetadata = { ...e, edition: keys.edition, collection: keys.collection };
+  const reviewed = await quoted(await buyInstruction(priced, collector, 2, 5_000_000n, 1), first);
+  const same = await quoted(await buyInstruction(priced, collector, 2, 5_000_000n, 1), later);
+  ok("the same claim on a fresh blockhash is the reviewed transaction, and its lifetime is the fresh one",
+    sameReviewedTransaction(reviewed, same) && same.lastValidBlockHeight === 1_150n
+      && !Buffer.from(reviewed.transaction.messageBytes).equals(Buffer.from(same.transaction.messageBytes)));
+  const changed: boolean[] = [];
+  // One at a time: each swaps the global `fetch`.
+  for (const [ix, spend] of [
+    [await buyInstruction(priced, collector, 2, 6_000_000n, 1), undefined],
+    [await buyInstruction(priced, collector, 2, 5_000_000n, 2), undefined],
+    [await buyInstruction(priced, collector, 3, 5_000_000n, 1), undefined],
+    [await collectInstruction(priced, collector, 2), undefined],
+    [await buyInstruction(priced, collector, 2, 5_000_000n, 1), 1_000_001],
+  ] as const)
+    changed.push(!sameReviewedTransaction(reviewed, await quoted(ix, later, spend)));
+  ok("a changed price, revision, copy number, a free collect or a changed estimate is not the reviewed transaction",
+    changed.length === 5 && changed.every(Boolean));
+
+  const collect = pageSource.slice(pageSource.indexOf("  async function collect() {"), pageSource.indexOf("  async function share() {"));
+  const at = (text: string) => collect.indexOf(text);
+  ok("the page re-quotes after the program check, shows a changed quote for another tap, and sends and records the fresh one",
+    at("await adapter.assertProgram();") > 0
+      && at("const fresh = await quoteFor(connection.address, current.number);") > at("await adapter.assertProgram();")
+      && at("!sameReviewedTransaction(current.prepared, fresh.prepared)") > at("const fresh = await quoteFor(")
+      && /quote = fresh;\s*showQuote\(fresh\);\s*message\("Estimate refreshed\. Tap again to approve\."\);\s*return;/.test(collect)
+      && at("lastValidBlockHeight: String(fresh.prepared.lastValidBlockHeight),") > at("!sameReviewedTransaction(")
+      && at("writePending(p);") > at("lastValidBlockHeight: String(fresh.prepared.lastValidBlockHeight),")
+      && at("await connection.send(fresh.prepared.transaction, fresh.prepared.minContextSlot)") > at("writePending(p);")
+      && at("await confirmTransaction(endpoint, p.signature, fresh.prepared.lastValidBlockHeight);") > at("await connection.send(")
+      && !/current\.prepared\.(transaction|lastValidBlockHeight|minContextSlot)/.test(collect));
+}
+
 // One after the other: each swaps the global `fetch`. The summary below waits for it.
 const proxyChecked = upstreamChecks()
   .then(() => shapeChecks())
   .then(() => streamChecks())
+  .then(() => requoteChecks())
   .catch((error: unknown) => {
     console.error(error);
     ok("the proxy checks ran", false);

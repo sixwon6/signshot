@@ -615,6 +615,11 @@ async function publicationItems(d: CoreDraft) {
     throw new Error("Saved publication identifiers changed.");
   return { signer, img, meta };
 }
+/** The signed data items the chain names, for the publication bundle. */
+export async function publicationDataItems(d: CoreDraft) {
+  const { img, meta } = await publicationItems(d);
+  return { metadata: meta.bytes, image: img.bytes };
+}
 /**
  * Before any approval. Devnet: the free allowance, advisory. Mainnet: the storage payment the
  * publication transaction will carry, or `null` when the bundler already holds both items.

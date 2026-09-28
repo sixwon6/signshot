@@ -45,6 +45,7 @@ import {
   getPublicationState,
   getSavedPublicationState,
   payStorage,
+  publicationDataItems,
   retryPublicationStorage,
   isPublicationWorking,
 } from "../prints/creator";
@@ -315,17 +316,19 @@ export function ReviewScreen() {
     });
   }
   /**
-   * One JSON file (metadata, image, draft) for a confirmed publication whose upload is unfinished,
-   * re-hashed natively against the signed `image_hash`, then shared. There is no import.
+   * One JSON file (metadata, image, signed data items, draft) for a confirmed publication whose
+   * upload is unfinished, re-hashed natively against the signed `image_hash`, then shared. There is
+   * no import. Items that cannot be rebuilt leave the rest of the bundle.
    */
   async function exportBundle(entry: PhotoEntry) {
     const d = entry.publication.draft;
     if (!d) return;
+    const items = await publicationDataItems(d).catch(() => undefined);
     const uri = await SeekerCamera.exportPublicationBundle(
       entry.record.baseName,
       `file://${d.imagePath}`,
       d.edition.imageHash,
-      JSON.stringify(publicationBundleDocument(d, Date.now())),
+      JSON.stringify(publicationBundleDocument(d, Date.now(), items)),
     );
     await Sharing.shareAsync(uri, {
       mimeType: "application/json",

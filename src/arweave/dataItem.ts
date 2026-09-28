@@ -163,6 +163,14 @@ function dataItemId(signature: Uint8Array): string {
   return base64UrlEncode(sha256(signature));
 }
 
+/** The id of a serialized ed25519 data item, read off its own signature bytes. */
+export function serializedDataItemId(bytes: Uint8Array): string {
+  if (bytes.length < DATA_ITEM_OVERHEAD || bytes[0] !== SIGNATURE_TYPE_ED25519 || bytes[1] !== 0) {
+    throw new Error("dataItem: not a serialized ed25519 data item");
+  }
+  return dataItemId(bytes.subarray(2, 2 + SIGNATURE_LENGTH));
+}
+
 /**
  * Serialize and sign one data item. No target and no anchor, so the id depends only on the data,
  * tags and key: rebuilding after a crash yields the same id that is already referenced on chain.

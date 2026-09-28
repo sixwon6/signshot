@@ -15,7 +15,10 @@
  *   - the lost receipt: the publication transaction found by fingerprint in the creator's claim
  *     receipt's history first, then the edition's, and by its transfer and memo when a wallet
  *     rewrote it;
- *   - `src/prints/creator.ts` records the path taken on the draft and resumes it as recorded.
+ *   - `src/prints/creator.ts` records the path taken on the draft and resumes it as recorded;
+ *   - buying storage again: turbo-sdk's legacy transfer and memo, offered only while no earlier one
+ *     may still land or be credited, its lost receipt told apart from every other payment to the key;
+ *   - the publication bundle: the signed data items whose ids the chain names.
  */
 
 import {
@@ -43,10 +46,14 @@ import {
   getSetComputeUnitLimitInstruction,
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildDataItem } from "../src/arweave/dataItem";
 import { TurboError } from "../src/arweave/turbo";
+import { publicationBundleDocument } from "../src/prints/publicationBundle";
 import { addresses, instruction, setOfferInstruction } from "../publications/core/protocol";
 import { reviewedFingerprint } from "../publications/core/transferReceipt";
 import {
@@ -65,7 +72,7 @@ import {
   storageTopUpTransaction,
   type StoragePayment,
 } from "../publications/storage";
-import type { CoreMetadata } from "../publications/types";
+import type { CoreDraft, CoreMetadata } from "../publications/types";
 
 let failures = 0;
 function ok(name: string, condition: boolean) {
@@ -635,6 +642,44 @@ async function topUpTests() {
   }
 }
 
+// --- The publication bundle -------------------------------------------------------------------------
+function bundleTests() {
+  const secret = ed25519.utils.randomSecretKey();
+  const signer = { publicKey: ed25519.getPublicKey(secret), sign: (message: Uint8Array) => ed25519.sign(message, secret) };
+  const text = JSON.stringify({ name: "Harbour", image: "…" });
+  const build = () => ({
+    meta: buildDataItem({ data: new TextEncoder().encode(text), tags: [{ name: "Content-Type", value: "application/json" }], signer }),
+    img: buildDataItem({ data: new Uint8Array(3_000).fill(7), tags: [{ name: "Content-Type", value: "image/jpeg" }], signer }),
+  });
+  const { meta, img } = build();
+  const draft = {
+    version: 1, metadata: text, metadataId: meta.id, imagePath: "/captures/print.jpg", confirmedAt: 1, storage: "pending",
+    edition: { cluster: "mainnet-beta", creator: CREATOR, edition: CREATOR, program: CREATOR, image: `https://arweave.net/${img.id}` },
+  } as unknown as CoreDraft;
+  const bundle = publicationBundleDocument(draft, 1, { metadata: meta.bytes, image: img.bytes });
+  const decode = (text?: string) => new Uint8Array(Buffer.from(text ?? "", "base64"));
+  const derived = (bytes: Uint8Array) => createHash("sha256").update(bytes.subarray(2, 66)).digest("base64url");
+  const metadata = decode(bundle.dataItems?.metadata), image = decode(bundle.dataItems?.image);
+  ok("the bundle's signed items re-derive the ids the chain names",
+    derived(metadata) === draft.metadataId && `https://arweave.net/${derived(image)}` === draft.edition.image);
+  ok("the bundle's items are the exact bytes the upload posts, and carry no key",
+    Buffer.from(metadata).equals(Buffer.from(build().meta.bytes)) && Buffer.from(image).equals(Buffer.from(img.bytes)) &&
+    Buffer.from(metadata.subarray(66, 98)).equals(Buffer.from(signer.publicKey)) &&
+    !Buffer.from(metadata).includes(Buffer.from(secret)) && !Buffer.from(image).includes(Buffer.from(secret)) &&
+    new TextDecoder().decode(metadata.subarray(metadata.length - new TextEncoder().encode(text).length)) === text);
+  ok("the bundle names its new shape and how to finish the upload",
+    bundle.schema === "seedshot-publication-bundle/2" && bundle.note.includes("https://turbo.ardrive.io/tx"));
+  ok("items that do not re-derive the committed ids are left out, and the rest of the bundle kept",
+    publicationBundleDocument(draft, 1, { metadata: img.bytes, image: meta.bytes }).dataItems === undefined &&
+    publicationBundleDocument(draft, 1, { metadata: new Uint8Array(4), image: img.bytes }).dataItems === undefined &&
+    publicationBundleDocument(draft, 1).dataItems === undefined &&
+    publicationBundleDocument(draft, 1).metadata === text);
+  const review = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "screens", "ReviewScreen.tsx"), "utf8");
+  ok("the export carries the rebuilt items, and exports without them if they cannot be rebuilt",
+    /const items = await publicationDataItems\(d\)\.catch\(\(\) => undefined\);/.test(review) &&
+    /publicationBundleDocument\(d, Date\.now\(\), items\)/.test(review));
+}
+
 /** The message bytes out of a signed test transaction's `getTransaction` answer. */
 const messageOf = (tx: { result: { transaction: unknown[] } }) =>
   new Uint8Array(getTransactionDecoder().decode(getBase64Encoder().encode(tx.result.transaction[0] as string)).messageBytes);
@@ -646,6 +691,7 @@ void (async () => {
   await creditTests();
   await receiptTests();
   await topUpTests();
+  bundleTests();
 })().then(
   () => {
     console.log(failures ? `\n${failures} check(s) failed.` : "\nstorage payment self-test passed.");

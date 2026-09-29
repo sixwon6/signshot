@@ -124,10 +124,9 @@ function multisigBytes(o: {
 
 /**
  * The first 891 bytes of mainnet account 3MyUSvyqpkJ8dYcYyoAbakbcf7G6y1fCrs3Yosnk9VhS (1,155 bytes of
- * space, the rest zero), read with getAccountInfo on 2026-09-28 at slot 451,520,692. Its vault,
- * index 0, is HFwi9HgNtFcMwNJPHa1czrPhuxeZFZ7G9tPQ1LqAd7sy, the example on Squads' Vault Check
- * page (https://docs.squads.so/main/development/api/vault-check); the multisig was found in that
- * vault's transaction history.
+ * space, the rest zero), read at slot 451,520,692. Its vault, index 0, is
+ * HFwi9HgNtFcMwNJPHa1czrPhuxeZFZ7G9tPQ1LqAd7sy, the example on Squads' Vault Check page
+ * (https://docs.squads.so/main/development/api/vault-check).
  */
 const EXAMPLE_MULTISIG = Buffer.concat([Buffer.from(
   "4HR5ukShT+wBv7cBrwgnMObdvGyol7wtYxX6htMLaGvgVwQI18K9TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAABgcAAAAAAADrBgAAAAAAAAHxjvtyu43XvDtH2L0+14Jf4FYRmo9bmYwX7S/TSeMRVP4WAAAACjJg2+JqSzy+/kE7AVdEp919Nn6cauk8DbEJIYJtkPMBDCkXCb/MTWwuwIu4fvgCXnfaVc103xHodbK2WM4jc6UGDQYIcFUTNQH1oW4sga6dUIXN/bgmNr27qp8FlA545DoDIW+KRMoCUVFHdspkgafdBtIZRnY+Ak0u9nyV095G3skBKVEET0ojOu/acAOLYnN7/mLtqieSuBj7Nln3YYPEBTQHMaAjueb/EhlpYhQ2R4h1w87BnmfcFUtQBiteiZ1eqNoBOfcWoWmjCQQDv6NIrH7Vk1AnYqc6pfkNOFACmIgfbAABSueWBHy1TN0LjGVk502jjQJScbIFqSAYZQRwhep6OnABUARsRNSVr35ABEeStGhAxKWXmo6P4Np/PgifD/ZPF4wBU2r1Tep9bWA4dqaoSJDy/iGpKmrS8K1YYKVLgZdGC/MHaX45v3aolEFxOjc6Q72zoF58defdeiM4ba20M7AlLuMBg5SCEth5iyQ2Lc+3WS8m7NSD8HgQX2ZNfDNHJtYEGPIHpwZJmFtkNn+pSW39fxoptgCi4PtK95kuP/OctzvbiPcBrANIGfw0pZdU8Kmuro5tDnAEEyavlihvzuae7YdOY0MHrqI29c5hZz69adDWtaBw+66FirHTfWYZp+R5T/pj89IBrweObX2/wfl2cLMM4D5unBvWQtY0Bhx9xX65E4HOj5sBufBQ290T0w6+/nhClt0a/YNMRQE1vmc/NV4SsrEBTigBwicgLw5lzDSbgGc8cqeJjgPHeo2fKfop//bJLB3OyB4BxmE9F9a6bvKy0CX1LTUvma96ulPXRbNW7x56aB0cRicB1d8rNruzURES+u4Zmm8brYHNJH1ayQcwTewOlVOr8wcB8gQD4AnaWCmvlJJig7o1eL18khIR5g3LjRLfUtYs8fUB9ZTVj0SwxQU+KbbdODNAPAz625Cd6Qn4D5Cu+vO6XAIB9ZTVj0SwxQU+KbbdODNAPAz625Cd6Qn4D5Cu+vO6XAIB",
@@ -273,13 +272,6 @@ const SYSTEM = "11111111111111111111111111111111";
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
 const LOADER = LOADER_V3_PROGRAM_ADDRESS as string;
 
-/**
- * Just enough of a cluster to run every step: the System program's create and transfer, loader-v3's
- * buffer, write, deploy, set-authority and close as Agave implements them (the deploy drains the
- * buffer to the payer, then funds ProgramData at its rent), fees of 5,000 per signature plus limit ×
- * price, and the rent-exempt rule on every account a transaction leaves funded. Signatures are not
- * verified. `lose` applies a transaction and then fails its response, as a dropped connection does.
- */
 /** A compiled legacy or v0 message: its accounts, signers, instructions and the fee it pays. */
 function decodeMessage(bytes: ArrayLike<number>) {
   const message = getCompiledTransactionMessageDecoder().decode(Uint8Array.from(bytes));
@@ -297,6 +289,13 @@ function decodeMessage(bytes: ArrayLike<number>) {
   return { keys, signers, ixs, fee: 5000 * signers.size + Math.ceil((limit * price) / 1e6) };
 }
 
+/**
+ * Just enough of a cluster to run every step: the System program's create and transfer, loader-v3's
+ * buffer, write, deploy, set-authority and close as Agave implements them (the deploy drains the
+ * buffer to the payer, then funds ProgramData at its rent), fees of 5,000 per signature plus limit ×
+ * price, and the rent-exempt rule on every account a transaction leaves funded. Signatures are not
+ * verified. `lose` applies a transaction and then fails its response, as a dropped connection does.
+ */
 class Chain {
   accounts = new Map<string, Account>();
   landed = new Set<string>();

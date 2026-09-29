@@ -915,10 +915,10 @@ if (!process.argv.includes("--worker")) {
     globalThis.fetch = realFetch;
   }
 
-  // Send, for any copy: the gate print #1 has, on a collected copy #3, and one durable attempt per
-  // asset. The real src/prints/transfer.ts, with the build's cluster, AsyncStorage and the photo
-  // draft's `isSigned` replaced. An `AssetV1` as Core lays it out: key, owner, the collection as
-  // update authority, name, uri, no `seq`, the plugin header, the blobs, then the registry, last.
+  // Send, for any copy: print #1's gate applied to collected copy #3, and one durable attempt per
+  // asset, through the real src/prints/transfer.ts with the cluster, AsyncStorage and the photo
+  // draft's `isSigned` replaced. `coreAsset` lays out an `AssetV1` as Core does: key, owner, the
+  // collection as update authority, name, uri, no `seq`, the plugin header, the blobs, the registry.
   {
     const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
     const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
@@ -1066,8 +1066,8 @@ if (!process.argv.includes("--worker")) {
       storage.items.set(copyKey, JSON.stringify({ ...handed, lastValidBlockHeight: "150" }));
       assert.equal((await transfer.getTransferState(copy3)).status, "pending");
 
-      // The photo page, unchanged: print #1's attempt stays per edition, as saved before this build,
-      // and the WALLET screen's print #1 reads the same record.
+      // The photo page keeps print #1's attempt per edition, and the WALLET screen's print #1 reads
+      // the same record.
       const record = { baseName: "IMG_0001" };
       const draft = { edition, metadataId: arweaveId, imagePath: "" };
       const photo = transfer.photoTransfer(record, draft);
@@ -1475,5 +1475,5 @@ if (!process.argv.includes("--worker")) {
     assert.equal(safeErrorText(new Error("Transaction expired. Try again.")), "Transaction expired. Try again.");
     assert.ok(!safeErrorText(new SolanaError(SOLANA_ERROR__INVALID_NONCE, { actualNonceValue: "a", expectedNonceValue: "b" })).includes("Decode"));
   }
-  console.log("runtime checks ok —legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
 }

@@ -71,8 +71,8 @@ export function throttle(intervalMs: number): Deferred {
 }
 
 /**
- * The same, held for the life of a component and cancelled when it goes away — which is what
- * makes "timers are cleared on unmount" a property of the helper rather than of every caller.
+ * The same, held for the life of a component and cancelled on unmount, so no caller has to clear
+ * its own timers.
  */
 export function useDeferred(make: () => Deferred): Deferred {
   const held = useRef<Deferred | null>(null);

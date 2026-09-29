@@ -41,7 +41,7 @@ import { captureControls as copy } from "../ui/copy";
 
 /** A moved control reaches the camera within this; a drag cannot ask for more than one per. */
 const APPLY_THROTTLE_MS = 60;
-/** ...and is written back this long after the thumb rests, like the strength dial beside it. */
+/** ...and is written to the store this long after the thumb rests. */
 const SAVE_DEBOUNCE_MS = 400;
 const APPLY_ATTEMPTS = 8;
 const APPLY_RETRY_MS = 150;
@@ -109,8 +109,8 @@ export function useCaptureControls({
   /** Every reading, drawn or not: M holds the exposure the camera metered last. */
   const latestReading = useRef<MeterReading | null>(null);
   /**
-   * What P and M held when the dial went to AUTO. It comes back with the dial, like a camera's,
-   * and the dial shows where it is kept. Stored, so it outlives the app as a dial's position does.
+   * What P and M held when the dial went to AUTO, restored when the dial turns back. The dial marks
+   * the position it belongs to, and it is stored so it survives a restart.
    */
   const [parked, setParked] = useState<CaptureSettings | null>(null);
   /** The brightness M set aside: it has no meter to steer, and P gets it back. Stored with it. */
@@ -139,8 +139,8 @@ export function useCaptureControls({
     Promise.all([captureCapabilities(), loadCapture(), loadCaptureChrome()])
       .then(([device, stored, storedChrome]) => {
         if (!alive) return;
-        // AE lock has no key any more (M holds the metered exposure, in the open), so a stored one
-        // is let go rather than left in force with nothing on the screen to release it.
+        // AE lock has no key (M holds the metered exposure instead), so a stored one is released
+        // rather than left in force with nothing on screen to release it.
         const held = { ...clampSettings(stored.settings, device), aeLock: false };
         // A held value the stored chrome would hide puts the readout up, and keeps it up.
         const kept = chromeHolding(storedChrome, held);
@@ -169,8 +169,8 @@ export function useCaptureControls({
 
   /**
    * One request, for one revision. The view is not up yet on a cold start, so a refusal that says
-   * so is waited out, the way the recipe apply waits; whoever asks next takes the revision, and
-   * with it the waiting. A moved control used to end the cold start's wait and have none of its own.
+   * so is retried, as the recipe apply does; whoever asks next takes the revision, and with it the
+   * retrying.
    */
   const applyFor = useCallback(
     (wanted: CaptureSettings, requestRevision: number, left = APPLY_ATTEMPTS) => {

@@ -35,7 +35,7 @@ interface PillProps {
   testID?: string;
 }
 
-/** Fill and outline per variant, straight off the anatomy row. */
+/** Fill, outline and text colour per variant. */
 const SKIN: Record<PillVariant, { background: string; border: string; text: string }> = {
   primary: { background: colors.ink, border: "transparent", text: colors.ground },
   secondary: { background: "transparent", border: "rgba(245,244,240,0.26)", text: colors.ink },

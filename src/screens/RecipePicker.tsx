@@ -1,9 +1,8 @@
 /**
- * The look row, in store order: the phone's own look, the starters, one's own recipes oldest first, then `+`.
- * Only one's own recipes offer a long press; starters ship with the build. It runs out to the
- * screen's edges rather than ending at a wall inside them, and it keeps the look in force in
- * view, so the chosen chip is never the one cut off. No state of its own: the recipes are
- * `useRecipes`', and the row's refs only keep the selection in view.
+ * The look row, in store order: the phone's own look, the starters, one's own recipes oldest
+ * first, then `+`. Only one's own recipes offer a long press. The row bleeds to the screen's edges
+ * and keeps the look in force scrolled into view. No state of its own: the recipes are
+ * `useRecipes`', and the refs only track scroll positions.
  */
 import { useEffect, useRef } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
@@ -75,8 +74,7 @@ export function RecipePicker({
         viewport.current = event.nativeEvent.layout.width;
         reveal(false);
       }}
-      // The content exists only now: a scroll asked for before it is sized is clamped to the start,
-      // which is how the look in force came up cut off at the row's edge on the phone.
+      // The content is sized only now; a scroll asked for before this is clamped to the start.
       onContentSizeChange={() => requestAnimationFrame(() => reveal(false))}
       testID="recipe-row"
     >

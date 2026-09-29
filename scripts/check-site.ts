@@ -105,8 +105,8 @@ ok("the page fetches nothing and allows no Trusted Types policy",
     && directive("style-src").join() === "'self'" && !/ style=|<style/i.test(collectPage));
 const words = collectPage.replace(/<!--[\s\S]*?-->/g, "").replace(/<script[\s\S]*?<\/script>/g, "").replace(/<(title|head)[\s\S]*?<\/\1>/g, "")
   .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-ok(`the page says the name and "Open in Signshot", nothing else (${words})`,
-  words === "Signshot Open in Signshot" && /<a id="open" class="button primary" hidden>Open in Signshot<\/a>/.test(collectPage));
+ok(`the page says "Open in Signshot" and nothing else (${words})`,
+  words === "Open in Signshot" && /<a id="open" class="button primary" hidden>Open in Signshot<\/a>/.test(collectPage));
 
 /** What the page's script makes of a query string: the control's href, or null when it stays hidden. */
 function handoff(search: string): string | null {

@@ -1,18 +1,12 @@
 import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 /**
- * CollectSheet — taking one numbered copy of somebody else's edition into this wallet.
+ * CollectSheet: taking one numbered copy of somebody else's edition into this wallet.
  *
- * The same two-tap shape as PrintSheet and SendSheet: "Continue" connects the wallet and shows a
- * simulated estimate, "Collect" opens the wallet. Only the tap that spends carries the verb, and
- * the estimate on screen always belongs to the check that produced it — a cleared quote can never
- * be approved, so an amount from a previous, expired review is never what the wallet signs.
- *
- * A FREE edition is collected and is not a sale: nothing reaches the publisher, and the collector
- * pays only Solana's network fee, the account rent and the Metaplex Core fee, which is what
- * `estimate` itemises. A PRICED edition is bought, and then there are two amounts on the screen:
- * the publisher's price, which reaches the publisher, and those same costs, which do not. They are
- * shown as separate lines above the simulated total, so neither can be read as the other.
+ * Two taps, as in PrintSheet and SendSheet: "Continue" connects the wallet and shows a simulated
+ * estimate; only the next tap opens the wallet to sign. The estimate always belongs to the check
+ * that produced it, and a cleared quote can never be approved. A priced edition shows the
+ * publisher's price and the network costs on separate lines, so neither reads as the other.
  */
 import { useEffect, useRef, useState } from "react";
 import { Linking, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -91,9 +85,8 @@ export function CollectSheet({
     [status, setStatus] = useState(""),
     [error, setError] = useState("");
 
-  // The link named a chain this build is not on. Refused before anything is read: an edition
-  // address means nothing without the cluster it lives on, and reading the wrong one would
-  // either fail confusingly or, worse, find an unrelated account.
+  // A link for another chain is refused before anything is read: on the wrong cluster the address
+  // could name an unrelated account.
   const wrongNetwork = target.cluster !== cluster;
 
   function clearQuote() {
@@ -311,18 +304,10 @@ export function CollectSheet({
       (problem) => setError(safeErrorText(problem)),
     );
   }
-  /**
-   * The edition's price, or null for a free one. `pricedOffer` has already collapsed "no offer
-   * account", "never priced" and "priced at zero" into the same null, because the program treats
-   * all three identically: `collect` succeeds and `buy` answers NotForSale.
-   */
+  // The edition's price, or null when free (`Collectable.offer`).
   const offer = collectable?.offer ?? null;
   const priced = offer !== null;
-  /**
-   * Which of the two things this sheet is doing, and therefore what it says the wallet will do.
-   * Once an estimate exists the QUOTE decides — that is the instruction the wallet will actually
-   * approve — and before that the edition's own offer does.
-   */
+  // Buying or collecting: once there is a quote it decides, being what the wallet will approve.
   const buying = quote ? quote.kind === "buy" : priced;
   const hint = buying ? onChain.buy : onChain.collect;
   // The paper follows the photograph: the picture takes the edition's own ratio, so a portrait

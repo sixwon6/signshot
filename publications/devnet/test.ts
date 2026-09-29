@@ -87,13 +87,9 @@ interface TestContext extends Context {
 const PRICE = 10_000_000n;
 
 /**
- * A `collect` past the edition's supply.
- *
- * `collectInstruction` bounds `number` by `supply` because that is a program rule, and failing it
- * locally costs no simulation and opens no wallet. The refusals below are about the PROGRAM's own
- * answer (`SoldOut`), so the local restatement has to be got past — and raising `supply` in the
- * caller's own record is the only thing that changes: the instruction data is the discriminator
- * and `number` as a u16, and every account is derived from the creator and the nonce.
+ * A `collect` past the edition's supply. `collectInstruction` refuses that locally, so `supply` is
+ * raised in the record to reach the PROGRAM's own `SoldOut`. Nothing else changes: the data is the
+ * discriminator and `number` as a u16, and every account derives from the creator and the nonce.
  */
 const collectBeyondSupply = (item: CoreMetadata, collector: string, number: number) =>
   collectInstruction({ ...item, supply: Math.max(item.supply, number) }, collector, number);
@@ -102,12 +98,9 @@ const collectBeyondSupply = (item: CoreMetadata, collector: string, number: numb
 const SOME_OTHER_WALLET = "11111111111111111111111111111112";
 
 /**
- * The `collect` a creator cannot build.
- *
- * `collectInstruction` refuses `collector === creator` outright, with a Genesis Token or without,
- * for the same reason the program does: the creator holds copy 1 from publication, and `collect`
- * answers them `AlreadyCollected` on every edition before it reads anything else. Built here for
- * another wallet and handed to the creator, with the receipt their claim would open, so that the
+ * The `collect` a creator cannot build: `collectInstruction` refuses `collector === creator`, as
+ * the program does (`AlreadyCollected`: the creator holds copy 1 from publication). Built for
+ * another wallet and handed to the creator, with the receipt their claim would open, so the
  * refusal observed on the cluster is the program's and not this client's.
  */
 async function creatorCollect(item: CoreMetadata, number: number, genesis?: GenesisAccounts): Promise<Instruction> {
@@ -136,16 +129,12 @@ interface PlannedEdition {
 }
 
 /**
- * What this run publishes, in order.
- *
- * The supply-3 and supply-1 cases are the original acceptance: a shared run and the sold-out 1/1
- * whose only print is the creator's own. Supply 5 is the free-moment row — one publisher plus four
- * friends. The two album members carry the album acceptance, `offer` carries the paid one and
- * `genesis` the sealed Genesis Token publish, whose document names the stand-in's member mint.
- * `royalty-0` seals a royalty of 0, which still writes the plugin, and `seeker` is the Seeker-only
- * edition, sealed with the same member mint at a royalty of 700, which no default could produce;
- * the program refuses it without the token. Every other edition is `OPEN`, so its claims stay one
- * per wallet.
+ * What this run publishes, in order: a shared supply-3 run, the sold-out 1/1 whose only print is
+ * the creator's own, supply 5 (one publisher plus four friends), two album members, `offer` for the
+ * paid case and `genesis` for the sealed Genesis Token publish, whose document names the stand-in's
+ * member mint. `royalty-0` seals a royalty of 0, which still writes the plugin; `seeker` is
+ * Seeker-only, sealed with the same mint at a royalty of 700 that no default could produce. Every
+ * other edition is `OPEN`, so its claims stay one per wallet.
  */
 function editionPlan(): PlannedEdition[] {
   return [
@@ -186,8 +175,7 @@ export async function lifecycle(c: TestContext) {
     console.log("PASS", name, journal[name]);
   };
   // Checked BEFORE a single byte reaches Arweave: an upload is public and permanent, so a session
-  // started with an older session.ts (five collector wallets, before the paid case) must stop here
-  // rather than pay for uploads and then abort at the buy.
+  // with too few collector wallets stops here rather than pay for uploads and abort at the buy.
   assert.ok(
     c.collectors.length >= WALLET_WORK.length,
     `This acceptance needs ${WALLET_WORK.length} disposable collector wallets; see publications/devnet/session.ts`,
@@ -278,8 +266,8 @@ export async function lifecycle(c: TestContext) {
     await arweaveBytes(item.id, item.dataHash);
   }
   const [bob, carol, dave, erin, frank, grace, heidi, ivan] = c.collectors;
-  // Each wallet is funded from its own measured work (`walletFunding`), not a flat grant: the
-  // paid case added three wallets and program-data rent for this build leaves little spare.
+  // Each wallet is funded from its own measured work (`walletFunding`), not a flat grant:
+  // program-data rent for this build leaves little spare.
   await once("fund-collectors", () =>
     send(
       c,
@@ -607,8 +595,8 @@ export async function lifecycle(c: TestContext) {
     assert.equal(live.creator, c.payer.address, "The offer names another creator");
     return `${signature}; ${offerKey} priced at ${PRICE} lamports, revision 1`;
   });
-  // The whole reason `collect` grew an account: without it, the free instruction would be the
-  // bypass around every price this program can set.
+  // Why `collect` takes the `Offer` account: without it, the free instruction would bypass every
+  // price this program can set.
   await once("priced-collect-refused", async () =>
     send(
       { ...c, payer: grace },
@@ -711,14 +699,10 @@ export async function lifecycle(c: TestContext) {
     return "Three price changes and one sale left the edition commitment untouched; 3/3 issued";
   });
 
-  // The album acceptance. Everything above is v1 plus offers; this exercises the album
-  // instructions, which seal a collection into a Core group the creator owns.
-  //
-  // No generated keypair: the album is a program PDA signed with `invoke_signed`, exactly
-  // like every other account a publication creates. The wallet is the only signer.
-  // Keep the same album after an interrupted acceptance command. `once` may already have
-  // confirmed its creation; a new nonce would point later publishes at an empty PDA while
-  // skipping creation because the old step is complete.
+  // The album acceptance: the album instructions seal a collection into a Core group the creator
+  // owns. The album is a program PDA signed with `invoke_signed`, so the wallet is the only signer.
+  // The nonce is journalled so an interrupted run keeps the same album: `once` may already have
+  // confirmed its creation, and a new nonce would point later publishes at an empty PDA.
   const albumNonce = journal["album-nonce"] ?? randomBytes(32).toString("hex");
   const create = await createAlbumInstruction({
     program: c.program.address,

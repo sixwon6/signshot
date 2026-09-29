@@ -1,11 +1,8 @@
 /**
- * Disposable devnet acceptance for `era_editions`. Sending, deploying, byte verification.
- *
- * Ported from the previous repository's `publications/devnet/work.ts` with the same safety
- * properties, and extended for the build that added `set_offer` and `buy`:
+ * Disposable devnet acceptance for `era_editions`: sending, deploying, byte verification.
  *
  *  - every key this file touches is generated in `session.ts` and lives only in process memory;
- *    nothing here reads, imports or writes the owner's wallet,
+ *    nothing here reads, imports or writes any personal wallet,
  *  - `guard` pins the endpoint AND the devnet genesis hash before any request that could send,
  *  - every send is simulated with `sigVerify` first, size-checked against the packet limit, and
  *    journalled by a blockhash-independent operation id BEFORE it is broadcast, so a lost
@@ -78,20 +75,15 @@ export async function guard(c: Pick<Context, "endpoint">) {
 }
 
 /**
- * What this session must still be able to pay for AFTER the program is deployed.
- *
- * Derived from the measured per-instruction lamports in `programs/editions/README.md`, not a round
- * number, so extending the acceptance run cannot silently outgrow the reserve the way a literal
- * 0.15 SOL did when the supply-5 and album cases were added. The offer rows were added the same
- * way: the paid case publishes one more edition, sets a price three times and moves the price
- * itself. So were the royalty and Seeker-only rows: two more editions, one more claim for bob,
- * his stand-in Genesis Token and its move to frank.
+ * What this session must still be able to pay for AFTER the program is deployed, from the
+ * measured per-instruction lamports in `programs/editions/README.md` rather than a round number,
+ * so a new acceptance case cannot silently outgrow the reserve.
  */
 export const TEST_COSTS = {
   /**
    * Measured `publish`: supply 3, supply 1, supply 5, the priced supply-3, the sealed 1/1, the
-   * zero-royalty supply-2 and the sealed Seeker-only supply-3. Plus 55,680 lamports since: the 8
-   * bytes of `published_at`, at the same 6,960 per byte; and 361,920 more for 52 bytes: the
+   * zero-royalty supply-2 and the sealed Seeker-only supply-3. Plus 55,680 lamports for the 8
+   * bytes of `published_at`, at 6,960 per byte; and 361,920 more for 52 bytes: the
    * collection's `Royalties` plugin (41 bytes of data and a 10-byte registry record) and
    * `seeker_only`.
    */
@@ -138,11 +130,9 @@ export const TEST_COSTS = {
 
 /**
  * What each disposable collector wallet must hold, in the order `session.ts` generates them.
- *
- * Computed from the work each wallet actually does rather than a flat grant, because the paid
- * case added three more wallets and a flat 30,000,000 each would have pushed the reserve past
- * what the faucet can give for a program of this size. A wallet that only has rejections
- * simulated for it still needs a balance: simulation verifies signatures and fee payment.
+ * Computed from each wallet's own work: a flat grant would push the reserve past what the faucet
+ * can give for a program of this size. A wallet that only has rejections simulated for it still
+ * needs a balance: simulation verifies signatures and fee payment.
  */
 export const WALLET_WORK: readonly {
   name: string;
@@ -201,11 +191,8 @@ export function testReserve(): number {
 export const FAUCET_MAX = 2_000_000_000;
 
 /**
- * Everything this session will spend, read from the cluster rather than remembered.
- *
- * The paid-sales build is larger than the v1 acceptance program, and the cluster's rent schedule
- * can change. Compute the target from this build and live rent so the session can report how much
- * owner-authorized devnet SOL the run needs.
+ * Everything this session will spend, from this build's size and live rent (the cluster's rent
+ * schedule can change), so the session can report how much devnet SOL the run needs.
  *
  * Fees are the buffer writes and the two account creations. Each write has one signature; buffer
  * creation and deployment each have two. The chunk size is the upload loop's
@@ -401,10 +388,9 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
 }
 
 /**
- * The exact lines the owner pastes into `publications/deployments.ts` after a byte-verified
- * deploy. Printed by the session rather than written by this tooling: `deployments.ts` is the
- * reviewed allow-list of programs this app will talk to, so a deployment adds itself to it only
- * through a human edit.
+ * The exact lines to paste into `publications/deployments.ts` after a byte-verified deploy.
+ * Printed, never written: `deployments.ts` is the reviewed allow-list of programs this app will
+ * talk to, so a deployment joins it only through a human edit.
  */
 function printDeploymentsEntry(program: string, sha256: string, bytes: number, authority: string) {
   const grouped = String(bytes).replace(/\B(?=(\d{3})+(?!\d))/g, "_");

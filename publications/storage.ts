@@ -99,7 +99,7 @@ export const paidStorage = (cluster: string) => cluster === "mainnet-beta";
 /**
  * Turbo's Solana payment address, pinned: `/info` is read on every quote, but only this answer is
  * paid. payment.ardrive.io/v1/info, turbo.ardrive.io/info and upload.ardrive.io/info all named it
- * on 2026-09-25. A different one means a new release, never a transfer to wherever `/info` points.
+ * when pinned. A different one means a new release, never a transfer to wherever `/info` points.
  */
 export const TURBO_SOLANA_ADDRESS = "HepiT2k93CFQaSB7i3ZNXhybZKn5MeWiv3UkLsaJKk4i";
 const SYSTEM_PROGRAM = address("11111111111111111111111111111111");

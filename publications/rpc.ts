@@ -210,7 +210,7 @@ const FILE_MISMATCH = "The published file does not match its onchain fingerprint
  * needs. `arweave.net` first because it is the only host an on-chain `uri` may name, and that
  * `uri` stays `https://arweave.net/<id>`; only the read path differs. The bare `arweave.net/<id>`
  * answers 302 to a per-item sandbox host (`<hash>.arweave.net`), which the collect page's
- * `connect-src` does not allow, so reading it first failed on every page load.
+ * `connect-src` does not allow.
  */
 const ARWEAVE_GATEWAYS: readonly string[] = [
   "https://arweave.net/raw/",
@@ -357,8 +357,8 @@ const EDITION_ERROR = {
   STALE_NUMBER: 6002n,
   EXISTING_ASSET: 6003n,
   INVALID_ALBUM: 6004n,
-  // Appended by the paid-sales build, never inserted: 6000–6004 are the codes the deployed v1
-  // client already maps to messages, so renumbering them would silently change what a wallet shows.
+  // Appended, never inserted: deployed clients map 6000–6004 to messages, so renumbering them
+  // would silently change what a wallet shows.
   NOT_FOR_SALE: 6005n,
   OFFER_CHANGED: 6006n,
   PAYMENT_REQUIRED: 6007n,
@@ -466,25 +466,12 @@ export function describeProgramError(
   const message = EDITION_MESSAGES[String(code)];
   if (message === undefined) return generic();
   /**
-   * COLLECTING IS THE ONE OPERATION WHERE A FAILURE CAN BE WORTH REPEATING.
-   *
-   * `retryable` asks whether this wallet may be offered the operation again; for publishing the
-   * answer is always no, because the edition address comes from a deterministic nonce and a second
-   * attempt would recreate the identical transaction. A claim is different: its copy `number` is
-   * part of the instruction data, so the next attempt is a DIFFERENT transaction against a
-   * different print PDA.
-   *
-   * `StaleNumber` (the program's own message: "Refresh before trying again") and `ExistingAsset`
-   * are the two ways a competing collector taking the same number shows up — the first from the
-   * `number == minted + 1` check, the second from `clear_pda` finding the print PDA already
-   * owned. Both are answered by re-reading `minted` and claiming the next number.
-   *
-   * `SoldOut` is not: `minted == supply` is permanent, so no later attempt can succeed either.
-   */
-  /**
-   * `buy` is `collect` with a payment, so every claiming rule reads the same way for both. The one
-   * operation that is retried by re-reading the chain is the one that is retried by re-reading the
-   * chain, whichever instruction carried it.
+   * Only a claim (`collect`, or `buy`, which is `collect` with a payment) can be worth repeating: a
+   * publish re-derives the same nonce and so the identical transaction, while a claim's copy
+   * `number` is in the instruction data, so the next attempt targets a different print PDA.
+   * `StaleNumber` (the `number == minted + 1` check) and `ExistingAsset` (`clear_pda` finding the
+   * print PDA owned) both mean a competing collector took the number; re-read `minted` and claim
+   * the next. `SoldOut` is permanent.
    */
   const claiming = options.operation === "collect" || options.operation === "buy";
   if (claiming &&
@@ -499,17 +486,12 @@ export function describeProgramError(
       retryable: true,
     };
   /**
-   * THE THREE OFFER CODES ARE RETRYABLE WHILE CLAIMING, FOR THE SAME REASON `StaleNumber` IS.
-   *
-   * A price lives in its own account and can change between the review and the block. All three
-   * codes say the offer the screen showed is not the offer on chain any more:
+   * The offer codes are retryable while claiming for the same reason: the price lives in its own
+   * account and can change between review and block. Each is answered by re-reading the offer and
+   * quoting a different transaction, never by resending the same message:
    *   `OfferChanged`    — `buy` carried a price/revision the offer no longer has;
    *   `PaymentRequired` — `collect` found an offer with a price, so the claim is a purchase;
    *   `NotForSale`      — `buy` found no offer, or a zero one, so the claim is free.
-   * Each is answered by re-reading the offer account and quoting the OTHER instruction (or the
-   * same one at the new price) — a different transaction, exactly as a refreshed copy number is.
-   * None of them can be answered by resending the identical message, which is why `retryable` is
-   * scoped to the claiming operations and nothing else.
    */
   if (claiming &&
     (code === EDITION_ERROR.OFFER_CHANGED ||
@@ -593,9 +575,9 @@ export type PublicationOperation =
   | "transfer";
 
 /**
- * Historical reference costs at 6,960 lamports per byte, not a current funding threshold.
- * Devnet rent changed; simulation supplies the actual cost. Core's create fee is counted once
- * per operation. `transfer` creates nothing.
+ * Reference costs at 6,960 lamports per byte, not a current funding threshold: rent has since
+ * changed, and simulation supplies the actual cost. Core's create fee is counted once per
+ * operation. `transfer` creates nothing.
  */
 export const OPERATION_FLOOR_LAMPORTS: Readonly<Record<PublicationOperation, bigint>> = {
   publish:
@@ -620,14 +602,9 @@ export const OPERATION_FLOOR_LAMPORTS: Readonly<Record<PublicationOperation, big
     rentExemption(CORE_PRINT_MIN_BYTES) +
     rentExemption(RECEIPT_ACCOUNT_BYTES),
   /**
-   * A purchase creates exactly what a claim creates — one Core print and one `Receipt` — so its
-   * floor IS the claim's, and the measured devnet totals agree: a collect cost 5,367,800 lamports
-   * and a buy cost the price PLUS 5,367,800.
-   *
-   * THE PRICE IS NOT IN THE FLOOR. A floor is a local lower bound on what the NETWORK charges, used
-   * to sanity-check an endpoint's estimate; the price is an amount the creator chose and the buyer
-   * reviewed separately. Folding it in here would make one number out of two facts the design
-   * record requires be shown apart, and would make the floor depend on a mutable account. The
+   * A purchase creates exactly what a claim creates, so its floor is the claim's (measured: a buy
+   * cost the price plus 5,367,800). The price is not in the floor: the floor bounds what the
+   * network charges, while the price is shown separately and lives in a mutable account. The
    * caller adds it.
    */
   buy: CORE_CREATE_FEE_LAMPORTS + rentExemption(CORE_PRINT_MIN_BYTES) + rentExemption(RECEIPT_ACCOUNT_BYTES),

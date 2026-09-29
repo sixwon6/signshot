@@ -1,4 +1,4 @@
-/** Disposable devnet-only session. Private keys exist only in this process. */
+/** Disposable devnet session. Private keys exist only in this process. */
 import { generateKeyPairSigner } from "@solana/kit";
 import { createInterface } from "node:readline";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,10 +21,9 @@ const endpoint = "https://api.devnet.solana.com";
 const payer = await generateKeyPairSigner();
 const program = await generateKeyPairSigner();
 const buffer = await generateKeyPairSigner();
-// One disposable collector wallet per row of WALLET_WORK: the five of the free acceptance
-// (one publisher plus four friends, and the wallet that is only ever refused) and the three the
-// paid case added — the buyer, the wallet that collects free once the price is cleared, and the
-// wallet whose stale quote is refused.
+// One disposable collector wallet per row of WALLET_WORK: the publisher's four friends, the
+// wallet that is only ever refused, the buyer, the wallet that collects free once the price is
+// cleared, and the wallet whose stale quote is refused.
 const collectors = await Promise.all(
   WALLET_WORK.map(() => generateKeyPairSigner()),
 );

@@ -132,12 +132,10 @@ export function genesisAddresses(cluster: Cluster): GenesisAddresses {
  * The membership is what cannot be forged: Token-2022 writes a `TokenGroupMember` only with the
  * signature of the group's update authority (`process_initialize_member` → `check_update_authority`),
  * which is Solana Mobile's key. A mint authority or a metadata pointer is anyone's to set on a mint
- * of their own. The member's `mint` must be `mint` itself, which is where Token-2022 writes it:
- * bytes that name another mint are not this account's, whoever sent them.
+ * of their own. The member's `mint` must be `mint` itself, so another mint's bytes never count.
  *
- * The caller has checked the account is owned by Token-2022, the only program that can have
- * written these extensions. Anything unreadable is `null`, never a throw. `expected` is for the
- * devnet acceptance only; every real check uses the defaults.
+ * The caller has checked the account is owned by Token-2022. Anything unreadable is `null`, never
+ * a throw. `expected` is for the devnet acceptance only; every real check uses the defaults.
  */
 export function seekerGenesisMember(
   data: Uint8Array,

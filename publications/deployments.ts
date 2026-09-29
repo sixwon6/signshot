@@ -28,8 +28,8 @@ export const PLACEHOLDER_PROGRAMS: readonly string[] = [
  * does not enable publishing; that is `DEPLOYMENTS`.
  */
 export const HISTORICAL: Record<Cluster, readonly string[]> = {
-  // The devnet acceptance deployment. It is still upgradeable, so PROGRAM_IMAGES pins its
-  // reviewed ELF digest and upgrade authority. Devnet only: a mainnet override naming it is refused.
+  // Devnet acceptance deployments. Each is still upgradeable, so PROGRAM_IMAGES pins its reviewed
+  // ELF digest and upgrade authority. A mainnet override naming one is refused.
   devnet: [
     "4Rk11vaKzxqJhX1kkScRuJ4PKuPnjik6LHwus4J67ipM",
     "BrRJzFDzJKg3zrvyYQ3wkhAQuJwbVZtGhqAox8RfjqC",
@@ -63,43 +63,41 @@ export type ProgramImage = {
 
 export const PROGRAM_IMAGES: Record<Cluster, Record<string, ProgramImage>> = {
   devnet: {
-    // The devnet acceptance deployment of the Seeker-only publish rule (6caa4a2, devnet-genesis
-    // build), deployed and byte-verified 2026-09-28. Its upgrade authority is that session's
-    // in-memory payer.
+    // The Seeker-only publish rule (6caa4a2, devnet-genesis build). Upgrade authority: the
+    // in-memory payer of the devnet session that deployed it.
     "4Rk11vaKzxqJhX1kkScRuJ4PKuPnjik6LHwus4J67ipM": {
       sha256: "b4cdd1dbb6ec209f079b20ff574b83435d95e87ee1e9e19ca82bc81a404f67a0",
       bytes: 427_016,
       upgradeAuthority: "8v29m3t1Moi8mX1EZ73y1MAzjAoNr1bfRnz7N8nd4jyR",
       source: "2026-09-28 devnet acceptance build (Seeker-only publish rule), publications/devnet session",
     },
-    // The devnet acceptance deployment with locked royalties, Seeker-only claims and the creator
-    // rule (devnet-genesis build), deployed and byte-verified 2026-09-25. Its upgrade authority is
-    // that session's in-memory payer.
+    // Locked royalties, Seeker-only claims and the creator rule (devnet-genesis build). Upgrade
+    // authority: the in-memory payer of the devnet session that deployed it.
     BrRJzFDzJKg3zrvyYQ3wkhAQuJwbVZtGhqAox8RfjqC: {
       sha256: "81dc877aedb1cf4a575c86bab36596fab9a1aae03a19e2112f9f7e296a624f57",
       bytes: 428_552,
       upgradeAuthority: "5bdctsW1eaVUVq25ZWcz2vQN3aSDzaS4UJJmrbkicKQD",
       source: "2026-09-25 devnet acceptance build (royalties, Seeker-only), publications/devnet session",
     },
-    // The devnet acceptance deployment with the Genesis Token accounts, the price floor and the
-    // recorded publication time (devnet-genesis build), deployed and byte-verified 2026-09-25.
-    // Its upgrade authority is the session's in-memory payer, gone when the session ended.
+    // The Genesis Token accounts, the price floor and the recorded publication time
+    // (devnet-genesis build). Upgrade authority: the devnet session's in-memory payer, discarded
+    // when that session ended.
     A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz: {
       sha256: "2abe33410a1d5567715fba96d086364a366bf1865d4586a70d4a4e1ae926bead",
       bytes: 451_856,
       upgradeAuthority: "7Q49ptVZPvbfV5UyXyWuSbbCT727QgTr3Kkuu4einsJ8",
       source: "2026-09-25 devnet acceptance build, publications/devnet session",
     },
-    // Byte-verified build with paid sales, deployed 2026-09-16. Authority read from its
-    // ProgramData account (BrcFJBrcj18FcPGfFJFZnNJirnaV45LcoRLibm7hqQ2u) on 2026-09-24.
+    // Paid sales. Authority read from its ProgramData account
+    // (BrcFJBrcj18FcPGfFJFZnNJirnaV45LcoRLibm7hqQ2u).
     "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU": {
       sha256: "aa59dbe513a5628b2c8944e8d36d9a250a723ddbf525d9776b5b290562a1aacf",
       bytes: 438_912,
       upgradeAuthority: "6r7wvBV2WR8L1GHJ1FV41j4JrqBxYfxQN3Xj7L2dPAuv",
       source: "2026-09-16 devnet acceptance build, publications/devnet session",
     },
-    // The devnet acceptance deployment. Authority read from its ProgramData account
-    // (3mGafMt6aGVM9Hnxg1zsQ9bVGJKTX5FrwqqQYEPGC11C) on 2026-09-24.
+    // Predates paid sales. Authority read from its ProgramData account
+    // (3mGafMt6aGVM9Hnxg1zsQ9bVGJKTX5FrwqqQYEPGC11C).
     BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq: {
       sha256: "c3566d45ef4bdd4ad03dc8ee4cf25ebdf74fe83033cdadfc5d16289626deb105",
       bytes: 391_960,
@@ -220,18 +218,11 @@ export function isTrustedDeployment(cluster: Cluster, program: string): boolean 
 }
 
 /**
- * Deployments that predate paid sales, listed by address.
- *
- * `era_editions` gained the `Offer` account, `set_offer` and `buy` AFTER this program was deployed,
- * and the same change widened `collect` from seven accounts to eight. A Solana program's account
- * list is part of its interface, so sending the new eight-account `collect` to the old binary would
- * be rejected, and sending `set_offer` to it would hit an instruction it does not implement.
- *
- * The deployed devnet acceptance program is that old build. It is upgradeable, but the owner ships
- * the new build to a NEW address (a layout change must be a new address — see the pinned-length
- * note in `core/protocol.ts`), so every future entry in this file has offers and this list stays
- * exactly one address long. That is why the default answer is `offers: true`: a deployment added
- * later must not have to be remembered here to work.
+ * Deployments that predate paid sales. Later builds added the `Offer` account, `set_offer` and
+ * `buy`, and widened `collect` from seven accounts to eight; an account list is part of a program's
+ * interface, so the old binary rejects both. A layout change ships to a new address (see the
+ * pinned-length note in `core/protocol.ts`), so only earlier deployments are listed and a
+ * deployment added later reads as `offers: true` with no entry here.
  */
 export const LEGACY_WITHOUT_OFFERS: readonly string[] = [
   "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
@@ -239,12 +230,10 @@ export const LEGACY_WITHOUT_OFFERS: readonly string[] = [
 
 /**
  * Deployments that predate the Seeker Genesis Token accounts on `publish` and `publish_in_album`.
- *
- * The build after these takes two more accounts at the END of both instructions — the creator's
- * Genesis Token mint and their token account for it, or the program id in each place — verifies
- * them and seals the mint into the collection's locked attributes (`seeker_genesis_token`). The
- * instruction data and the accounts before them are unchanged. Like `LEGACY_WITHOUT_OFFERS`, this
- * lists only what was deployed before, so a deployment added later needs no entry.
+ * Later builds take two more accounts at the END of both instructions — the creator's Genesis
+ * Token mint and their token account for it, or the program id in each place — verify them and
+ * seal the mint into the collection's locked attributes (`seeker_genesis_token`). The instruction
+ * data and the accounts before them are unchanged.
  */
 export const LEGACY_WITHOUT_GENESIS: readonly string[] = [
   "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
@@ -255,8 +244,7 @@ export const LEGACY_WITHOUT_GENESIS: readonly string[] = [
  * Deployments whose `Edition` account predates `published_at`: 8 + 293 bytes, against 8 + 301 for
  * every build after them, which records the Clock's `unix_timestamp` at publish right after `bump`.
  * An edition of one of these has no recorded time, so its publication time is looked for in the
- * creator's claim receipt history instead (`publicationTime` in `core/attestationCheck.ts`). Like
- * the two lists above, this names only what was deployed before.
+ * creator's claim receipt history instead (`publicationTime` in `core/attestationCheck.ts`).
  */
 export const LEGACY_WITHOUT_PUBLISHED_AT: readonly string[] = [
   "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
@@ -264,14 +252,12 @@ export const LEGACY_WITHOUT_PUBLISHED_AT: readonly string[] = [
 ];
 
 /**
- * Deployments that predate the creator's royalty and Seeker-only editions.
- *
- * The build after these takes two more ARGUMENTS at the end of `publish` and `publish_in_album` —
- * `royalty_bps: u16` and `seeker_only: bool` — seals a locked `Royalties` plugin into every new
- * collection, appends `seeker_only` to the `Edition` account (8 + 302 bytes), and gives `collect`
- * and `buy` the two Genesis Token accounts at the END of their lists, with the claim receipt keyed
- * on the collector's Genesis Token mint on a Seeker-only edition. Like the lists above, this names
- * only what was deployed before.
+ * Deployments that predate the creator's royalty and Seeker-only editions. Later builds take two
+ * more ARGUMENTS at the end of `publish` and `publish_in_album` — `royalty_bps: u16` and
+ * `seeker_only: bool` — seal a locked `Royalties` plugin into every new collection, append
+ * `seeker_only` to the `Edition` account (8 + 302 bytes), and give `collect` and `buy` the two
+ * Genesis Token accounts at the END of their lists, with the claim receipt keyed on the collector's
+ * Genesis Token mint on a Seeker-only edition.
  */
 export const LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY: readonly string[] = [
   "A1fnWjJD7LcHeksyVPiZrUhLoj6T78bEC24iGgf1SLAz",

@@ -494,10 +494,8 @@ export async function instruction(
  * one wallet approval, no generated signers — the print and the receipt are both PDAs the program
  * signs for itself.
  *
- * WHY A SEPARATE FUNCTION FROM `instruction()`. The web client chose between the two by testing
- * whether a `uri` had been passed, so a caller that simply forgot the URI silently built a
- * DIFFERENT instruction instead of failing. Here `instruction()` keeps its fail-closed publish
- * check and neither instruction can be reached by accident; the bytes are unchanged either way.
+ * Separate from `instruction()`, so a caller that forgets the `uri` fails `instruction()`'s publish
+ * check instead of building a collect.
  *
  * WHAT THIS COSTS THE COLLECTOR. There is no purchase price and nothing reaches the publisher, but
  * `collect` creates one Core asset and one `Receipt` account, so the collector pays rent, the
@@ -509,25 +507,20 @@ export async function instruction(
  * (https://www.anchor-lang.com/docs/basics/program-structure), here d02fc29b116252ec, followed by
  * `number` as a Borsh u16 little-endian.
  *
- * ACCOUNTS, in `struct Collect`'s order (`programs/editions/src/lib.rs`), also read back off the
- * confirmed devnet transaction
- * 2bca9Chg3bZv2T4KMgNENHFiwfAev6uUSjoc2pfDHvHZ4zHBUfQpPmhqoir4QDobe5BXhyiaGMSsTLKTREfX4aqm:
- * collector (writable signer), then edition, collection, print and receipt (writable), then Core
- * and System read-only.
+ * ACCOUNTS, in `struct Collect`'s order (`programs/editions/src/lib.rs`): collector (writable
+ * signer), then edition, collection, print and receipt (writable), then Core and System read-only.
  *
- * TWO ACCOUNT LISTS, ONE INSTRUCTION. The build that added paid sales also added a read-only
- * `offer` account between the receipt and Core, so that a free claim can be REFUSED for an edition
- * the creator has priced (`PaymentRequired`); without it the free instruction would be the bypass
- * a bypass. The instruction data is identical either way — only the account
- * list grew — so which list to send is decided by `programFeatures(e.program).offers`, and the
- * deployment that predates offers keeps its seven accounts exactly.
+ * OFFER ACCOUNT. A deployment with `programFeatures().offers` also takes a read-only `offer` account
+ * between the receipt and Core, so the program can refuse a free claim of a priced edition
+ * (`PaymentRequired`). The instruction data is the same either way; a deployment without offers
+ * keeps its seven accounts.
  *
  * SEEKER-ONLY EDITIONS. A deployment with `programFeatures().royaltiesAndSeekerOnly` takes the
  * collector's Genesis Token accounts last, as `publish` takes the creator's, or the program's id in
  * both places. `genesis` is exactly what a Seeker-only edition needs (`seekerOnly` on the read
  * publication) and what any other edition refuses: with it the receipt is
  * `claimReceiptAddress(program, edition, genesis.mint)`, one claim per token; without it
- * `["claim", edition, collector]` as before. The program answers `GenesisTokenRequired` (6011) or
+ * `["claim", edition, collector]`. The program answers `GenesisTokenRequired` (6011) or
  * `InvalidGenesisToken` (6008) for the wrong choice; nothing here guesses which one it is.
  */
 export async function collectInstruction(
@@ -1714,14 +1707,10 @@ async function loadPublication(
     imageBytes,
     publication,
     /**
-     * The current price of the remaining copies, or `null` for a free edition. THREE different
-     * facts read as `null` and callers are meant to treat them identically, because the program
-     * does: the deployment has no `Offer` account at all, no offer was ever set, or the offer says
-     * zero. In every one of them `collect` succeeds and `buy` answers `NotForSale`.
-     *
-     * A quote is never built from this copy: it was read when the edition was loaded, and a price
-     * can change at any moment, so `prepareCollect` re-reads the account immediately before
-     * quoting. This is what a screen renders, not what a wallet approves.
+     * The current price of the remaining copies, or `null` for a free edition: no `Offer` account
+     * on the deployment, no offer set, or a zero price, which the program treats alike (`collect`
+     * succeeds, `buy` answers `NotForSale`). Display only: a price can change at any moment, so
+     * `prepareCollect` re-reads the account immediately before quoting.
      */
     offer: pricedOffer(await readOfferAccount(endpoint, program, edition)),
     /** `publication.seekerOnly`: a claim needs the collector's Seeker Genesis Token. */

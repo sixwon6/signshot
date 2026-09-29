@@ -50,13 +50,10 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   // `external_url`, Metaplex `attributes`, and `properties` holding exactly the one image file and
   // its category. The earlier one with evidence had neither the link nor the file list. Under
   // `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
-  // Seeker Genesis Token (`genesisToken`), or both. The bundle's manifest must name THIS
-  // publication, its challenge must be the manifest's hash, its signature must verify, its chain
-  // must reach a Google root, and the attributes must be what the certificate supports. Evidence
-  // that fails any of that is SET ASIDE, not fatal: the photograph is still a valid, hash-bound
-  // publication, it just carries no device claim here, and the Proof sheet says why. (Refusing
-  // the whole photo would add no safety and would make an immutable document unviewable if a
-  // future keystore format ever outgrew this reader.)
+  // Seeker Genesis Token (`genesisToken`), or both. Evidence that fails `readAttestationBundle` or
+  // `checkAttributes` is SET ASIDE, not fatal: the photograph is still a valid, hash-bound
+  // publication with no device claim, and the Proof sheet says why. Refusing it would add no safety
+  // and would make an immutable document unviewable if a keystore format outgrew this reader.
   const current = exactKeys(doc, ["name", "description", "image", "external_url", "attributes", "properties"]);
   if (current || (earlier && exactKeys(doc, ["name", "description", "image", "attributes", "properties"]))) {
     const properties = object(doc.properties);
@@ -159,8 +156,7 @@ export function readSavedPhotoMetadata(serialized: string, edition: CoreMetadata
         (parsed.dimensions && (parsed.dimensions.width !== edition.width || parsed.dimensions.height !== edition.height)))
       throw new Error(MISMATCH);
     // The attestation summary and the Genesis Token claim are whatever the hash-bound document
-    // supports, never the saved copy.
-    // `genesisSealed` is a chain fact `isSigned` re-reads; a saved copy of it means nothing.
+    // supports, never the saved copy. `genesisSealed` is a chain fact `isSigned` re-reads.
     const { attestation: _saved, attestationProblem: _problem, genesisMint: _mint, genesisSealed: _sealed, ...saved } = edition;
     const rest = parsed.genesisMint ? { ...saved, genesisMint: parsed.genesisMint } : saved;
     return parsed.attestation

@@ -5,6 +5,7 @@ import { base64UrlEncode, concatBytes, utf8 } from "./codec";
 /**
  * ANS-104 data items, serialized and ed25519-signed on the phone, following `@dha-team/arbundles`
  * byte for byte. Synchronous and pure, so an item's id can be computed inside a wallet session.
+ * Spec: https://github.com/ArweaveTeam/arweave-standards/blob/master/ans/ANS-104.md
  */
 
 /** ANS-104 signature type 2. */
@@ -19,8 +20,7 @@ export const OWNER_LENGTH = 32;
 const DATA_ITEM_OVERHEAD = 2 + SIGNATURE_LENGTH + OWNER_LENGTH + 1 + 1 + 8 + 8;
 
 /**
- * The app's item cap, below Turbo's free-tier limit (`TURBO_FREE_ITEM_BYTES`), on every network:
- * devnet uploads ride the free tier, and mainnet pays for items of the size devnet tests. An
+ * The app's item cap on every network, below Turbo's free-tier limit (`TURBO_FREE_ITEM_BYTES`). An
  * oversize item must fail here, before the wallet is involved, not as a 402.
  */
 const MAX_DATA_ITEM_BYTES = 100 * 1024;

@@ -2,7 +2,14 @@ import {
   address,
   getBase64Encoder,
   getBase64Decoder,
-  createSolanaRpc,
+  createDefaultRpcTransport,
+  createSolanaRpcFromTransport,
+  isSolanaError,
+  SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR,
+  type Rpc,
+  type RpcResponse,
+  type RpcTransport,
+  type SolanaRpcApi,
   signature,
   type Instruction,
   createTransactionMessage,
@@ -145,6 +152,79 @@ async function boundedBody(
   return bytes;
 }
 
+/**
+ * HTTP 429 is retried, and nothing else: the provider refused before doing any work, so a resend is
+ * safe (a signed transaction resends as the same signature). Key-free provider URLs allow 5
+ * requests per second per IP, and phones behind carrier NAT share one.
+ */
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_BASE_MS = 500;
+const RATE_LIMIT_MAX_WAIT_MS = 5_000;
+
+/**
+ * The wait before retry `attempt` (from 0): `Retry-After` in seconds or as an HTTP date, else
+ * 500 ms × 2^attempt jittered to 0.5–1.5×. Capped either way, so no header can stall a call.
+ */
+export function rateLimitDelayMs(
+  attempt: number,
+  retryAfter: string | null | undefined,
+  now = Date.now(),
+  random = Math.random(),
+): number {
+  const value = retryAfter?.trim() ?? "";
+  let ms = /^\d+$/.test(value) ? Number(value) * 1000 : value ? Date.parse(value) - now : NaN;
+  if (!Number.isFinite(ms)) ms = RATE_LIMIT_BASE_MS * 2 ** attempt * (0.5 + random);
+  return Math.round(Math.min(RATE_LIMIT_MAX_WAIT_MS, Math.max(0, ms)));
+}
+
+/** Waits `ms`, or rejects the moment `signal` aborts, with what fetch would reject with. */
+function waitUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  // React Native's AbortSignal has no `reason`; its fetch rejects with this instead.
+  const aborted = () => signal?.reason ?? Object.assign(new Error("Aborted"), { name: "AbortError" });
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(aborted());
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(aborted());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Every kit client: kit's default transport (coalescing and `Solana-Client` header kept) behind the
+ * same 429 policy as `request()`. The last 429 is rethrown as kit threw it, so `safeErrorText`
+ * still reads it as a busy network.
+ */
+export function solanaRpc(endpoint: string): Rpc<SolanaRpcApi> {
+  const transport = createDefaultRpcTransport({ url: endpoint });
+  const retrying: RpcTransport = async <TResponse>(
+    config: Parameters<RpcTransport>[0],
+  ): Promise<RpcResponse<TResponse>> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await transport<TResponse>(config);
+      } catch (error) {
+        if (
+          attempt >= RATE_LIMIT_RETRIES ||
+          !isSolanaError(error, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR) ||
+          error.context.statusCode !== 429
+        )
+          throw error;
+        await waitUnlessAborted(
+          rateLimitDelayMs(attempt, error.context.headers?.get?.("retry-after")),
+          config.signal,
+        );
+      }
+    }
+  };
+  return createSolanaRpcFromTransport(retrying);
+}
+
 export async function request<T>(
   endpoint: string,
   method: string,
@@ -153,12 +233,23 @@ export async function request<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: RPC_REQUEST_ID, method, params }),
-      signal: controller.signal,
-    });
+    // The one deadline above spans every attempt and every wait.
+    let res: Response;
+    for (let attempt = 0; ; attempt++) {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: RPC_REQUEST_ID, method, params }),
+        signal: controller.signal,
+      });
+      if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
+      // Unread, the refused body would hold its connection open.
+      res.body?.cancel?.().catch(() => {});
+      await waitUnlessAborted(
+        rateLimitDelayMs(attempt, res.headers?.get?.("retry-after")),
+        controller.signal,
+      );
+    }
     if (!res.ok) {
       // A proxy may explain a 502/503 in a JSON-RPC error body; prefer that over the bare status.
       let message: string | undefined;
@@ -655,7 +746,7 @@ export async function prepareTransaction(
   extraSigners: KeyPairSigner[] = [],
   floorLamports: bigint = 0n,
 ) {
-  const rpc = createSolanaRpc(endpoint);
+  const rpc = solanaRpc(endpoint);
   const latest = await rpcWithTimeout(abortSignal => rpc
     .getLatestBlockhash({ commitment: "confirmed" })
     .send({ abortSignal }));

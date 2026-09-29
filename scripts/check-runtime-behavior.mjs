@@ -71,6 +71,99 @@ if (!process.argv.includes("--worker")) {
   }), "fresh response");
   await assert.rejects(rpcWithTimeout(async () => { throw new Error("different network"); }), /different network/);
   mock.timers.reset();
+  {
+    // An HTTP 429 alone is retried, three times at most, by `request()` and every kit client alike.
+    const { request, solanaRpc, rateLimitDelayMs } = await import("../publications/rpc.ts");
+    const { safeErrorText } = await import("../src/ui/errorText.ts");
+    const realFetch = globalThis.fetch;
+    const ENDPOINT = "https://rpc.test";
+    let calls = 0;
+    const answer = (id, status, retryAfter = "0") => status === 200
+      ? new Response(JSON.stringify({ jsonrpc: "2.0", id, result: 7 }))
+      : new Response("slow down", { status, headers: { "Retry-After": retryAfter } });
+    // Each call takes the next status; the last one repeats.
+    const serve = (...statuses) => {
+      calls = 0;
+      globalThis.fetch = async (_url, init) => answer(JSON.parse(init.body).id, statuses[Math.min(calls++, statuses.length - 1)]);
+    };
+    const busy = (error) => safeErrorText(error) === "The network is busy. Try again in a moment.";
+    try {
+      serve(429, 200);
+      assert.equal(await request(ENDPOINT, "getBlockHeight", []), 7);
+      assert.equal(calls, 2, "a 429 then an answer is the answer");
+      serve(429, 429, 200);
+      assert.equal(await solanaRpc(ENDPOINT).getBlockHeight().send(), 7n);
+      assert.equal(calls, 3, "a kit client retries the same way");
+      serve(429);
+      let started = Date.now();
+      await assert.rejects(request(ENDPOINT, "getBlockHeight", []), { message: "Solana connection unavailable (429). Please retry." });
+      assert.equal(calls, 4, "three retries, then the plain line");
+      assert.ok(Date.now() - started < 1_000, "Retry-After: 0 is honoured over the backoff");
+      serve(429);
+      started = Date.now();
+      await assert.rejects(solanaRpc(ENDPOINT).getBlockHeight().send(), busy);
+      assert.equal(calls, 4, "a kit client's last 429 still reads as a busy network");
+      assert.ok(Date.now() - started < 1_000);
+      for (const status of [500, 503]) {
+        serve(status, 200);
+        await assert.rejects(request(ENDPOINT, "getBlockHeight", []), { message: `Solana connection unavailable (${status}). Please retry.` });
+        assert.equal(calls, 1, `${status} is not retried`);
+        serve(status, 200);
+        await assert.rejects(solanaRpc(ENDPOINT).getBlockHeight().send(), (error) => safeErrorText(error) === "The network did not answer. Try again.");
+        assert.equal(calls, 1, `${status} is not retried by a kit client`);
+      }
+      calls = 0;
+      globalThis.fetch = async (_url, init) => {
+        calls++;
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(init.body).id, error: { code: 429, message: "Too many requests" } }));
+      };
+      await assert.rejects(request(ENDPOINT, "getBlockHeight", []), { message: "Too many requests" });
+      await assert.rejects(solanaRpc(ENDPOINT).getBlockHeight().send());
+      assert.equal(calls, 2, "a JSON-RPC error body is an answer, never retried");
+
+      // An abort during a wait ends it at once and surfaces the deadline's own error. The 429 lands
+      // at 17 s asking for 5 s more; the 20 s deadlines fall inside that wait.
+      mock.timers.enable({ apis: ["setTimeout"] });
+      calls = 0;
+      globalThis.fetch = async (_url, init) => {
+        calls++;
+        const { id } = JSON.parse(init.body);
+        return new Promise((resolve) => setTimeout(() => resolve(answer(id, 429, "5")), 17_000));
+      };
+      const settle = async () => { for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve)); };
+      const timedOut = assert.rejects(request(ENDPOINT, "getBlockHeight", []), { name: "AbortError" });
+      await settle();
+      mock.timers.tick(17_000);
+      await settle();
+      mock.timers.tick(3_000);
+      await timedOut;
+      assert.equal(calls, 1, "request(): the deadline ends the wait, no resend after it");
+      calls = 0;
+      const kitTimedOut = assert.rejects(rpcWithTimeout((abortSignal) => solanaRpc(ENDPOINT).getBlockHeight().send({ abortSignal })),
+        { message: "Solana did not answer in time. Please retry." });
+      await settle();
+      mock.timers.tick(17_000);
+      await settle();
+      mock.timers.tick(3_000);
+      await kitTimedOut;
+      assert.equal(calls, 1, "a kit client: the deadline ends the wait, no resend after it");
+    } finally {
+      mock.timers.reset();
+      globalThis.fetch = realFetch;
+    }
+    const now = Date.parse("2026-09-29T12:00:00Z");
+    assert.equal(rateLimitDelayMs(0, "0", now), 0);
+    assert.equal(rateLimitDelayMs(2, "2", now), 2_000, "Retry-After seconds win over the backoff");
+    assert.equal(rateLimitDelayMs(0, "Tue, 29 Sep 2026 12:00:03 GMT", now), 3_000, "Retry-After as an HTTP date");
+    assert.equal(rateLimitDelayMs(0, "Tue, 29 Sep 2026 11:59:00 GMT", now), 0, "a date already past is now");
+    assert.equal(rateLimitDelayMs(0, "120", now), 5_000, "no header waits past 5 s");
+    assert.equal(rateLimitDelayMs(0, "Fri, 01 Jan 2100 00:00:00 GMT", now), 5_000);
+    for (const [attempt, low, high] of [[0, 250, 750], [1, 500, 1_500], [2, 1_000, 3_000]]) {
+      assert.equal(rateLimitDelayMs(attempt, null, now, 0), low, `backoff ${attempt}, least jitter`);
+      assert.equal(rateLimitDelayMs(attempt, null, now, 1), high, `backoff ${attempt}, most jitter`);
+    }
+    assert.equal(rateLimitDelayMs(1, "soon", now, 0.5), 1_000, "an unreadable header falls back to the backoff");
+  }
   const { isSigningRefused } = await import("../src/solana/walletErrors.ts");
   const { SolanaMobileWalletAdapterProtocolError, SolanaMobileWalletAdapterProtocolErrorCode,
     SolanaMobileWalletAdapterError, SolanaMobileWalletAdapterErrorCode } =
@@ -1475,5 +1568,5 @@ if (!process.argv.includes("--worker")) {
     assert.equal(safeErrorText(new Error("Transaction expired. Try again.")), "Transaction expired. Try again.");
     assert.ok(!safeErrorText(new SolanaError(SOLANA_ERROR__INVALID_NONCE, { actualNonceValue: "a", expectedNonceValue: "b" })).includes("Decode"));
   }
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims, rate-limited RPC retries");
 }

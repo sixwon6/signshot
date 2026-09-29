@@ -1,5 +1,4 @@
 import {
-  createSolanaRpc,
   createSolanaRpcSubscriptions,
   type Rpc,
   type RpcSubscriptions,
@@ -13,7 +12,7 @@ import {
   type SolanaClusterId,
 } from "@wallet-ui/react-native-kit";
 import { GENESIS_HASH } from "../../publications/core/genesisToken";
-import { rpcWithTimeout } from "../../publications/rpc";
+import { rpcWithTimeout, solanaRpc } from "../../publications/rpc";
 
 /**
  * Build-time cluster and RPC configuration shared by the wallet provider and publication code.
@@ -80,7 +79,7 @@ let rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi> | null = null;
 
 /** Shared lazy Kit RPC client. Requests execute when their .send() method is called. */
 export function getRpc(): Rpc<SolanaRpcApi> {
-  if (rpc === null) rpc = createSolanaRpc(RPC_ENDPOINT);
+  if (rpc === null) rpc = solanaRpc(RPC_ENDPOINT);
   return rpc;
 }
 
@@ -97,7 +96,7 @@ export const MAINNET_READ_ENDPOINT: string = IS_MAINNET ? RPC_ENDPOINT : PUBLIC_
  */
 export function getMainnetReadRpc(): Rpc<SolanaRpcApi> {
   if (IS_MAINNET) return getRpc();
-  if (mainnetReadRpc === null) mainnetReadRpc = createSolanaRpc(MAINNET_READ_ENDPOINT);
+  if (mainnetReadRpc === null) mainnetReadRpc = solanaRpc(MAINNET_READ_ENDPOINT);
   return mainnetReadRpc;
 }
 

@@ -604,7 +604,8 @@ export const OPERATION_FLOOR_LAMPORTS: Readonly<Record<PublicationOperation, big
   /**
    * A purchase creates exactly what a claim creates, so its floor is the claim's (measured: a buy
    * cost the price plus 5,367,800). The price is not in the floor: the floor bounds what the
-   * network charges and the price is shown apart, from a mutable account. The caller adds it.
+   * network charges, while the price is shown separately and lives in a mutable account. The
+   * caller adds it.
    */
   buy: CORE_CREATE_FEE_LAMPORTS + rentExemption(CORE_PRINT_MIN_BYTES) + rentExemption(RECEIPT_ACCOUNT_BYTES),
   // `set_offer` creates no asset — Core is not called at all — so there is no protocol fee, only

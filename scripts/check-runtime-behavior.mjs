@@ -110,8 +110,10 @@ if (!process.argv.includes("--worker")) {
         `${flow}.ts forgets a declined attempt`);
     }
     const transferFlow = readFileSync(new URL("../src/prints/transfer.ts", import.meta.url), "utf8");
-    assert.match(transferFlow, /const previous = await read\(d\);[\s\S]*?previous \? write\(d, previous\) : AsyncStorage\.removeItem\(key\(d\)\)/,
+    assert.match(transferFlow, /const previous = await read\(c\);[\s\S]*?previous \? write\(c, previous\) : AsyncStorage\.removeItem\(c\.key\)/,
       "a declined send restores the attempt before it, with its still-live messages");
+    assert.match(transferFlow, /return holding\(c, async \(\) => \{[\s\S]*?forgetIfRefused\(wallet\.signAndSendTransactions\(/,
+      "every send signs inside its copy's lock");
   }
   {
     // The estimate is the payer's simulated balance delta, so a buy's already holds its price: the
@@ -901,6 +903,202 @@ if (!process.argv.includes("--worker")) {
     globalThis.fetch = realFetch;
   }
 
+  // Send, for any copy: the gate print #1 has, on a collected copy #3, and one durable attempt per
+  // asset. The real src/prints/transfer.ts, with the build's cluster, AsyncStorage and the photo
+  // draft's `isSigned` replaced. An `AssetV1` as Core lays it out: key, owner, the collection as
+  // update authority, name, uri, no `seq`, the plugin header, the blobs, then the registry, last.
+  {
+    const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+    const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
+    const text = (s) => Buffer.concat([u32(Buffer.byteLength(s)), Buffer.from(s)]);
+    const key = (a) => Buffer.from(kit.getAddressEncoder().encode(kit.address(a)));
+    const title = "Sample", collector = recordedAuthority, program = TRUSTED.devnet[0];
+    const keys = await protocol.addresses(program, creator, "ef".repeat(32));
+    const edition = { cluster: "devnet", program, creator, nonce: "ef".repeat(32), edition: keys.edition,
+      collection: keys.collection, title, supply: 5 };
+    const at = {};
+    for (const number of [1, 2, 3]) at[number] = (await protocol.addresses(program, creator, edition.nonce, number)).print;
+    // [type, authority (0 None, 1 Owner), blob]: Edition, ImmutableMetadata, and a FreezeDelegate.
+    const coreAsset = (owner, number, frozen = null) => {
+      const base = Buffer.concat([Buffer.from([1]), key(owner), Buffer.from([2]), key(keys.collection),
+        text(`${title} #${number}`), text(`https://arweave.net/${arweaveId}`), Buffer.from([0])]);
+      const plugins = [[9, 0, Buffer.concat([Buffer.from([9]), u32(number)])], [12, 0, Buffer.from([12])],
+        ...(frozen === null ? [] : [[1, 1, Buffer.from([1, frozen ? 1 : 0])]])];
+      let offset = base.length + 9;
+      const records = plugins.map(([type, authority, blob]) => {
+        const record = Buffer.concat([Buffer.from([type, authority]), u64(offset)]);
+        offset += blob.length;
+        return record;
+      });
+      return Buffer.concat([base, Buffer.from([3]), u64(offset), ...plugins.map(([, , blob]) => blob),
+        Buffer.from([4]), u32(records.length), ...records, u32(0)]);
+    };
+    const chain = new Map(), rpc = { height: 100, balance: 1_000_000_000 }, context = { slot: 100 };
+    const answer = (method, [first]) => {
+      switch (method) {
+        case "getAccountInfo": {
+          const bytes = chain.get(first);
+          return { context, value: bytes ? { owner: protocol.MPL_CORE, executable: false, lamports: 3_000_000,
+            space: bytes.length, data: [bytes.toString("base64"), "base64"] } : null };
+        }
+        case "getBlockHeight": return rpc.height;
+        case "getSignaturesForAddress": return [];
+        case "getLatestBlockhash": return { context, value: { blockhash: "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k", lastValidBlockHeight: 200 } };
+        case "simulateTransaction": return { context, value: { err: null, logs: [], unitsConsumed: 20_000, returnData: null,
+          accounts: [{ lamports: rpc.balance - 5_000, owner: "11111111111111111111111111111111", executable: false,
+            rentEpoch: 0, space: 0, data: ["", "base64"] }] } };
+        case "getRecentPrioritizationFees": return [];
+        case "getFeeForMessage": return { context, value: 5_000 };
+        case "getBalance": return { context, value: rpc.balance };
+        default: throw new Error(`a send is not expected to call ${method}`);
+      }
+    };
+    const require = createRequire(import.meta.url);
+    const storage = { items: new Map(), reads: 0 };
+    const AsyncStorage = {
+      getItem: async (key) => { storage.reads++; return storage.items.get(key) ?? null; },
+      setItem: async (key, value) => { storage.items.set(key, value); },
+      removeItem: async (key) => { storage.items.delete(key); },
+    };
+    const mocks = [
+      mock.module(new URL("../src/solana/cluster.ts", import.meta.url).href, { namedExports: {
+        CLUSTER_NAME: "devnet", RPC_ENDPOINT: endpoint, assertEndpointCluster: async () => {} } }),
+      mock.module(pathToFileURL(require.resolve("@react-native-async-storage/async-storage")).href,
+        { defaultExport: AsyncStorage }),
+      // creator.ts loads React Native; the photo path needs only its `isSigned`, and coordinator.ts its `readDraft`.
+      mock.module(new URL("../src/prints/creator.ts", import.meta.url).href, { namedExports: {
+        isSigned: async () => true, readDraft: async () => null } }),
+    ];
+    try {
+      globalThis.fetch = async (_url, options) => {
+        const { id, method, params } = JSON.parse(options.body);
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id, result: answer(method, params) }),
+          { headers: { "Content-Type": "application/json" } });
+      };
+      const { inspectTransfer } = await import("../publications/core/transfer.ts");
+      const gate = (recipient, owner) => inspectTransfer(endpoint, edition, arweaveId, recipient, owner, 3);
+      chain.set(at[3], coreAsset(collector, 3));
+      assert.deepEqual(await gate(creator, collector), { owner: collector, recipient: creator, asset: at[3], collection: keys.collection },
+        "the wallet holding a collected copy can send it");
+      await assert.rejects(gate(collector, collector), /different wallet/, "not to itself");
+      await assert.rejects(gate(keys.edition, collector), /personal Solana wallet/, "not to the edition PDA");
+      await assert.rejects(gate(collector, creator), /does not currently own/, "not by a wallet that does not hold it");
+      chain.set(at[3], coreAsset(collector, 3, true));
+      await assert.rejects(gate(creator, collector), /frozen/, "not while frozen");
+      chain.set(at[3], coreAsset(collector, 3, false));
+      assert.equal((await gate(creator, collector)).asset, at[3], "a lifted freeze sends");
+      chain.set(at[3], Buffer.from([0]));
+      await assert.rejects(gate(creator, collector), /burned/, "not once burned");
+      chain.set(at[3], coreAsset(collector, 1));
+      await assert.rejects(gate(creator, collector), /edition format/, "copy #1's asset read as copy #3 is refused");
+      chain.set(at[3], coreAsset(collector, 3));
+
+      const transfer = await import("../src/prints/transfer.ts");
+      const { exclusive } = require("../publications/lifecycle.ts");
+      const { CORE_PROTOCOL } = await import("../publications/types.ts");
+      // The WALLET screen: Send only for a copy this wallet was read holding.
+      const publication = { state: { uri: `https://arweave.net/${arweaveId}` } };
+      const item = (number, owner) => ({ id: at[number], number, owner, imageUri: "", photo: { edition, publication } });
+      const copy3 = transfer.heldCopy(item(3, collector), collector);
+      assert.deepEqual(copy3, { edition, metadataId: arweaveId, number: 3, asset: at[3], holder: collector });
+      assert.equal(transfer.heldCopy(item(3, collector), creator), null, "never for somebody else's copy");
+      assert.equal(transfer.heldCopy(item(3, collector), undefined), null, "nor with no wallet connected");
+      assert.equal(transfer.heldCopy({ ...item(3), number: undefined }, collector), null, "an edition under Published is no copy");
+      assert.equal((await transfer.getTransferState({ ...copy3, asset: at[2] })).status, "unavailable",
+        "an asset that is not the copy's own is refused");
+
+      const copyKey = `es.core-copy-transfer.v1:devnet:${at[3]}`;
+      const session = (sign) => ({ connectAnd: async (work) => work({ signAndSendTransactions: sign }),
+        authorizeSession: async () => ({ address: collector }) });
+      await assert.rejects(transfer.prepareTransfer(copy3, creator, creator), /wallet that holds this copy/);
+      const quote = await transfer.prepareTransfer(copy3, creator, collector);
+      assert.deepEqual([quote.asset, quote.owner, quote.recipient], [at[3], collector, creator]);
+      let release;
+      const held = exclusive(`transfer:devnet:${at[3]}`, () => new Promise((done) => { release = done; }));
+      await assert.rejects(transfer.prepareTransfer(copy3, creator, collector), /in progress/, "one operation per copy");
+      release();
+      await held;
+      // What the review saw is read again right before the wallet opens.
+      let opened = 0;
+      const watching = { connectAnd: async () => { opened++; }, authorizeSession: async () => ({ address: collector }) };
+      for (const [account, bytes, refusal] of [[at[3], coreAsset(collector, 3, true), /frozen/],
+        [at[3], coreAsset(creator, 3), /does not currently own/], [at[3], Buffer.from([0]), /burned/],
+        [creator, Buffer.from([1]), /not a personal wallet/]]) {
+        const before = chain.get(account);
+        chain.set(account, bytes);
+        await assert.rejects(transfer.sendTransfer(copy3, watching, quote), refusal);
+        if (before) chain.set(account, before); else chain.delete(account);
+      }
+      assert.deepEqual([opened, storage.items.size], [0, 0], "each refused before the wallet opens, nothing saved");
+      // A decline sends nothing, and forgets the attempt it saved.
+      await assert.rejects(transfer.sendTransfer(copy3, session(async () => { throw refused; }), quote), (error) => error === refused);
+      assert.ok(storage.reads > 0, "the send must be reading the fake storage");
+      assert.equal(storage.items.size, 0, "a refused send leaves no attempt");
+      // A wallet that never answers may have sent it: the attempt stays, under the copy's own key...
+      await assert.rejects(transfer.sendTransfer(copy3, session(async () => { throw new Error("Timed out waiting for response"); }), quote),
+        /Timed out/);
+      assert.deepEqual([...storage.items.keys()], [copyKey]);
+      const saved = JSON.parse(storage.items.get(copyKey));
+      assert.deepEqual([saved.owner, saved.recipient, saved.asset, saved.lastValidBlockHeight], [collector, creator, at[3], "200"]);
+      // ...and is what the next start reads: it may still land, so no new review until it cannot.
+      const pending = await transfer.getTransferState(copy3);
+      assert.deepEqual([pending.status, pending.eligibility, pending.attempt?.quoteId], ["pending", "wait", saved.quoteId]);
+      await assert.rejects(transfer.prepareTransfer(copy3, creator, collector), /may still land/);
+      assert.equal((await transfer.getTransferState(transfer.heldCopy(item(2, collector), collector))).status, "none",
+        "a sibling copy keeps its own record");
+      // A copy handed over from another wallet on this phone: that wallet's settled send does not
+      // stop the holder, one that may still land does.
+      const handed = { ...saved, owner: creator, recipient: collector, lastValidBlockHeight: "10" };
+      storage.items.set(copyKey, JSON.stringify(handed));
+      assert.equal((await transfer.getTransferState(copy3)).status, "none");
+      storage.items.set(copyKey, JSON.stringify({ ...handed, lastValidBlockHeight: "150" }));
+      assert.equal((await transfer.getTransferState(copy3)).status, "pending");
+
+      // The photo page, unchanged: print #1's attempt stays per edition, as saved before this build,
+      // and the WALLET screen's print #1 reads the same record.
+      const record = { baseName: "IMG_0001" };
+      const draft = { edition, metadataId: arweaveId, imagePath: "" };
+      const photo = transfer.photoTransfer(record, draft);
+      const editionKey = `es.core-transfer.v1:devnet:${keys.edition}`;
+      const earlier = { version: 1, protocol: CORE_PROTOCOL, owner: creator, recipient: collector, asset: at[1],
+        quoteId: "b".repeat(64), lastValidBlockHeight: "150" };
+      storage.items.set(editionKey, JSON.stringify(earlier));
+      for (const target of [photo, transfer.heldCopy(item(1, creator), creator)]) {
+        const state = await transfer.getTransferState(target);
+        assert.deepEqual([state.status, state.eligibility, state.attempt?.quoteId], ["pending", "wait", earlier.quoteId]);
+      }
+      storage.items.set(editionKey, JSON.stringify({ ...earlier, lastValidBlockHeight: "10" }));
+      assert.equal((await transfer.getTransferState(photo)).status, "unresolved", "the photo page's own expired send stays on record");
+      // Both locks hold print #1: the photograph's, which publishing shares, and the asset's.
+      for (const lock of [`publication:devnet:${record.baseName}`, `transfer:devnet:${at[1]}`]) {
+        const busy = exclusive(lock, () => new Promise((done) => { release = done; }));
+        await assert.rejects(transfer.prepareTransfer(photo, collector, creator), /in progress/, lock);
+        release();
+        await busy;
+      }
+      // A photo page send takes both, so the WALLET screen cannot start one on the same print.
+      storage.items.delete(editionKey);
+      chain.set(at[1], coreAsset(creator, 1));
+      const photoQuote = await transfer.prepareTransfer(photo, collector, creator);
+      let approve;
+      const approving = transfer.sendTransfer(photo, { authorizeSession: async () => ({ address: creator }),
+        connectAnd: async (work) => { await new Promise((done) => { approve = done; });
+          return work({ signAndSendTransactions: async () => { throw refused; } }); } }, photoQuote);
+      while (!approve) await new Promise((next) => setImmediate(next));
+      await assert.rejects(transfer.prepareTransfer(transfer.heldCopy(item(1, creator), creator), collector, creator),
+        /in progress/, "print #1 on the WALLET screen waits for the photo page's send");
+      approve();
+      await assert.rejects(approving, (error) => error === refused);
+      assert.equal(storage.items.has(editionKey), false);
+      await transfer.forgetTransferAttempt(draft);
+      assert.equal(storage.items.has(editionKey), false, "deleting the photograph forgets its print #1 attempt");
+      assert.ok(storage.items.has(copyKey), "and no other copy's");
+    } finally {
+      globalThis.fetch = realFetch;
+      for (const one of mocks) one.restore();
+    }
+  }
+
   // `Edition` in the owning program's layout: 8 + 293 bytes on the deployments that predate
   // `published_at`, 8 + 301 with it right after `bump`, 8 + 302 with `seeker_only` at byte 181.
   // Any other length is refused, whichever it is.
@@ -1251,5 +1449,5 @@ if (!process.argv.includes("--worker")) {
       { current: false, namesDevice: true });
     assert.deepEqual(sealedEvidence(JSON.stringify({ name: "x", description: "", image: "i" })), { current: false, namesDevice: false });
   }
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
+  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
 }

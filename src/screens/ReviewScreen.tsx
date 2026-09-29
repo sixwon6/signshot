@@ -55,6 +55,7 @@ import {
   forgetTransferAttempt,
   getTransferState,
   isTransferWorking,
+  photoTransfer,
 } from "../prints/transfer";
 import { deletePhotoAfterFreshChecks } from "../prints/photoDeletion";
 import { photoShareStamp } from "../prints/photoShareStamp";
@@ -381,7 +382,7 @@ export function ReviewScreen() {
                     (record) => record.baseName === baseName,
                   ),
                 readPublication: getPublicationState,
-                readTransfer: (record, draft) => getTransferState(record, draft),
+                readTransfer: (record, draft) => getTransferState(photoTransfer(record, draft)),
                 publicationWorking: isPublicationWorking,
                 transferWorking: isTransferWorking,
                 removeFiles: async (record, draft) => {
@@ -852,8 +853,8 @@ export function ReviewScreen() {
             )}
             {sheet === "send" && d && (
               <SendSheet
-                record={record}
-                draft={d}
+                target={photoTransfer(record, d)}
+                image={`file://${d.imagePath}`}
                 session={session}
                 onClose={closeSheet}
               />

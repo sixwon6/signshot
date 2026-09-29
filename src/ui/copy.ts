@@ -464,8 +464,8 @@ export const send = {
   burned: "This copy has been burned.",
   frozen: "This copy is frozen.",
   recheck: "Checking current ownership…",
-  /** "Copy 1 of 5" for the sender's own numbered copy. */
-  copyLine: (supply: number): string => `Copy 1 of ${supply}`,
+  /** "Copy 3 of 5": the numbered copy being sent. */
+  copyLine: (number: number, supply: number): string => `Copy ${number} of ${supply}`,
 } as const;
 
 /**

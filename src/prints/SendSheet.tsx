@@ -11,15 +11,14 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { CaptureRecord } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
-import type { PublicationDraft } from "./creator";
 import {
   getTransferState,
   prepareTransfer,
   sendTransfer,
   type TransferQuote,
   type TransferState,
+  type TransferTarget,
 } from "./transfer";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
@@ -40,17 +39,21 @@ import {
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
 
-/** `record` is only for the photo lock that sending shares with publishing. */
+/** One sheet for print #1 on the photo page and for any copy the WALLET screen holds. */
 export function SendSheet({
-  record,
-  draft,
+  target,
+  image,
   session,
   onClose,
+  onSent,
 }: {
-  record: CaptureRecord;
-  draft: PublicationDraft;
+  target: TransferTarget;
+  /** The copy's picture on its paper; absent for a hidden or blocked one. */
+  image?: string;
   session: WalletSession;
   onClose(): void;
+  /** A send from this sheet confirmed. */
+  onSent?(): void;
 }) {
   const insets = useSafeAreaInsets(),
     running = useRef(false);
@@ -89,7 +92,7 @@ export function SendSheet({
     setNewTransfer(false);
     setRecipient("");
     setStatus("Checking previous sends…");
-    void getTransferState(record, draft)
+    void getTransferState(target)
       .then((next) => {
         if (live && id === request.current) {
           applyState(next);
@@ -102,7 +105,7 @@ export function SendSheet({
     return () => {
       live = false;
     };
-  }, [draft.edition.edition]);
+  }, [target.edition.edition, target.number]);
   async function check() {
     if (running.current) return;
     const id = ++request.current;
@@ -111,8 +114,12 @@ export function SendSheet({
     setBusy(true);
     setError("");
     try {
-      const next = await getTransferState(record, draft);
-      if (id === request.current) applyState(next);
+      const next = await getTransferState(target);
+      if (id === request.current) {
+        // A send that timed out in the wallet can confirm on a later check.
+        if (next.status === "sent" && currentState.current?.status !== "sent") onSent?.();
+        applyState(next);
+      }
     } catch (e) {
       currentState.current = null;
       setState(null);
@@ -134,8 +141,7 @@ export function SendSheet({
         session.authorizeSession(wallet),
       );
       const next = await prepareTransfer(
-        record,
-        draft,
+        target,
         recipient.trim(),
         owner.address,
       );
@@ -148,7 +154,7 @@ export function SendSheet({
       // never answers has still sent nothing.
       const timedOut = isWalletResponseTimeout(e);
       if (!isUserCancellation(e)) {
-        const next = await getTransferState(record, draft).catch(() => null);
+        const next = await getTransferState(target).catch(() => null);
         if (next) applyState(next);
         else {
           currentState.current = null;
@@ -180,7 +186,7 @@ export function SendSheet({
     setBusy(true);
     setError("");
     try {
-      await sendTransfer(record, draft, session, quote, (phase) =>
+      await sendTransfer(target, session, quote, (phase) =>
         setStatus(
           phase === "wallet"
             ? "Approve this transfer in your wallet…"
@@ -188,7 +194,8 @@ export function SendSheet({
         ),
       );
       clearQuote();
-      const next = await getTransferState(record, draft);
+      onSent?.();
+      const next = await getTransferState(target);
       applyState(next);
       setNewTransfer(false);
     } catch (e) {
@@ -205,7 +212,7 @@ export function SendSheet({
       );
       if (timedOut) setStatus(walletTimeout.sendChecking);
       // The same read "Check transfer status" performs, run by the sheet itself.
-      const next = await getTransferState(record, draft).catch(() => null);
+      const next = await getTransferState(target).catch(() => null);
       if (next) applyState(next);
       else {
         currentState.current = null;
@@ -216,6 +223,7 @@ export function SendSheet({
       // supersedes that error; do not put retry instructions beneath a confirmed transfer.
       if (next?.status === "sent" && !expired && !changed &&
           next.attempt?.recipient === quote.recipient) {
+        onSent?.();
         setError("");
         if (timedOut) setStatus(walletTimeout.sendFound);
         return;
@@ -242,7 +250,7 @@ export function SendSheet({
     history = sent || unresolved,
     blocked = !canReview(state),
     showRecipient = !history || newTransfer;
-  const devnet = draft.edition.cluster === "devnet";
+  const devnet = target.edition.cluster === "devnet";
   const heading =
     sent && !newTransfer
       ? copy.headingConfirmed
@@ -263,7 +271,7 @@ export function SendSheet({
           pointerEvents="none"
         >
           <PhotoFrame
-            source={{ uri: `file://${draft.imagePath}` }}
+            source={image ? { uri: image } : undefined}
             imageHeight={220}
           />
         </View>
@@ -287,7 +295,7 @@ export function SendSheet({
           >
             <NetworkLabel label={devnet ? copy.networkTest : copy.network} />
             <Text style={sheetStyles.title}>{heading}</Text>
-            <Text style={sheetStyles.readout}>{copy.copyLine(draft.edition.supply)}</Text>
+            <Text style={sheetStyles.readout}>{copy.copyLine(target.number, target.edition.supply)}</Text>
             {showRecipient && (
               <View style={sheetStyles.field}>
                 <Text style={sheetStyles.label}>{copy.recipientLabel}</Text>

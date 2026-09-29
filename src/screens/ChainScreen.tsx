@@ -3,11 +3,9 @@
  * deep links and saved navigation state keep working; every visible word comes from the
  * `collection` export of `src/ui/copy.ts`.
  *
- * The prints are the content, so the chrome is set in type the way the camera's is, in two
- * classes and no more: a `TextKey` is a word that navigates or turns the view, and anything that
- * acts on the chain or the clipboard is a small outlined `Chip`. A fact is a tag over its value.
- * Teal keeps its one meaning — this is yours — and each screenful spends it once: the wallet
- * address on the list, the copy number on a photograph the wallet holds.
+ * The chrome is set in type, as on the camera: a `TextKey` navigates or switches the view, and
+ * anything that acts on the chain or the clipboard is a small outlined `Chip`. Teal means "yours"
+ * and appears once per screen: the wallet address on the list, the copy number on a held print.
  */
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { RouteProp } from "@react-navigation/native";
@@ -168,7 +166,7 @@ export function ChainScreen() {
 
   useEffect(() => {
     setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSaid(null);
-    // A wallet that changed answers the question the word was reporting on.
+    // A different wallet clears the last failed connect.
     setConnectFailed(false);
   }, [key]);
   useEffect(() => {
@@ -177,7 +175,7 @@ export function ChainScreen() {
     setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: true }));
     // The endpoint's cluster is checked first; a mismatch keeps its own sentence, since retrying
     // cannot fix configuration. `known` seeds the rescue scan with collections already verified
-    // for this wallet, so a collector-only wallet survives a crowd-out.
+    // for this wallet, so its prints are still found when other assets crowd the first page.
     assertEndpointCluster()
       .then(() => readKnownCollections(cluster, wallet))
       .then(known => loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal, known))
@@ -364,9 +362,9 @@ export function ChainScreen() {
           <Chip size="small" fill={colors.ink} label={collection.allAlbums} selected={!album} onPress={() => setAlbum(null)} hitSlop={CHIP_SLOP} />
           {albums.map(([group, label]) => <Chip key={group} size="small" fill={colors.ink} label={label} accessibilityLabel={`Filter album ${label}`} selected={album === group} onPress={() => setAlbum(group)} hitSlop={CHIP_SLOP} />)}
         </ScrollView>}
-        {/* The count, not just a flag: anyone can mint Core assets to any owner and grind addresses
-            to sort first, so the owner is told how many the scan's cap hid. This line carries the
-            only RETRY over a list that still has rows. */}
+        {/* A count, not just a flag: anyone can mint Core assets to any wallet and grind addresses
+            to sort first, so the line says how many the scan's cap hid. It carries the only RETRY
+            over a list that still has rows. */}
         {(current?.failed || result && (result.unavailable > 0 || result.hiddenCount > 0)) && !!result && <View style={s.notice}>
           <Text style={s.state}>{current?.failed ? collection.notRefreshed
             : result.unavailable > 0 ? collection.unread(result.unavailable)
@@ -376,8 +374,7 @@ export function ChainScreen() {
         </View>}
       </>}
       ListEmptyComponent={!wallet ? null : <View style={s.empty}>
-        {/* One word where a word will do. With no wallet nothing stands here at all: the line
-            above already reads NO WALLET, and CONNECT is on it. */}
+        {/* With no wallet this stays empty: the wallet line above reads NO WALLET beside CONNECT. */}
         {loading && !result ? <><ActivityIndicator color={colors.muted} /><Text style={s.state}>{collection.loading}</Text></> :
           current?.failed && !result ? (current.error
             ? <Text style={s.stateLine}>{current.error}</Text>

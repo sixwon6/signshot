@@ -130,8 +130,8 @@ export function ReviewScreen() {
   const [recipeNames, setRecipeNames] = useState<Record<string, string>>(RETIRED_NAMES);
   /**
    * The open photograph's price, read from the chain rather than from its draft, so a price set
-   * from the Collection tab or another device is the one shown here. `supported` is false for a
-   * deployment published before prices existed, which has nothing to set.
+   * from the Wallet screen or another device is the one shown here. `supported` is false for a
+   * deployment without prices, which has nothing to set.
    */
   const [offer, setOffer] = useState<{
     edition: string;
@@ -469,8 +469,7 @@ export function ReviewScreen() {
         if (live) setOffer({ edition: key, ...next });
       },
       () => {
-        // A price is a line on a screen. An unreadable one shows nothing, and nothing else on
-        // this photograph depends on it.
+        // An unreadable price shows nothing; nothing else on this photograph depends on it.
         if (live) setOffer(null);
       },
     );
@@ -696,8 +695,7 @@ export function ReviewScreen() {
                     {d.edition.cluster === "devnet" ? " · Devnet" : ""}
                   </Text>
                 )}
-                {/* What a buyer pays for one of the remaining copies. Absent for a free edition,
-                    because free is what every edition was before there were prices. */}
+                {/* What a buyer pays for one of the remaining copies. Absent for a free edition. */}
                 {!!priceLine && <Text style={s.body}>{priceLine}</Text>}
               </View>
               {detail.publication.reason && (
@@ -884,10 +882,6 @@ export function ReviewScreen() {
     </Screen>
   );
 }
-/**
- * The one place this screen turns a thrown value into a line of text: URLs stripped, whitespace
- * collapsed, capped at 240 (`src/ui/errorText.ts`).
- */
 /** The gap between two prints in the grid, and the paper border a captioned print takes. */
 const GRID_GAP = 14;
 const CAPTION_PAD = 10;

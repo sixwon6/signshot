@@ -46,8 +46,8 @@ sizes.
 - **Share.** A published photograph shares a print card carrying its collect link,
   `https://erashot.app/collect/?core=<edition>`, as a QR code. Tapping that link on a Seeker with
   Signshot installed opens the Collect sheet directly (Android App Links); the Collection tab also
-  takes a pasted link or address, or scans a QR code with the phone's camera. Anywhere else the
-  link opens the web collect page.
+  takes a pasted link or address, or scans a QR code with the phone's camera. Opened in a browser,
+  the link shows an "Open in Signshot" control and nothing else.
 - **Collect or buy.** A free edition is collected: the collector pays the network fee, account
   rent and Metaplex Core's create fee, and nothing reaches the publisher. A priced edition is
   bought: the price is paid to the publisher in the same transaction that creates the copy, and the
@@ -116,9 +116,9 @@ certificate on every read and refuses one from another app or from a phone witho
 and a locked bootloader. Older documents that carried `Device` and `Attestation` unconditionally
 stay readable on the deployments they were published on.
 
-The Proof sheet, the publish review and the collect page say "Signed on a Solana Seeker ·
-StrongBox hardware key · verified boot, bootloader locked" only when every one of these holds
-(`readAttestationBundle`, then `deviceVerdict`, in `publications/core/attestation.ts`):
+The Proof sheet and the publish review say "Signed on a Solana Seeker · StrongBox hardware key ·
+verified boot, bootloader locked" only when every one of these holds (`readAttestationBundle`,
+then `deviceVerdict`, in `publications/core/attestation.ts`):
 
 - the manifest names this publication, the challenge is its SHA-256, the signature verifies, the
   key is hardware-backed, and the chain is signed down to one of Google's roots pinned in
@@ -143,10 +143,8 @@ StrongBox hardware key · verified boot, bootloader locked" only when every one 
 
 A definite failure reads "Not accepted:" with the reason (another app, bootloader unlocked, boot
 not verified, revoked, suspended, expired at publication); a list or a publication time that
-cannot be fetched reads "Couldn't check."; a document without evidence reads "Not recorded." (on
-the collect page, "No device attestation."), and so does the review when the phone produced none.
-The app fetches Google's list directly; the collect page reads it through
-`site/functions/api/attestation-status.ts`, because Google sends no CORS header. A draft is
+cannot be fetched reads "Couldn't check."; a document without evidence reads "Not recorded.", and
+so does the review when the phone produced none. The app fetches Google's list directly. A draft is
 attested when it is built, so before its document's hash goes into the transaction the send path
 attests again when any certificate has expired or will within 24 hours, in the same single wallet
 approval. `npm run release:check` also compares Google's live root list
@@ -181,10 +179,10 @@ proved ownership of the wallet (it signed the transaction that commits the docum
 the mint address is kept, because it stays the same when the token moves and so identifies the
 Seeker across wallets.
 
-**Reading a claim.** The document only claims the mint. The Proof sheet and the collect page check
-it on mainnet when they open, once the endpoint's genesis hash says it is mainnet: the mint
-account must be owned by Token-2022, its `MetadataPointer` and `TokenGroupMember` must name Solana
-Mobile's group (`GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`), the member must be the claimed
+**Reading a claim.** The document only claims the mint. The Proof sheet checks it on mainnet when
+it opens, once the endpoint's genesis hash says it is mainnet: the mint account must be owned by
+Token-2022, its `MetadataPointer` and `TokenGroupMember` must name Solana Mobile's group
+(`GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`), the member must be the claimed
 mint itself, and the publishing wallet must hold it now with a non-zero balance. The membership is
 what cannot be forged: Token-2022 writes it only with the signature of the group's update
 authority, Solana Mobile's key. Mint authority and metadata pointer are anyone's to set on their
@@ -225,19 +223,19 @@ and its refusals run against a mock the session mints (`programs/editions/DEVNET
 build never carries the feature. Deployments in `LEGACY_WITHOUT_GENESIS`
 (`publications/deployments.ts`) predate the two accounts and are sent neither.
 
-**Seeker-only editions** are collected with a Genesis Token: one copy per token. The app and the
-collect page find the collector's SGT with the same membership check (`findHeldGenesisToken`; on
-devnet, the acceptance's stand-in that the devnet program build accepts), key the claim receipt on
-its mint and hand the mint and its token account to `collect` or `buy`
+**Seeker-only editions** are collected with a Genesis Token: one copy per token. The app finds
+the collector's SGT with the same membership check (`findHeldGenesisToken`; on devnet, the
+acceptance's stand-in that the devnet program build accepts), keys the claim receipt on its mint
+and hands the mint and its token account to `collect` or `buy`
 (`publications/core/seekerClaim.ts`). A wallet without one reads "Needs a Seeker Genesis Token."
 
-## The collect page
+## erashot.app
 
-The public collect page at erashot.app is built from `site/` (see `site/README.md`) with the same
-reader the app uses, so it accepts the same documents, shows the Device and Genesis Token rows,
-and offers `collect` or `buy` by the live `Offer` account. A collect link opens the edition in the
-app on a phone that has it (an Android App Link) and on the web page everywhere else.
-`npm run build:site` produces `site/dist`, which is deployed by Wrangler direct upload.
+Collecting and buying happen in the app only. `site/` (see `site/README.md`) is the static site
+the app links to: the terms, the privacy policy, the moderation list, the App Link association,
+and the page a collect link shows where the App Link did not open the app, which offers only
+"Open in Signshot". `npm run build:site` produces `site/dist`, which is deployed by Wrangler
+direct upload.
 
 ## Deployments
 
@@ -255,8 +253,8 @@ same way once deployed (see "Deploy the program").
 
 ## Security properties
 
-- **Reviewed programs only.** Publish, collect and buy, in the app and on the collect page, refuse
-  a program whose deployed bytes or upgrade authority differ from the pinned image
+- **Reviewed programs only.** Publish, collect and buy refuse a program whose deployed bytes or
+  upgrade authority differ from the pinned image
   (`publications/programImage.ts`); a signer's privileges reach every program it calls.
 - **What the wallet signs is what was reviewed.** A buyer signs the exact price and offer
   revision, so a price changed in between fails (`OfferChanged`) instead of charging a different
@@ -271,12 +269,9 @@ same way once deployed (see "Deploy the program").
   URL carrying a query string or credentials, an RPC on another network, and any difference from
   Google's live attestation roots. `npm run release:apk` deletes an APK whose bundle does not match
   what the gate recorded or whose signer is not the upload key.
-- **Collect page.** A strict CSP with Trusted Types, no inline script, and inline style only by
-  hash for the wallet adapter's dialogs; the RPC endpoint and trusted programs come from the
-  build, never from the link. Its mainnet RPC proxy
-  (`site/functions/api/solana.ts`) allows only the read-only methods the page calls, holds their
-  params to the exact shapes it sends, bounds request and response sizes, refuses cross-origin and
-  `Origin`-less callers, and sits behind a Cloudflare rate-limit rule.
+- **erashot.app.** Static files only, no Functions. Every page has a `default-src 'none'` CSP;
+  the collect link page runs one script, allowed by its hash, that fetches nothing and builds the
+  "Open in Signshot" intent only from a valid edition address and cluster.
 
 ## Requirements
 
@@ -289,14 +284,12 @@ There is no iOS or web target, and Expo Go cannot load the native camera module.
 the hardware attestation need the phone itself; an emulator runs neither.
 
 Without a Seeker, two things still run: `npm test` needs only Node, and a published edition can
-be checked from any machine and opened in a browser:
+be checked from any machine:
 
 ```sh
 npm ci
 npm run verify:attestation -- --edition 7XCv1U3MxaJKzAC2oiVBvrRAcfoDimEVjhYGDW4hFF41 --cluster devnet
 ```
-
-https://erashot.app/collect/?core=7XCv1U3MxaJKzAC2oiVBvrRAcfoDimEVjhYGDW4hFF41&cluster=devnet
 
 ## Run it on a Seeker
 
@@ -354,8 +347,8 @@ with no device or network:
 - `check-genesis.ts`: the hand-written Genesis Token decoder against the official
   `@solana-program/token-2022` encoder, the lookup, the display rules and the mainnet program's
   group address
-- `check-site.ts`: the collect page's wording, its CSP copies, the App Link file, the RPC proxy
-  and the build guards
+- `check-site.ts`: the App Link file, the pages' CSP, the collect link page's hand-off, that every
+  erashot.app URL the app builds is served, the terms and the moderation list, and the build
 - `check-storage.ts`: the storage quote, the payment instructions against the official System
   Program encoder, the credit and the recovery lookup
 - `check-mainnet-deploy.ts`: every mainnet deploy step, end to end on a cluster held in memory
@@ -376,7 +369,7 @@ Outside `npm test`:
 - Builds: `npm run build:android-bundle` checks that the JavaScript bundle builds,
   `./gradlew :seeker-camera:compileDebugKotlin` from `android/` compiles the native module,
   `pwsh -File programs/editions/scripts/build-native-windows.ps1` builds the program, and
-  `npm run build:site` builds the collect page.
+  `npm run build:site` builds erashot.app.
 
 `npx expo install --check` validates SDK compatibility, and `npx expo-doctor` checks the
 dependency tree and project setup. The `react-dom` override keeps the wallet libraries' web peer on
@@ -401,7 +394,7 @@ dApp Store match, not the display name. The four local Gradle properties use the
   devnet and mainnet deploy tooling
 - `programs/editions/`: the Anchor program behind publishing, collecting, pricing and buying an
   edition
-- `site/`: the erashot.app collect page and its Cloudflare Pages Functions
+- `site/`: erashot.app, the static pages the app links to
 - `android/`: the generated Android project, the Gradle build and signing configuration
 - `scripts/`: the checks `npm test` runs and the release tooling; `plugins/`: Expo config plugins
   for prebuild
@@ -410,20 +403,16 @@ dApp Store match, not the display name. The four local Gradle properties use the
 
 ## Before release
 
-- **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; collect from the
-  link in a browser wallet (Chrome's local network prompt, then Seed Vault signs and declines);
-  time out and background the wallet mid-publish and mid-upload, and recover. Judge the looks in
+- **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; time out and
+  background the wallet mid-publish and mid-upload, and recover. Judge the looks in
   daylight with a face and something red in frame; check Camcorder's smear in both landscapes; save
   one photograph per look and compare it with the preview. Connect a wallet from the wallet
-  screen and send a collected copy from it. Publish from the wallet that holds the Genesis Token and read its row on the review, the
-  Proof sheet and the collect page. Read the Device row of a draft left past its certificates
+  screen and send a collected copy from it. Publish from the wallet that holds the Genesis Token and read its row on the review and the
+  Proof sheet. Read the Device row of a draft left past its certificates
   (Continue renews it). Terms and Agree before the first publish and collect; Report; Block and
   Unblock; an edition in `moderation.json` reads Hidden.
-- **Site:** redeploy `site/` (page, `/api/solana`, `/api/attestation-status`, `/terms/`,
-  `/moderation.json`) in one deploy, since the page now batches `getMultipleAccounts`, which the old
-  Function refuses; the live page refuses a document that names a Genesis Token until then.
-  Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint), apply
-  `site/cloudflare/rate-limit-rule.json` again (now 120 requests per 10 s), and route mail for
+- **Site:** redeploy `site/` (terms, privacy, moderation list, collect link page), then delete the
+  `SOLANA_RPC_URL` secret and the rate-limit rule in Cloudflare, and route mail for
   support@erashot.app.
 - **Mainnet:** the Squads multisig and its test proposal (`programs/editions/MAINNET.md` steps
   2–4), then the rest of `MAINNET.md` with `prepare-mainnet-windows.ps1` and the real

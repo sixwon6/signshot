@@ -1462,5 +1462,18 @@ if (!process.argv.includes("--worker")) {
       { current: false, namesDevice: true });
     assert.deepEqual(sealedEvidence(JSON.stringify({ name: "x", description: "", image: "i" })), { current: false, namesDevice: false });
   }
-  console.log("runtime checks ok — legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
+  {
+    // kit's production RPC errors read as a decode hint; the screens get one plain line instead.
+    const { SolanaError, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR, SOLANA_ERROR__INVALID_NONCE } = await import("@solana/kit");
+    const { safeErrorText } = await import("../src/ui/errorText.ts");
+    const http = (statusCode) => new SolanaError(SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR,
+      { headers: new Headers(), message: "", statusCode });
+    assert.equal(safeErrorText(http(429)), "The network is busy. Try again in a moment.");
+    assert.equal(safeErrorText(http(503)), "The network did not answer. Try again.");
+    assert.equal(safeErrorText(new Error("Solana error #8100002; Decode this error by running `npx @solana/errors decode -- 8100002 'X19j'`")),
+      "Solana error #8100002", "a bare production message keeps only its code");
+    assert.equal(safeErrorText(new Error("Transaction expired. Try again.")), "Transaction expired. Try again.");
+    assert.ok(!safeErrorText(new SolanaError(SOLANA_ERROR__INVALID_NONCE, { actualNonceValue: "a", expectedNonceValue: "b" })).includes("Decode"));
+  }
+  console.log("runtime checks ok —legacy publication metadata, devnet rent/upload budget, capture modes/exposure, collect links, malformed URLs, editor debounce/cancellation, bounded photo loading, serialized storage, Arweave /raw/ reads, deployed-program pin, send freeze and burn tombstones, sending a collected copy, all three Edition layouts, release RPC, price floor and program error words, royalty and Seeker-only terms, the Device trait at publish, seeker-only claims");
 }

@@ -10,6 +10,7 @@
   "scripts": {
     "devnet": "tsx publications/devnet/session.ts",
     "devnet:check": "tsx scripts/check-devnet.mjs",
+    "mainnet": "tsx publications/mainnet/cli.ts",
     "start": "expo start",
     "android": "expo run:android",
     "build:android-bundle": "expo export:embed --platform android --dev false --entry-file index.js --bundle-output .expo/ci/index.android.bundle --assets-dest .expo/ci/assets",

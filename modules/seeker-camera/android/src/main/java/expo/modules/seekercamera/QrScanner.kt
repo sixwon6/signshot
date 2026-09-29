@@ -48,11 +48,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * refuses while a camera view is up (see `SeekerCameraModule`). The Collection tab, the only caller,
  * has none mounted.
  *
- * Permission: `android.permission.CAMERA`, already declared in app.json for the capture screen.
- * The scanner may run before the person has ever opened the camera, so it asks for the grant itself
- * and ends with a readable message if it is refused. Neither the CameraX nor the ML Kit AARs declare
- * a permission of their own, so app.json and `scripts/check-prebuild.ts` are untouched, and ML Kit
- * ships its own consumer ProGuard rules, so `extraProguardRules` needs nothing either.
+ * Permission: `android.permission.CAMERA`, declared in app.json. The scanner may run before the
+ * camera screen has ever opened, so it asks for the grant itself and ends with a readable message
+ * if it is refused. The CameraX and ML Kit AARs declare no permissions of their own, and ML Kit
+ * ships its own consumer ProGuard rules.
  */
 internal object QrScanner {
   /** `startActivityForResult` request code; 16-bit, as the framework requires. */
@@ -78,8 +77,7 @@ internal object QrScanner {
 
   /**
    * The one result worth returning from a frame: a QR code (never one of the other twelve formats
-   * ML Kit can decode) carrying a non-blank value of workable length. Pure — unit-tested by
-   * `QrScannerValueTest`.
+   * ML Kit can decode) carrying a non-blank value of workable length.
    */
   fun acceptedQrValue(format: Int, rawValue: String?): String? {
     if (format != Barcode.FORMAT_QR_CODE) return null

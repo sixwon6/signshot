@@ -319,9 +319,8 @@ class CameraController(private val context: Context, private val renderer: GlRen
       try {
         val req = d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
         req.addTarget(stillReader!!.surface)
-        // Keep the device's still-quality defaults; forcing processing OFF adds sensor noise
-        // even to Clean photographs. Recipes operate on this processed image afterward.
-        // Apply the same exposure, colour and focus settings as the viewfinder, tap region included.
+        // Keep the device's still-processing defaults (forcing them OFF adds sensor noise); recipes
+        // run on the processed image. Same exposure, colour, focus and tap region as the viewfinder.
         applyTo(req, effective)
         applyRegions(req)
         s.capture(req.build(), object : CameraCaptureSession.CaptureCallback() {

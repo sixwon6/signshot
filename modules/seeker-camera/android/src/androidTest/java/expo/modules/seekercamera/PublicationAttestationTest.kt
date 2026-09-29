@@ -7,10 +7,10 @@ import org.junit.runner.RunWith
 
 /**
  * Runs the production attestation path (`PublicationAttestation.attest`) on a connected phone
- * against the canonical sample manifest from `scripts/fixtures/attestation-sample.json`, and
- * prints the result (`ATTESTATION_RESULT:{...}` in the test report's captured output) so
- * `scripts/wrap-device-attestation.ts` and `scripts/verify-attestation.ts --file` can check the
- * real chain off-device. Touches no camera, wallet or user files; only its own fresh key alias.
+ * against the sample manifest from `scripts/fixtures/attestation-sample.json`, and prints the
+ * result so `scripts/wrap-device-attestation.ts` and `scripts/verify-attestation.ts --file` can
+ * check the real chain off-device. Touches no camera, wallet or user files; only its own fresh
+ * key alias.
  *
  * The attested package is this TEST package with its debug signer, so the verifier's `app`
  * check is expected to fail; every other check should pass on a genuine Seeker.

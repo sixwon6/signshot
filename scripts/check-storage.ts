@@ -4,7 +4,7 @@
  *
  *   - the quote: priced from the payment service before any approval, with every failure stopping
  *     publishing, and items the bundler already holds never paid for;
- *   - the two instructions: the System transfer held to the OFFICIAL `@solana-program/system`
+ *   - the two instructions: the System transfer held to the official `@solana-program/system`
  *     encoder, the memo to turbo-sdk's `turboCreditDestinationAddress=` convention, and the largest
  *     publication transaction still inside the mobile wallet's size budget with both added;
  *   - the credit: pending until the service credits the upload key, idempotent on a resume, and
@@ -211,9 +211,9 @@ function instructionTests() {
 
 /**
  * The largest publication the app builds: `publish_in_album` with the Genesis Token sealed, a
- * 24-byte title, the royalty and Seeker-only setting, `set_offer`, the compute budget, and now the
- * storage transfer and memo, compiled as
- * `prepareTransaction` compiles it and held to its 1,057-byte mobile wallet budget.
+ * 24-byte title, the royalty and Seeker-only setting, `set_offer`, the compute budget, and the
+ * storage transfer and memo, compiled as `prepareTransaction` compiles it and held to its
+ * 1,057-byte mobile wallet budget.
  */
 async function sizeTest() {
   const program = "Ds4LT9zQ3a9V9ZxqKgwYQxskh1DgeYPhoCYz5iHjAizE";

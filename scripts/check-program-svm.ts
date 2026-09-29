@@ -289,7 +289,7 @@ const CACHE = join(root, ".cache", "svm");
 const CORE_ELF = join(CACHE, "mpl-core.so");
 const MAINNET_FILE = join(CACHE, "mainnet.json");
 const LOADER_V3 = "BPFLoaderUpgradeab1e11111111111111111111111";
-// A real Seeker Genesis Token and the wallet that held it when this suite was written.
+// A real Seeker Genesis Token and its holder; the first read refuses if the token has moved.
 const SGT_MINT = address("21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH");
 const SGT_HOLDER = address("CEQ6CHRGVdAzMj7upcnjrRB7y6utcaX8zd331ML6KwqG");
 const GT22 = address(SGT_GROUP_ADDRESS);

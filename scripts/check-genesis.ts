@@ -2,9 +2,9 @@
  * Self-test for `seedshot-genesis/1` (`publications/core/genesisToken.ts`). Runs in `npm test`,
  * needs no network.
  *
- *   - the hand-written Token-2022 mint decoder, held to the OFFICIAL `@solana-program/token-2022`
- *     encoder: Solana Mobile's current recipe (metadata pointer and group membership) and the
- *     member's own mint, whatever the mint authority; forgeries without the membership refused;
+ *   - the hand-written Token-2022 mint decoder, held to the official `@solana-program/token-2022`
+ *     encoder: Solana Mobile's recipe (metadata pointer and group membership) and the member's own
+ *     mint, whatever the mint authority; forgeries without the membership refused;
  *   - the document: what `metadata()` writes reads back through `readPhotoMetadata`, alone and
  *     beside an attestation, and every malformed claim is refused;
  *   - `verifyGenesisToken` against a stubbed mainnet: held, moved, gone, not an SGT (however big or
@@ -78,10 +78,9 @@ function ok(name: string, condition: boolean) {
 const throws = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
 
 // --- The mint decoder, against the official encoder ----------------------------------------------
-// What a real SGT carries (mint 21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH, read on mainnet
-// 2026-09-24): metadata pointer, permanent delegate, close authority, group-member pointer and
-// group member, in that order. Solana Mobile's authority below is only somebody's address here:
-// the recipe no longer names it, so nothing may depend on it.
+// The extensions a real SGT carries (mainnet mint 21Q8vbf36J9vJ6DDkUBjC29BKYMQdKZ5fs9LcJZQY4qH),
+// in order: metadata pointer, permanent delegate, close authority, group-member pointer, group
+// member. The recipe names no authority, so nothing may depend on the key below.
 const SOLANA_MOBILE_KEY = address("GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4");
 const GROUP = address(SGT_GROUP_ADDRESS);
 const MINT = address("So11111111111111111111111111111111111111112");
@@ -237,9 +236,8 @@ ok("loadPublication reads the claim through that rule",
   /publishedGenesisClaim\(cluster, claimed, sealed\)/.test(readFileSync(resolve(here, "..", "publications", "core", "protocol.ts"), "utf8")));
 
 // The devnet acceptance (`publications/devnet/test.ts`) writes its documents with this `metadata()`
-// and reads them back through `loadTrustedEdition` on a deployment with royalties and Seeker-only
-// editions, where the earlier formats are refused: the harness's own document, built the same way
-// (no attestation, a claim or none), must read back there.
+// and reads them back on a royalties deployment, which refuses the earlier formats, so its
+// document (no attestation, with or without a claim) must read back there.
 const harness = readFileSync(resolve(here, "..", "publications", "devnet", "test.ts"), "utf8");
 ok("the devnet acceptance writes metadata() canonicalized, as the app does",
   harness.includes("const bytes = utf8(canonicalize(metadata(e) as unknown as JcsValue));"));

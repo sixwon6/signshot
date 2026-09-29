@@ -3,7 +3,7 @@ import "./src/polyfills";
 
 import { registerRootComponent } from "expo";
 
-// Before the app: names the look that adds nothing for this phone, ahead of the list of looks.
+// Before the app: names the neutral look after this phone, before the list of looks is built.
 import "./src/recipes/deviceLook";
 import App from "./App";
 

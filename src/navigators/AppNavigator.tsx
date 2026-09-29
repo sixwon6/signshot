@@ -17,7 +17,7 @@ const navigationTheme = {
   },
 };
 
-/** Check linking routes against the root parameter list. */
+/** The navigation root. The `HomeTabs` argument checks the linking config against its routes. */
 export function AppNavigator() {
   return (
     <NavigationContainer<HomeTabs> theme={navigationTheme} linking={linking}>

@@ -75,7 +75,7 @@ interface Copy extends TransferTarget {
 }
 
 const photoLock = (r: CaptureRecord) => publicationLockKey(cluster, r.baseName);
-/** Print #1's attempt, where the photo page has always kept it. */
+/** Print #1's attempt key: per edition, as the photo page stores it. */
 const editionKey = (e: CoreMetadata) => `es.core-transfer.v1:${e.cluster}:${e.edition}`;
 
 /**

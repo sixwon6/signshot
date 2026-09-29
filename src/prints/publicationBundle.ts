@@ -5,7 +5,8 @@ import type { CoreDraft } from "../../publications/types";
 /**
  * An export for a confirmed publication whose upload has not finished. The chain holds only the
  * metadata hash and URI; the canonical document and the print image exist only on this phone,
- * so this file is the one way to carry them off it. Nothing in the app reads a bundle back.
+ * so this file is the one way to carry them off it. Nothing in the app reads a bundle back. The
+ * native export call lives in the screen, keeping this module free of `react-native`.
  */
 
 /** The bundle's own schema. Changing the shape means changing this. */
@@ -88,8 +89,6 @@ export function publicationBundleDocument(
     note: NOTE,
   };
 }
-
-// The native export call lives in the screen, keeping this module free of `react-native`.
 
 /**
  * True when the publication is confirmed and its upload has not finished: before confirmation the

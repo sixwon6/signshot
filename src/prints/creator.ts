@@ -150,11 +150,8 @@ const NO_PRICES = "Prices are not available on this network's program yet.";
 const BAD_PRICE = "Saved edition price is invalid.";
 
 /**
- * A draft's committed price, in lamports, or `null` when it was published free.
- *
- * `null` and `0n` both mean free; they are kept apart only so a screen can say "free" for a draft
- * that was never priced and for one explicitly priced at zero without inventing a difference. Fails
- * closed on anything else, because a misread price would be shown beside a photograph as fact.
+ * A draft's committed price in lamports, or `null` when it was published free (`0n` is free too).
+ * Fails closed on anything malformed: a misread price would be shown beside a photograph as fact.
  */
 export function draftPriceLamports(d: CoreDraft | null | undefined): bigint | null {
   if (!d || d.price === undefined) return null;
@@ -254,16 +251,14 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
     assertAlbumLabel(d.albumName ?? "");
   } else if (d.albumName !== undefined)
     throw new Error("Saved edition draft does not match this photo.");
-  // The price is digits only and within u64, and a non-zero one is refused outright on a deployment
-  // that cannot hold an offer: `prepareSetup` would otherwise build a `set_offer` that program does
-  // not implement. Read on the way in, so a hand-edited draft cannot reach a wallet.
+  // Digits within u64, and non-zero only where the deployment has `set_offer`. Checked on read, so a
+  // hand-edited draft cannot reach a wallet with an instruction the program does not implement.
   if (d.price !== undefined) {
     const lamports = readPrice(d.price);
     if (lamports > 0n && !programFeatures(d.edition.program).offers) throw new Error(NO_PRICES);
   }
-  // The royalty and the Seeker-only setting decide the instruction data, so a program that seals
-  // them needs both exactly as `createDraft` recorded them. A draft for an older program records
-  // none (every draft written before they existed), which is `{ 0, false }` there.
+  // The royalty and Seeker-only setting are instruction data, so a program that seals them needs
+  // both as `createDraft` recorded them. A draft for an older program records none: `{ 0, false }`.
   if (programFeatures(d.edition.program).royaltiesAndSeekerOnly) {
     try {
       checkSealedTerms({ royaltyBps: d.royaltyBps, seekerOnly: d.seekerOnly });
@@ -388,18 +383,15 @@ export async function createDraft(
   /** A confirmed album of this creator's, by group address. */
   album?: string,
   /**
-   * What a buyer pays for a copy, in lamports. Absent or `0n` is a free edition, published exactly
-   * as it always was. A non-zero price is frozen into the draft here, like the caption and the
-   * album, because it decides what the wallet approves: the publication and its `set_offer` are one
-   * transaction and one approval. Changing it afterwards is `discardDraft`, or — once published —
-   * `src/prints/offer.ts`, which is the only way to re-price a live edition.
+   * What a buyer pays for a copy, in lamports; absent or `0n` is free. Frozen like the caption and
+   * album, because the publication and its `set_offer` are one approval. Changed afterwards by
+   * `discardDraft`, or once published by `offer.ts`.
    */
   priceLamports?: bigint,
   /**
-   * The creator's royalty (basis points) and whether only Seeker Genesis Token holders may collect.
-   * Frozen here with the price, and sealed on chain at publish. Absent: `DEFAULT_ROYALTY_BPS` and
-   * `DEFAULT_SEEKER_ONLY` on a program that seals them, `{ 0, false }` on one that cannot.
-   * Seeker-only is recorded only with the creator's Genesis Token to seal (`canSealGenesis`).
+   * The royalty (basis points) and whether only Seeker Genesis Token holders may collect, sealed
+   * on chain at publish. Absent: `DEFAULT_ROYALTY_BPS` and `DEFAULT_SEEKER_ONLY` on a program that
+   * seals them, `{ 0, false }` on one that cannot. Seeker-only needs a token to seal (`canSealGenesis`).
    */
   sealed?: SealedTerms,
 ): Promise<CoreDraft> {
@@ -491,8 +483,7 @@ export async function createDraft(
       sourceHash,
       ...(chosen ? { album: chosen.address, albumName: chosen.name } : {}),
       ...(genesisMint === undefined ? { genesisUnchecked: true as const } : {}),
-      // Absent for a free edition, so a draft written before prices existed and one published free
-      // afterwards are the same record.
+      // Absent for a free edition, matching drafts saved before prices existed.
       ...(price ? { price } : {}),
       royaltyBps: chosenTerms.royaltyBps,
       // The program takes a Seeker-only edition only sealed with the creator's Genesis Token, so
@@ -505,16 +496,12 @@ export async function createDraft(
   });
 }
 /**
- * The metadata document for `e`, and `e.attestation` set to match it.
- *
- * The phone's keystore attests this exact publication (the manifest names the edition, the
- * creator, the nonce and the image fingerprint) before the document is sealed, so the evidence is
- * inside the bytes the wallet commits to. A phone that cannot attest publishes the plain
- * document; that is a state, not a failure, and the review's Device row says "Not recorded.".
- * The attested document, or the plain one if building it fails for any reason (an oversized data
- * item, a reader that refuses the bundle): evidence must never make a photograph unpublishable.
- * The attested document is NOT byte-identical across calls (a fresh key each time); the
- * deterministic nonce and the photo lock are what prevent a second edition.
+ * The metadata document for `e`, with `e.attestation` set to match it. The keystore attests this
+ * exact publication (edition, creator, nonce, image fingerprint) before sealing, so the evidence is
+ * inside the bytes the wallet commits to. A phone that cannot attest, or an attested document that
+ * cannot be built, gets the plain document: evidence must never make a photograph unpublishable.
+ * Not byte-identical across calls (a fresh key each time); the deterministic nonce and the photo
+ * lock are what prevent a second edition.
  */
 async function sealDocument(
   e: CoreMetadata,
@@ -556,12 +543,11 @@ function sealVerdict(summary: AttestationSummary): Promise<DeviceVerdict> {
 }
 
 /**
- * Right before a draft's document goes into a transaction, it must be the document `metadata()`
- * writes today, and it may name the device only while the verdict still passes: a draft is reused
- * for days, and a certificate can be revoked or a list become unreachable in that time. Otherwise
- * it is sealed again from the same attestation, keeping its bundle and its Genesis Token claim, and
- * the draft changed in place, like `renewStaleAttestation`. A document that does not name the
- * device is never upgraded to one that does here; a fresh draft is.
+ * Right before a draft's document goes into a transaction, it must be what `metadata()` writes
+ * today, and may name the device only while the verdict still passes: a draft can sit for days
+ * while a certificate is revoked or the list becomes unreachable. Otherwise it is resealed in place
+ * from the same attestation, keeping its bundle and Genesis Token claim. Never upgrades a document
+ * to name the device; a fresh draft does that.
  */
 async function resealDocument(r: CaptureRecord, d: CoreDraft) {
   const sealed = sealedEvidence(d.metadata);
@@ -584,20 +570,16 @@ async function resealDocument(r: CaptureRecord, d: CoreDraft) {
   });
 }
 
-/**
- * A draft's attestation is made when the draft is built, and drafts are reused for days, while
- * the chain's device and intermediate certificates live days to weeks. A document whose chain has
- * expired by the time it is published fails every reader forever. So before the document's hash
- * goes into a transaction, a chain that has expired or will within `ATTESTATION_RENEW_MS` is
- * attested again and the document and its data item rebuilt; the draft is changed in place, so the
- * review, the quote and the one wallet approval that follow all carry the new one.
- *
- * Only for a draft no transaction can still land for (`prepareSetup` has checked the attempt). If
- * the phone cannot attest now, a chain that outlives `SEND_MARGIN_MS` is kept for the few minutes
- * to publication, and one that does not gives way to the plain document, which `sendSetup` takes.
- */
 /** Wallet approval and confirmation, with room to spare: the chain must outlive the block. */
 const SEND_MARGIN_MS = 15 * 60 * 1000;
+/**
+ * Re-attest a draft whose certificate chain has expired or will within `ATTESTATION_RENEW_MS`:
+ * drafts sit for days, and a document published with an expired chain fails every reader forever.
+ * The draft changes in place, so the review, quote and approval that follow carry the new document.
+ * Only for a draft no transaction can still land for (`prepareSetup` checks the attempt). If the
+ * phone cannot attest now, a chain that outlives `SEND_MARGIN_MS` is kept; otherwise the plain
+ * document replaces it.
+ */
 async function renewStaleAttestation(r: CaptureRecord, d: CoreDraft) {
   const stale = d.edition.attestation;
   if (!stale || !attestationExpiring(stale)) return;
@@ -926,19 +908,10 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     await genesisAccounts(d.edition),
     { royaltyBps: d.royaltyBps, seekerOnly: d.seekerOnly },
   );
-  /**
-   * PUBLISHING WITH A PRICE IS ONE APPROVAL, NOT TWO.
-   *
-   * `set_offer` is appended to the SAME transaction as the publication. Two transactions would mean
-   * two wallet prompts and, worse, a window in which the edition exists and is free to collect
-   * while the creator is still approving its price. In one transaction the offer either lands with
-   * the publication or neither does. The order matters: `set_offer` reads the Edition account
-   * (`has_one = creator`, and its seeds) and that account is created by the instruction before it.
-   *
-   * `isSigned` is deliberately unaffected — it asks whether the PUBLICATION happened, and the offer
-   * is not publication evidence. An edition whose price failed to stick is a published edition
-   * with no price, re-priceable from `src/prints/offer.ts`, never an unpublished one.
-   */
+  // A price rides in the same transaction as the publication: one approval, and no window in which
+  // the edition exists free to collect while its price awaits approval. `set_offer` comes second
+  // because it reads the Edition account `publish` creates. `isSigned` ignores the offer: it is not
+  // publication evidence.
   const price = draftPriceLamports(d);
   const ixs = price && price > 0n
     ? [ix, await setOfferInstruction(d.edition, price)]
@@ -964,11 +937,10 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
 }
 /**
  * The Genesis Token accounts `publish` verifies and seals: the mint the document names and the
- * creator's token account for it, read from THIS cluster immediately before the quote. The token
- * exists on mainnet only, so a devnet edition publishes open, with the document's claim alone
- * (every reader checks that against mainnet), and the seal is exercised by the acceptance harness
- * against its stand-in. Refused, not dropped, when the wallet no longer holds the token: the
- * sealed document already names it, and the program would refuse the transaction anyway.
+ * creator's token account for it, read from this cluster immediately before the quote. The token
+ * exists on mainnet only, so a devnet edition publishes open with the document's claim alone
+ * (readers check it against mainnet). Refused, not dropped, when the wallet no longer holds the
+ * token: the sealed document already names it, and the program would refuse the transaction.
  */
 async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undefined> {
   if (!sealsGenesis(e)) return undefined;

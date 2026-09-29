@@ -123,10 +123,6 @@ export async function uploadDataItem(
   const held = await turboItemStatus(expectedId);
   if (held !== null) return { id: expectedId, posted: false, held };
 
-  // A raw Uint8Array body works in both React Native's fetch and Node's undici. The cast covers
-  // RN's narrower `BodyInit_` type; `RequestInit["body"]` is used because @types/node (the scripts
-  // project) declares no standalone `BodyInit`.
-  //
   // The next host is tried only on a transport failure or 5xx; a 4xx is an answer (402 allowance
   // or credit, 413 size). Status is re-read first, so a timed-out POST that was accepted is not sent twice.
   let res: Response | undefined;
@@ -142,6 +138,8 @@ export async function uploadDataItem(
       answer = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
+        // A raw Uint8Array works in React Native's fetch and Node's undici; the cast covers RN's
+        // narrower `BodyInit_`, and @types/node (the scripts project) has no standalone `BodyInit`.
         body: bytes as unknown as RequestInit["body"],
       });
     } catch (error) {

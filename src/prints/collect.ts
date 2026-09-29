@@ -1,32 +1,24 @@
 /**
  * Collecting: a wallet claims the next numbered copy of a published edition with one instruction.
  *
- * FREE OR PAID, DECIDED BY THE CHAIN AND NOT BY THE SCREEN. `collect` claims a free copy; `buy`
- * claims the same copy and pays the publisher in the same transaction. Which one this flow builds
- * comes from the edition's `Offer` account, re-read immediately before the estimate — an edition
- * with a price can only be claimed by paying it (the program refuses `collect` with
- * `PaymentRequired`), and a free one can only be collected (`buy` answers `NotForSale`).
+ * Free or paid is decided by the chain, not the screen: `collect` claims a free copy, `buy` claims
+ * it and pays the publisher in the same transaction. Which one is built comes from the edition's
+ * `Offer` account, re-read immediately before the estimate; the program refuses `collect` on a
+ * priced edition (`PaymentRequired`) and `buy` on a free one (`NotForSale`). Either way the
+ * collector also pays rent for the print and the `Receipt`, the network fee and Metaplex Core's
+ * 1,500,000-lamport create fee, all taken from simulating the collector's own transaction.
  *
- * Even a free claim is not free of costs: the collector pays rent for the new Core print and the
- * `Receipt`, the network fee, and Metaplex Core's flat 1,500,000-lamport protocol fee for creating
- * an asset. A purchase pays all of that AND the price. The two are shown apart — `priceLamports` is
- * what reaches the publisher, `prepared.estimatedLamports` is what leaves the wallet — and both
- * come from simulating the collector's own transaction rather than from a fee table.
+ * Program rules this flow respects (`programs/editions/src/lib.rs`):
+ *   1. `require!(e.minted < e.supply, SoldOut)`: an edition runs out, permanently.
+ *   2. `require!(number == e.minted + 1, StaleNumber)`: the copy number is instruction data, read
+ *      from the chain immediately before the estimate.
+ *   3. The receipt PDA `["claim", edition, collector]` is `init`: one claim per wallet, ever. That
+ *      account, not a signature, proves a claim, and the program refuses a second one. On a
+ *      seeker-only edition it is keyed on the collector's Seeker Genesis Token instead
+ *      (`publications/core/seekerClaim.ts`).
  *
- * THE THREE RULES THIS FLOW EXISTS TO RESPECT, all from `programs/editions/src/lib.rs`:
- *   1. `require!(e.minted < e.supply, SoldOut)` — an edition runs out, permanently.
- *   2. `require!(number == e.minted + 1, StaleNumber)` — the copy number is part of the
- *      instruction data, so it must be read from the chain immediately before the estimate, and a
- *      competing collector invalidates a quote rather than a wallet.
- *   3. the receipt PDA `["claim", edition, collector]` is `init` — one claim per wallet, ever,
- *      surviving any later transfer or burn of the print. That account, not a signature, is what
- *      proves a claim, and it is also why this flow needs none of `transfer.ts`'s replay
- *      bookkeeping: the program itself refuses a second claim by the same wallet. On a seeker-only
- *      edition the same account is keyed on the collector's Seeker Genesis Token instead, one
- *      claim per token, and the claim carries the token (`publications/core/seekerClaim.ts`).
- *
- * No UI lives here. The attempt is persisted before the wallet opens, the edition is re-read
- * immediately before it opens, and one in-process lock per edition stops two taps racing.
+ * The attempt is persisted before the wallet opens, the edition is re-read immediately before it
+ * opens, and one in-process lock per edition stops two taps racing.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -71,8 +63,6 @@ import {
   type CoreMetadata,
   type PublicationAttempt,
 } from "../../publications/types";
-
-/** The one chain this build talks to. A link for any other is refused, never silently retargeted. */
 
 const UNREVIEWED =
   "This edition uses a program this app has not reviewed.";
@@ -214,16 +204,9 @@ export interface Collectable {
   remaining: number;
   imageUri: string;
   /**
-   * What this edition asks for a copy right now, or `null` for a free one.
-   *
-   * `null` covers all three ways an edition is free and a screen must not tell them apart: the
-   * deployment predates offers, no offer was ever set, or the offer says zero. A price of `0n` is
-   * never reported here — `pricedOffer` normalises it away — so `offer !== null` is exactly the
-   * condition under which a claim becomes a purchase.
-   *
-   * It is a snapshot for RENDERING. The creator can change the price at any moment, so nothing is
-   * quoted from this copy: `prepareCollect` re-reads the account immediately before it builds a
-   * transaction, and the buyer's approval carries the price and revision it saw.
+   * The price of a copy, or `null` when free (no offers on this deployment, none set, or zero;
+   * `pricedOffer` never reports `0n`), so `offer !== null` exactly when a claim is a purchase.
+   * For rendering only: `prepareCollect` re-reads the account before building a transaction.
    */
   offer: EditionOffer | null;
   /**
@@ -371,17 +354,11 @@ const CANNOT_REPEAT =
   "The previous collection failed. Reopen the link.";
 
 /**
- * May this wallet collect, and what is standing in the way? Never throws: every failure is an
- * `unavailable` with the sentence that explains it, because this is a screen state.
- *
- * The order is deliberate. The permanent receipt is asked about FIRST, because a wallet that has
- * already claimed can never claim again whatever else is true. This wallet's own saved attempt
- * comes next, since money that may still be in flight is the more urgent fact than a supply count
- * read a moment ago. A `terminal` attempt failed on chain, so nothing it signed can land and the
- * receipt's `init` still refuses a second claim: it is forgotten, and the edition answers for
- * itself (sold out, needs a Genesis Token, collect). Anything else but `retryable` stops the offer:
- * `checkAttempt`'s contract is that only `retryable` means "offer this again", so a classification
- * added to it later lands on the safe side by default.
+ * May this wallet collect, and what is in the way? Never throws: a failure is `unavailable` with
+ * its sentence. The permanent receipt is checked first (a wallet that has claimed never claims
+ * again), then this wallet's saved attempt (money that may be in flight outranks a supply count).
+ * A `terminal` attempt is forgotten and the edition answers for itself; anything else but
+ * `retryable` stops the offer, so a classification later added to `checkAttempt` fails safe.
  */
 export async function getCollectState(c: Collectable, wallet: string): Promise<CollectState> {
   let attempt: CollectAttempt | null = null;
@@ -468,12 +445,10 @@ export interface CollectQuote {
    */
   kind: "collect" | "buy";
   /**
-   * What reaches the publisher, in lamports. `0n` for a `collect`, and for a `buy` the exact amount
-   * signed into the instruction data, which the program compares against the live offer.
-   *
-   * This is NOT the total. `prepared.estimatedLamports` is what leaves the wallet, and for a
-   * purchase it already contains this price, because it comes from the payer's own simulated
-   * balance delta. Show the two apart — price, then costs — and never add them together.
+   * What reaches the publisher: `0n` for a `collect`, and for a `buy` the amount signed into the
+   * instruction, which the program compares against the live offer. Not the total:
+   * `prepared.estimatedLamports`, the payer's simulated balance delta, already contains it, so the
+   * two are shown apart and never added.
    */
   priceLamports: bigint;
   /**
@@ -526,17 +501,11 @@ const feePayerOf = (messageBytes: Uint8Array) =>
   getCompiledTransactionMessageDecoder().decode(messageBytes).staticAccounts[0];
 
 /**
- * Everything checked before the review screen shows a cost, and the transaction that cost belongs
- * to. The copy number is read from the chain here and nowhere else: `collect` requires
- * `number == minted + 1` exactly, so quoting against a `minted` from an earlier read buys a
- * guaranteed `StaleNumber` after the wallet has already been opened.
- *
- * THE PRICE IS READ HERE TOO, AND FOR THE SAME REASON. An offer is a separate, mutable account:
- * whatever `c.offer` said when the link was opened may already be wrong, and quoting from it would
- * mean showing one price and — since `buy` signs the amount — asking the wallet to approve it. So
- * the offer account is re-read immediately before the estimate, and its price and revision go
- * straight into the instruction the wallet will see. If the creator changes the price between this
- * read and the block, the program answers `OfferChanged` and nothing is charged.
+ * Everything checked before the review shows a cost, and the transaction that cost belongs to.
+ * The copy number and the offer are read from the chain here, immediately before the estimate:
+ * `collect` requires `number == minted + 1`, and `buy` signs the quoted price and revision, so a
+ * stale read would only fail after the wallet opened. A price changed after this read fails with
+ * `OfferChanged` and charges nothing.
  */
 export async function prepareCollect(c: Collectable, wallet: string): Promise<CollectQuote> {
   const e = c.edition;
@@ -609,19 +578,13 @@ type CollectProgress = "wallet" | "confirming";
 /**
  * Approve, confirm, and verify the claim. Returns the copy number this wallet now holds.
  *
- * The claim is proved by the permanent `Receipt` account, never by the signature: a wallet can
- * return a receipt for a transaction that failed, and a confirmation can be reported by a node that
- * is behind. There is deliberately none of `transfer.ts`'s previous-message bookkeeping, because
- * a replay cannot succeed here — the receipt PDA is `init`, so the program refuses a second claim
- * by the same wallet however many times the message is submitted. That holds for a purchase too:
- * the same `["claim", edition, collector]` account is `init` in `struct Buy`, so a resubmitted
- * message cannot charge the buyer twice.
+ * Proved by the permanent `Receipt` account, never the signature: a wallet can return a signature
+ * for a failed transaction, and a lagging node can report a confirmation. Unlike `transfer.ts`, no
+ * previous-message bookkeeping is needed: the receipt PDA is `init` in both `Collect` and `Buy`, so
+ * a resubmitted message can never claim or charge twice.
  *
- * A PURCHASE IS NOT RE-PRICED HERE. `refreshedQuote` rebuilds the SAME instruction — same kind,
- * same price, same revision — and refuses anything whose bytes or cost differ from the reviewed
- * transaction. If the creator moved the price in the meantime, the rebuilt `buy` still carries the
- * approved amount and the program refuses it with `OfferChanged`; the screen then re-reads and
- * quotes again. At no point is an amount the collector did not review handed to a wallet.
+ * A purchase is never re-priced here: `refreshedQuote` rebuilds the same instruction and refuses any
+ * change in bytes or cost, so a price moved since review fails with `OfferChanged`.
  */
 export async function sendCollect(
   c: Collectable,
@@ -635,10 +598,9 @@ export async function sendCollect(
     if (quote.edition !== e.edition || quote.id !== reviewedFingerprint(reviewedBytes))
       throw new Error("The collection review changed. Check this edition again.");
     if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
-    // The collector is read OUT of the reviewed message rather than passed in beside it: the first
-    // static account of a compiled message is its fee payer
-    // (https://solana.com/docs/core/transactions), so this is exactly the wallet that was quoted
-    // and no separate argument can point the attempt at a different one.
+    // The collector is read out of the reviewed message, not passed beside it: the first static
+    // account of a compiled message is its fee payer (https://solana.com/docs/core/transactions),
+    // so no separate argument can point the attempt at another wallet.
     const collector = feePayerOf(reviewedBytes);
     if (collector === e.creator) throw new Error(PUBLISHER);
     const keys = await addresses(e.program, e.creator, e.nonce, quote.number, collector);

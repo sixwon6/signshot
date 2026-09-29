@@ -1,13 +1,8 @@
 /**
- * The one call into the native QR scanner, behind a runtime guard.
- *
- * A dev client whose native side predates `SeekerCamera.scanQrCode()` would throw `undefined is
- * not a function` the first time the Scan pill is tapped, so every caller goes through here
- * instead: `scanQrAvailable()` decides whether the pill is offered at all, and `scanQr()` refuses
- * rather than crashing if the function disappears between the two (a dev-client reload can swap
- * the native module underneath us).
- *
- * Resolves the decoded text, or null when the person backed out of the scanner.
+ * The one call into the native QR scanner, behind a runtime guard: a native build without
+ * `SeekerCamera.scanQrCode()` would otherwise throw on the first Scan tap. `scanQrAvailable()`
+ * decides whether the pill is offered, and `scanQr()` returns null rather than crash if the
+ * function has gone since (a dev-client reload can swap the native module).
  */
 
 import { SeekerCamera } from "../../modules/seeker-camera";

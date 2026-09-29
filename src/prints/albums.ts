@@ -25,7 +25,6 @@ import { account, albumAddress, hash, utf8 } from "../../publications/core/proto
 import {
   albumLabel,
   albumTerms,
-  albumUrl,
   createAlbumInstruction,
   readAlbum,
 } from "../../publications/core/album";
@@ -314,9 +313,4 @@ export async function createAlbum(
     await saveAlbum(done);
     return receipt === "mismatched" ? { ...done, reviewMismatch: true as const } : done;
   });
-}
-
-/** The album's link. */
-export function albumPublicUrl(group: string): string {
-  return albumUrl(group, cluster);
 }

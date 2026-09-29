@@ -14,7 +14,6 @@ interface ProofFacts {
   publisher?: string;
   cluster?: Cluster;
   signature?: string;
-  publicUrl?: string;
   transactionUrl?: string;
   explorerUrl?: string;
   capturedHash?: string;
@@ -65,9 +64,6 @@ export function selectPhotoProof(
       publisher: edition?.creator,
       cluster: edition?.cluster,
       signature,
-      publicUrl: confirmation === "confirmed" || confirmation === "cached"
-        ? view?.publicUrl
-        : undefined,
       transactionUrl: transactionUrl(signature, edition?.cluster),
       explorerUrl: view?.explorerUrl,
       // Capture facts come from the capture; the published record does not carry them.

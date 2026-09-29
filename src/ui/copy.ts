@@ -47,8 +47,6 @@ export const actions = {
   checkAlbumCost: "Check album cost",
   createAlbum: "Create album",
   creatingAlbum: "Creating album…",
-  openPublicPage: "Open collect link",
-  openAlbumPage: "Open album link",
   viewEdition: "View edition on Solana",
   viewTransaction: "View Solana transaction",
   viewTransactionShort: "View transaction",

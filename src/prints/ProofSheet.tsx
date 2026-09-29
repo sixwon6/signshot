@@ -9,7 +9,6 @@ import { typeScale as type } from "../ui/type";
 import { NetworkLabel, Pill } from "../ui/primitives";
 import { actions, proof as copy } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import { albumPublicUrl } from "./albums";
 import {
   deviceName,
   securityLevelName,
@@ -160,13 +159,6 @@ export function ProofSheet({
                 ? "Not available."
                 : new Date(proof.capturedAtMs).toLocaleString()}
             </Row>
-            {!!draft?.album && (
-              <Pill
-                label={actions.openAlbumPage}
-                variant="secondary"
-                onPress={() => open(albumPublicUrl(draft.album!))}
-              />
-            )}
             {proof.explorerUrl && (
               <Pill
                 label={actions.viewEdition}
@@ -199,16 +191,7 @@ export function ProofSheet({
                 {error}
               </Text>
             )}
-            {proof.publicUrl ? (
-              <>
-                <Pill
-                  label={actions.openPublicPage}
-                  onPress={() => open(proof.publicUrl!)}
-                />
-              </>
-            ) : (
-              <Pill label={actions.done} variant="secondary" onPress={onClose} />
-            )}
+            <Pill label={actions.done} variant="secondary" onPress={onClose} />
           </View>
         </View>
       </View>

@@ -15,8 +15,8 @@ import org.json.JSONObject
 class SeekerCameraModule : Module() {
   companion object {
     @Volatile var activeView: SeekerCameraView? = null
-    // Look continuity across a view rebuild: a re-attached view brings
-    // its fresh renderer up on these, so a tab switch cannot diverge native state from JS state.
+    // A rebuilt view brings its fresh renderer up on these, so a tab switch cannot leave native
+    // state diverged from JS state.
     @Volatile var lastProfile: Profile? = null
     @Volatile var lastIntensity: Float = 0.6f
     /** The last ACCEPTED capture settings, re-applied by a rebuilt view for the same reason. */
@@ -408,10 +408,9 @@ class SeekerCameraModule : Module() {
       targets.add(File(dir, "$baseName.json.tmp"))
       targets.forEach { runCatching { it.delete() } }
       // Derived copies are deleted on the export thread, after any in-flight write, so they cannot
-      // be recreated once the capture is gone.
+      // be recreated once the capture is gone. Only this capture's derived files match.
       appContext.reactContext?.let { ctx ->
         EXPORT_EXECUTOR.execute {
-          // Run after pending renders, confined to this capture's derived files.
           dir.listFiles()?.filter { Regex("${baseName}-(edit|print)-[a-f0-9]{64}(\\.tmp)?\\.jpg(\\.tmp)?").matches(it.name) }
             ?.forEach { runCatching { it.delete() } }
           runCatching { File(File(ctx.cacheDir, "share"), "$baseName-share.jpg").delete() }
@@ -432,11 +431,8 @@ class SeekerCameraModule : Module() {
     /**
      * Opens the QR scanner (QrScanner.kt) and resolves the first QR code's text, null when the
      * person backs out. Rejects with a readable sentence when scanning cannot happen: camera access
-     * refused, no back camera, or the bundled ML Kit model failing to run.
-     *
-     * Refuses while a camera view is mounted: the scanner binds the back camera through CameraX and
-     * `CameraController` holds camera "0" for the whole life of the view. The Collection tab, the
-     * only caller, has no camera view up.
+     * refused, no back camera, or the bundled ML Kit model failing to run. Refuses while a camera
+     * view is mounted, since both would own camera "0" (see QrScanner.kt).
      */
     AsyncFunction("scanQrCode") { promise: Promise ->
       if (activeView != null) {

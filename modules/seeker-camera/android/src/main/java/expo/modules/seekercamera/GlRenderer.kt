@@ -542,7 +542,7 @@ class GlRenderer {
     }
     try {
       // Enforce the 4 MB cap before writing, since the returned hash covers these exact bytes:
-      // Walk quality down until the frame fits (detailed or noisy frames can hit this); fail below q80.
+      // walk quality down until the frame fits (detailed or noisy frames can hit this); fail below q80.
       var bytes: ByteArray? = null
       for (q in JPEG_QUALITY_LADDER) {
         val bos = ByteArrayOutputStream(MAX_JPEG_BYTES / 2)

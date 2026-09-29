@@ -18,8 +18,8 @@ data class CaptureStreams(val preview: Size, val still: Size) {
         it.width > 0 && it.height > 0 && it.width.toLong() * 3 == it.height.toLong() * 4
       }.sortedBy { pixels(it) }
       require(sizes.isNotEmpty()) { "Camera does not support 4:3 YUV photographs" }
-      // Preserve the old framing where available; tolerate firmware/device size changes.
-      // Bound memory to roughly 12 MP (including 4032 x 3024) for full-size GL rendering.
+      // The Seeker's own sizes when advertised, else the largest 4:3 size under the cap. The
+      // ~12 MP still cap (4032 x 3024 included) bounds memory for full-size GL rendering.
       fun pick(preferred: Size, maxPixels: Long): Size =
         sizes.firstOrNull { it == preferred }
           ?: sizes.lastOrNull { pixels(it) <= maxPixels }

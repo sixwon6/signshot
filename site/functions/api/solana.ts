@@ -1,34 +1,23 @@
-// Cloudflare Pages Function. The upstream is the SOLANA_RPC_URL environment secret when it is
-// set, and Solana's public mainnet endpoint otherwise, which is rate-limited and "not intended for
-// production applications" (https://solana.com/docs/references/clusters); see site/README.md.
-// Read-only method allowlist: wallet submission goes through the wallet's own RPC, and the list
-// is exactly the thirteen methods `site/collect/` calls — nothing wider gets to spend the
-// operator's provider budget. It is exported so a test can assert that it
-// EQUALS the set of methods the page was observed using; Cloudflare routes only `onRequest*`
-// exports, so exporting a constant adds no endpoint.
+// Cloudflare Pages Function: the read-only Solana JSON-RPC proxy the collect page uses on mainnet.
+// The upstream is the SOLANA_RPC_URL secret, or else Solana's public mainnet endpoint, which is
+// rate-limited and "not intended for production applications"
+// (https://solana.com/docs/references/clusters); see site/README.md.
+//
+// ALLOWED is exactly the read-only methods `site/collect/` calls (transactions go out through the
+// wallet's own RPC), so nothing wider spends the provider budget. It is exported so
+// `scripts/check-site.ts` can assert it equals the page's methods; Cloudflare routes only
+// `onRequest*` exports, so the export adds no endpoint. Beyond the plain reads and simulation:
+// `getRecentPrioritizationFees` prices compute (`prepareTransaction`), `getGenesisHash` confirms
+// the upstream is mainnet before a Genesis Token check (`assertMainnet`), and the methods in SHAPES
+// serve the Genesis Token and device rows. The SGT exists on mainnet only, so devnet editions use
+// this proxy for that check too.
 //
 // `_headers` does NOT apply to Functions responses
-// (https://developers.cloudflare.com/pages/configuration/headers/), so every response here —
-// including the refusals — sets its own security headers.
+// (https://developers.cloudflare.com/pages/configuration/headers/), so every response here,
+// refusals included, sets its own security headers.
 //
-// Rate limiting is the control that actually bounds spend, and Cloudflare Pages keeps it in the
-// dashboard rather than in this repository. The rule that must be applied is written down in
-// `site/cloudflare/README.md` and mirrored in `site/cloudflare/rate-limit-rule.json`.
-// `getRecentPrioritizationFees` was added in batch 3: `prepareTransaction` now derives the
-// compute-budget price from it (audit B-8) and the collector page shares that code path. It is
-// read-only, takes one empty-array param and answers ~150 small entries; leaving it off the list
-// would make every collect send a request this Function refuses.
-// `getTokenAccountsByOwner` is the Seeker Genesis Token check (`verifyGenesisToken`): one wallet,
-// filtered to one mint, so it answers at most a couple of token accounts. It runs against this
-// proxy for devnet editions too, because the SGT exists on mainnet only. The same method, filtered
-// to the Token-2022 program instead, finds a collector's own SGT for a seeker-only edition
-// (`findHeldGenesisToken`): one wallet's Token-2022 accounts, whose size MAX_UPSTREAM bounds, and
-// then its candidate mints through `getMultipleAccounts`, at most 100 per request, each sliced to
-// its first 4096 bytes: about 560 KB of base64 at most, inside MAX_UPSTREAM. `getGenesisHash` is
-// how both confirm the upstream is mainnet before believing it (`assertMainnet`); no params.
-// `getSignaturesForAddress` and `getTransaction` are the device row's publication time
-// (`publicationTime` in `publications/core/attestationCheck.ts`): the history of one claim
-// receipt, normally a single entry, and the ~10 KB parsed transaction that created it.
+// The Cloudflare rate-limit rule is what bounds spend. It lives in the dashboard; the rule to apply
+// is in site/README.md and mirrored in site/cloudflare/rate-limit-rule.json.
 export const ALLOWED=new Set(['getAccountInfo','getLatestBlockhash','simulateTransaction','getFeeForMessage','getBalance','getSignatureStatuses','getBlockHeight','getRecentPrioritizationFees','getTokenAccountsByOwner','getMultipleAccounts','getGenesisHash','getSignaturesForAddress','getTransaction']);
 const MAX_BODY=16000;      // bytes, not UTF-16 code units: 16 000 astral characters is 64 000 bytes.
 export const MAX_UPSTREAM=1000000;// bytes of provider response this Function will buffer and re-serialise.
@@ -41,7 +30,7 @@ const MINT_SLICE=4096;     // `MINT_SLICE_BYTES` in `publications/core/genesisTo
 const SECURITY={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
 const size=(value:string)=>new TextEncoder().encode(value).byteLength;
 const refuse=(message:string,status:number,extra:Record<string,string>)=>new Response(message,{status,headers:{...SECURITY,...extra,'Content-Type':'text/plain; charset=utf-8'}});
-/** Bounded shape check: an allowlisted method's params never nest deeper than four. */
+/** Bounded shape check: no deeper than MAX_DEPTH, no array longer than MAX_PARAMS. */
 function shallow(value:unknown,depth:number):boolean{
   if(depth>MAX_DEPTH)return false;
   if(Array.isArray(value))return value.length<=MAX_PARAMS&&value.every((item)=>shallow(item,depth+1));
@@ -68,8 +57,9 @@ const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
  *   getTokenAccountsByOwner  `genesisHolding` in `genesisToken.ts`: one wallet, one mint, parsed;
  *                            or `findHeldGenesisToken` there: one wallet, Token-2022 only, parsed.
  *   getMultipleAccounts      `findHeldGenesisToken`'s candidate mints: 1 to 100, each sliced to
- *                            the first `MINT_SLICE` bytes.
- *   getSignaturesForAddress  `publicationTime` in `publications/core/attestationCheck.ts`.
+ *                            the first `MINT_SLICE` bytes (about 560 KB of base64, under MAX_UPSTREAM).
+ *   getSignaturesForAddress  `publicationTime` in `publications/core/attestationCheck.ts`: the
+ *                            history of one claim receipt.
  *   getTransaction           the same, for the transaction that created the claim receipt.
  * The others take a fixed few scalars and keep the generic `shallow` bound.
  */
@@ -105,9 +95,8 @@ export async function onRequestPost({request,env}:{request:Request;env:Env}):Pro
   const upstreamUrl=env.SOLANA_RPC_URL||PUBLIC_MAINNET,visible:Record<string,string>=env.SOLANA_RPC_URL?{}:{'X-Upstream':'public'};
   const headers={'Content-Type':'application/json','Cache-Control':'no-store',...SECURITY,...visible};
   const unavailable=()=>new Response(JSON.stringify({error:{message:'Solana connection unavailable. Please retry.'}}),{status:502,headers});
-  // A MISSING Origin is untrusted, not trusted. The only legitimate caller is the same-origin
-  // page, which always sends one; a header is forgeable, so this removes the trivial `curl`
-  // path and nothing more. The bound on cost is the Cloudflare rate-limit rule, not this line.
+  // A missing Origin is refused too: the same-origin page always sends one. The header is
+  // forgeable, so this only stops the trivial `curl` path; the rate-limit rule bounds cost.
   if(request.headers.get('Origin')!==new URL(request.url).origin)return refuse('Forbidden',403,visible);
   // Refuse on the declared size before reading anything, then on the decoded bytes, because
   // Content-Length may be absent (chunked) or untrue.

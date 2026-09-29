@@ -1,12 +1,10 @@
 /**
  * Builds the public collect page: `site/collect/browser.ts` → `site/dist/collect/collect.js`,
- * then copies `site/public/` (the static pages, `_headers`, `.well-known/`) into `site/dist/`.
- * `site/dist/` is the directory `wrangler pages deploy` uploads (see `site/README.md`); it is
- * git-ignored and rebuilt on every deploy, so nothing in it is ever edited by hand.
+ * then copies `site/public/` into `site/dist/`, the git-ignored directory `wrangler pages deploy`
+ * uploads (see `site/README.md`).
  *
- * The bundle is built from the app's OWN reader (`publications/core/*`), so the web page and the
- * phone accept exactly the same documents — including the five-key `seedshot-attestation/1`
- * document — and the trusted program table is the one committed in `publications/deployments.ts`.
+ * The bundle uses the app's own reader (`publications/core/*`), so the page and the phone accept
+ * exactly the same documents, and trusts the program table in `publications/deployments.ts`.
  */
 import { build } from "esbuild";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -18,13 +16,9 @@ const root = resolve(site, "..");
 const dist = resolve(site, "dist");
 
 /**
- * `publications/deployments.ts` reads its two overrides through literal `process.env.NAME`
- * member accesses, because that is the only form Metro can inline for the mobile app. A browser
- * bundle has no `process` at all, so both expressions must be replaced at build time or the page
- * throws `process is not defined` before it can even render an error.
- *
- * Production replaces both with `undefined`: the public page reads whatever the reviewed
- * deployment table holds and can never be pointed at another program by its own build.
+ * `publications/deployments.ts` reads two overrides as literal `process.env.NAME` accesses, the
+ * only form Metro inlines. A browser has no `process`, so both are replaced at build time, with
+ * `undefined`: the page trusts only the reviewed table and its build cannot point it elsewhere.
  */
 export const DEFINE = {
   "process.env.EXPO_PUBLIC_EDITIONS_DEVNET_PROGRAM": "undefined",
@@ -32,12 +26,9 @@ export const DEFINE = {
 };
 
 /**
- * What this build will trust, resolved exactly the way the bundle resolves it: the real registry
- * module, bundled with the same `DEFINE`, then imported.
- *
- * An empty `TRUSTED` is not an inert build, it is a broken one — the page would refuse every
- * `?core=` link with "not from a reviewed deployment on this network" and nothing else would
- * notice. So the emptiness fails here instead of shipping.
+ * What this build will trust, resolved the way the bundle resolves it: the real registry module,
+ * bundled with the same `DEFINE`, then imported. An empty `TRUSTED` would refuse every link
+ * without anything else noticing, so it fails the build instead.
  */
 const registry = await build({
   entryPoints: [resolve(root, "publications", "deployments.ts")],
@@ -104,15 +95,10 @@ for (const input of Object.keys(bundle.metafile.inputs))
     throw new Error(`The collector bundle pulled in a React Native module: ${input}`);
 
 /**
- * The third-party licence notice that ships beside the bundle.
- *
- * `collect.js` is a redistribution of substantial portions of every package esbuild pulled into
- * it. MIT requires that the copyright and permission notice "shall be included in all copies or
- * substantial portions of the Software"; Apache-2.0 §4(a)/(b) require giving recipients a copy
- * of the License and retaining the attribution notices. Minified code satisfies neither on its
- * own, so the notice file is the copy recipients get. It is generated from the metafile — the
- * exact set of files esbuild put in this bundle — never from a hand-kept list. A package the
- * bundle carries but whose licence cannot be read FAILS the build.
+ * The third-party licence notice that ships beside the bundle. `collect.js` redistributes
+ * substantial portions of every package in it, and MIT and Apache-2.0 §4(a)/(b) require their
+ * licence and notices to travel with it, which minified code alone does not do. Generated from
+ * the metafile, never a hand-kept list; a bundled package whose licence cannot be read fails.
  */
 const LICENCE_FILES = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md", "license", "license.md", "license.txt", "COPYING"];
 const emitted = Object.values(bundle.metafile.outputs).find((o) => o.entryPoint);

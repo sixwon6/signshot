@@ -6,14 +6,13 @@
  * Chrome's Local Network Access permission first; without it "MWA wallet signing requests will
  * silently fail" (https://docs.solanamobile.com/recipes/mobile-wallet-adapter/local-network-access).
  *
- * THE DIALOGS ARE THE ONE MARKUP THIS PAGE LETS INTO THE DOM. The library builds its permission,
- * connect, spinner and wallet-not-found dialogs by assigning its own template strings to
- * `innerHTML`, and the page's CSP requires Trusted Types. A plain string reaches a sink only
- * through a policy named `default`, so this file installs one that admits exactly those
- * templates, by SHA-256, and nothing else: any other string, including the library's one dynamic
- * error line, throws. Its Google Fonts `<link>` template is admitted as an empty string, so no
- * third-party font request or preconnect is made. `scripts/check-site.ts` recomputes every digest
- * below from the installed package and fails when they differ.
+ * Its dialogs are the only markup this page lets into the DOM. The library builds its permission,
+ * connect, spinner and wallet-not-found dialogs by assigning its own templates to `innerHTML`, and
+ * the page's CSP requires Trusted Types, under which a plain string reaches a sink only through a
+ * policy named `default`. This file installs one that admits exactly those templates by SHA-256;
+ * any other string, including the library's one dynamic error line, throws. Its Google Fonts
+ * `<link>` template is admitted as an empty string, so no third-party font request is made.
+ * `scripts/check-site.ts` recomputes every digest below from the installed package.
  */
 import {
   createDefaultAuthorizationCache,

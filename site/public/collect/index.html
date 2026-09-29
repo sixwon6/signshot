@@ -3,14 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <!--
-      The same policy `site/public/_headers` serves for `/collect/*`, minus `frame-ancestors`,
-      which CSP3 says is ignored in a <meta> element (https://www.w3.org/TR/CSP3/). The header
-      supplies that directive, together with `X-Frame-Options: DENY`.
-
-      It is here as well as in `_headers` so the policy travels with the document: a hosting
-      change, a typo in a `_headers` pattern or a move off Cloudflare Pages cannot silently leave
-      this page with no policy at all, and opening the file from disk still runs it under one.
-      `scripts/check-site.ts` asserts these two copies say the same thing.
+      The `/collect/*` policy from `site/public/_headers`, minus `frame-ancestors`, which CSP3
+      ignores in a <meta> (https://www.w3.org/TR/CSP3/); the header supplies it with
+      `X-Frame-Options: DENY`. Repeated here so the policy travels with the document if the
+      headers stop applying. `scripts/check-site.ts` asserts the two copies match.
     -->
     <meta
       http-equiv="Content-Security-Policy"
@@ -54,10 +50,10 @@
           <p class="byline">Published by <span id="creator"></span></p>
           <div id="moment" hidden><p id="moment-text" class="byline"></p></div>
           <!--
-            The device row. Its text is derived from the certificate chain inside the publication
-            document after the reader verified it to Google's attestation roots and checked the
-            release app, the boot state, revocation and the dates at publication. It names the
-            device, the key and the boot state — never the scene, and no stronger claim.
+            The device row: derived from the certificate chain in the publication document once
+            the reader verified it to Google's roots and checked the release app, boot state,
+            revocation and dates at publication. It names the device, key and boot state, never
+            the scene.
           -->
           <div id="device" class="device" hidden>
             <p class="eyebrow">DEVICE</p>

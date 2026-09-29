@@ -1,20 +1,16 @@
 /**
- * The Metaplex Core collector route: `/collect/?core=<edition>`.
+ * The Metaplex Core adapter for `/collect/?core=<edition>`: the trusted program, the reader, the
+ * claim instruction, the links and the wording that names Core's costs, so `page.ts` stays a page.
  *
- * Everything protocol-specific the page needs lives here — the trusted program, the reader, the
- * claim instruction, the public link, the explorer links and the wording that names Core's own
- * costs — so `page.ts` stays a page: DOM, wallets, quoting, durable attempts and confirmation.
+ * The reader is the app's own (`publications/core/protocol.ts`): the edition account's owner is
+ * checked against the reviewed deployments for this network, the metadata document is hash-checked
+ * against the edition, and a `seedshot-attestation/1` chain is verified to Google's pinned roots
+ * and checked for the release app, boot state, revocation and dates at publication before the page
+ * names the device. Neither the link nor the metadata grants trust.
  *
- * The reader is the app's own (`publications/core/protocol.ts`): the edition account's actual
- * owner is checked against the reviewed deployments for this network, the metadata document is
- * hash-checked against the edition, and a `seedshot-attestation/1` certificate chain inside the
- * document is verified down to Google's pinned roots, then checked for the release app, the boot
- * state, revocation and its dates at publication, before the page may say which device signed it.
- * Neither the link nor the metadata grants trust.
- *
- * Costs are named honestly. A claim creates a Core asset and a receipt account, so the collector
- * pays rent, the network fee AND Metaplex Core's flat protocol fee for creating an asset; a
- * priced edition adds the creator's price on top, and only that part reaches the creator.
+ * A claim creates a Core asset and a receipt account, so the collector pays rent, the network fee
+ * and Metaplex Core's flat create fee; a priced edition adds the creator's price, and only that
+ * part reaches the creator.
  */
 import {
   addresses,
@@ -107,7 +103,6 @@ export function coreAdapter(edition: string): Adapter {
     edition,
     pendingKey: `seedshot.core-collect.v2:${cluster}:${edition}`,
     copy: {
-      // The edition size, in the vocabulary the standards research settled on.
       solo: "Edition of 1",
       cost: "",
       details: (loaded: Loaded) =>
@@ -158,10 +153,9 @@ export function coreAdapter(edition: string): Adapter {
       if (genesis === null) throw new Error(NEEDS_GENESIS);
       // The print PDA this claim creates, recorded in the durable attempt before the wallet opens.
       const keys = await addresses(e.program, e.creator, e.nonce, number, wallet);
-      // The live offer, read immediately before quoting, never the one loaded with the edition:
-      // a price can change at any moment. `pricedOffer` collapses "no offer account", "no offers
-      // on this program" and "priced at zero" into the one answer they all mean: free. The
-      // program applies the same rule — `collect` succeeds only at price 0, `buy` refuses it.
+      // The live offer, never the one loaded with the edition: a price can change at any moment.
+      // `pricedOffer` reads no offer account, no offers on this program and a zero price as free,
+      // the program's own rule: `collect` succeeds only at price 0, `buy` refuses it.
       const offer = pricedOffer(await readOfferAccount(endpoint, e.program, e.edition));
       const instruction = offer
         ? await buyInstruction(e, wallet, number, offer.priceLamports, offer.revision, genesis ?? undefined)

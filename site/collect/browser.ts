@@ -1,29 +1,14 @@
 /**
- * The collector page's router.
+ * The collect page's router: `/collect/?core=<edition PDA>[&cluster=devnet]`.
  *
- * A public link names its publication protocol explicitly and permanently:
+ * Exactly one non-empty `core` must be present; a missing or repeated one is an error panel, never
+ * a guess. Unknown parameters (`utm_*`, `fbclid` and the like, added by messaging apps) are
+ * ignored, since the page reads nothing but `core` and `cluster`. Retired routes (such as
+ * `?album=`, which the app refuses too) and names that would steer the page are refused.
  *
- *   /collect/?core=<edition PDA>[&cluster=devnet]   metaplex-core-editions-v1, one photograph
- *
- * with an optional `cluster`. EXACTLY ONE `core` must be present and non-empty; a missing or
- * repeated one is an error panel — never a guess. The app refuses album links too
- * (`src/prints/collect.ts`), so the old `?album=` route is not served here either.
- *
- * Unknown parameters are IGNORED, not refused. Real share links pick up `utm_*`, `fbclid`,
- * `igshid` and friends on the way through a messaging app, and a collector whose link was
- * "helpfully" tagged must still see the photograph. Ignoring is safe because the page reads
- * nothing but `core` and `cluster`: an unread parameter cannot influence anything.
- *
- * The exception is a short list of names that would be an attempt to steer the page —
- * `print`, `rpc`, `endpoint`, `program`, `url`, `api`. None of them does anything here, so any
- * link carrying one is either a retired route or someone probing for a way in; both deserve a
- * refusal rather than a page that silently ignores what the sender intended.
- *
- * Two rules the routing exists to keep. The page never tries a second decoder when the first
- * refuses an account: that would let a link author point at whichever account happened to
- * decode. And it never accepts an RPC endpoint or a program address from the link — both come
- * from the build's reviewed tables, so a shared QR cannot redirect a collector's wallet at an
- * unreviewed program or a chain-state-faking node.
+ * The page never tries a second decoder when the first refuses an account, and never takes an RPC
+ * endpoint or program address from the link: both come from the build's reviewed tables, so a
+ * shared QR cannot point a collector's wallet at an unreviewed program or a node faking chain state.
  */
 import { fail, params, run } from "./page";
 import { coreAdapter } from "./core";

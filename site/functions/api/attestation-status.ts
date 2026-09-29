@@ -1,28 +1,26 @@
 // Cloudflare Pages Function: Google's Android key attestation revocation list, served same-origin
 // at `/api/attestation-status` for the collect page's device row (`publications/core/attestationCheck.ts`).
 //
-// https://android.googleapis.com/attestation/status sends no `Access-Control-Allow-Origin` header
-// (checked 2026-09-24), so a browser page on another origin cannot read it. The list is public and
-// identical for every caller, so this Function fetches it, checks it is the documented shape,
-// re-serialises only `status` and `reason` per serial, and keeps it in Cloudflare's Cache API for
-// an hour: one upstream request per hour per data centre, whatever the traffic. GET only (Pages
-// routes nothing else to `onRequestGet`), no query string reaches the cache key, and the upstream
-// body is bounded before it is parsed. It spends no RPC budget.
+// https://android.googleapis.com/attestation/status sends no `Access-Control-Allow-Origin` header,
+// so a page on another origin cannot read it. The list is public and the same for every caller, so
+// this Function fetches it, checks the documented shape, re-serialises only `status` and `reason`
+// per serial, and holds it in Cloudflare's Cache API for an hour: one upstream request per hour per
+// data centre. GET only (the only method routed to `onRequestGet`), no query string in the cache
+// key, and the upstream body is bounded before it is parsed.
 //
 // `_headers` does NOT apply to Functions responses
 // (https://developers.cloudflare.com/pages/configuration/headers/), so every response here sets
 // its own security headers, as `solana.ts` does.
 export const UPSTREAM='https://android.googleapis.com/attestation/status';
-export const MAX_UPSTREAM=4000000; // bytes; 179 KB on 2026-09-24.
+export const MAX_UPSTREAM=4000000; // bytes; the list measured 179 KB.
 const TTL_SECONDS=3600;             // Google sends max-age=86400; an hour keeps new revocations close.
 const SERIAL=/^[0-9a-f]+$/;        // hex, as documented, or decimal, as the live list also uses.
 const SECURITY={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
 const size=(value:string)=>new TextEncoder().encode(value).byteLength;
 const unavailable=()=>new Response(JSON.stringify({error:{message:'Revocation list unavailable.'}}),{status:502,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...SECURITY}});
 /**
- * The documented shape, reduced to what a reader uses; `null` for anything else. A well-formed
- * entry under a key no serial is looked up by is dropped, as `parseRevocationList` does, rather
- * than failing the whole list.
+ * The documented shape, reduced to what a reader uses; `null` for anything else. A well-formed entry
+ * under a key that is not a serial is dropped, as `parseRevocationList` does, not fatal to the list.
  */
 function reshape(json:unknown):Record<string,{status:string;reason?:string}>|null{
   const entries=(json as {entries?:unknown}|null)?.entries;

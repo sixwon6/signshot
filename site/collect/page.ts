@@ -1,14 +1,10 @@
 /**
- * The collector page itself: the screen, not the protocol.
- *
- * `browser.ts` accepts a link and hands the adapter for it to `run()`. This file owns wallet
- * discovery and signing through Wallet Standard (on Android, Mobile Wallet Adapter's registered
- * wallet from `mwa.ts`), quoting, the durable pending-attempt safety, confirmation, availability
- * wording, the device row, the open-in-app control, the share card, the terms agreement, Report
- * and Block, the moderation veil (`src/moderation/core.ts`) and the error panel; it knows nothing
- * about Metaplex Core plugins, PDAs or instruction layouts. The adapter (`core.ts`) supplies the
- * addresses, the reader, the claim and the words that name its own costs, so a page change cannot
- * quietly alter what a collector is told they are paying for.
+ * The collect page's screen, not its protocol. `browser.ts` routes a link to `run()` with an
+ * adapter. This file owns wallets (Wallet Standard; on Android, Mobile Wallet Adapter from
+ * `mwa.ts`), quoting, the durable pending attempt, confirmation, the device and Genesis Token
+ * rows, open-in-app, the share card, terms, Report, Block and the moderation veil. The adapter
+ * (`core.ts`) supplies the addresses, reader, claim and the words that name its costs, so a page
+ * change cannot alter what a collector is told they pay for.
  *
  * Rules the page keeps whatever it is showing:
  *   - an RPC endpoint and a program address are NEVER taken from the link, only from the build's
@@ -72,8 +68,8 @@ export const params = new URLSearchParams(location.search);
 export const cluster: Cluster =
   params.get("cluster") === "devnet" ? "devnet" : "mainnet-beta";
 const chain = cluster === "devnet" ? "solana:devnet" : "solana:mainnet";
-// Same-origin production RPC proxy, optionally configured by the site operator. Never
-// accept RPC endpoints in a shared QR URL, which would let a link author fake chain state.
+// The same-origin mainnet RPC proxy. An endpoint is never taken from the link, which would let a
+// link author fake chain state.
 export const mainnetEndpoint = new URL("/api/solana", location.origin).href;
 export const endpoint =
   cluster === "devnet" ? "https://api.devnet.solana.com" : mainnetEndpoint;
@@ -112,16 +108,11 @@ function store(key: string, value: string) {
 const moderationUrl = new URL(new URL(MODERATION_URL).pathname, location.origin).href;
 
 /**
- * The one place publisher-controlled bytes become an image on this origin.
- *
- * The bytes arrive hash-checked against the fingerprint in the edition account, so they are
- * exactly what the publisher committed to and no gateway can substitute them. What was never
- * checked is whether they are a JPEG at all. They are wrapped in a `blob:` labelled `image/jpeg`
- * and handed to <img> — safe in itself, even for SVG — and the `blob:` URL is SAME-ORIGIN with
- * erashot.app. `X-Content-Type-Options: nosniff` does not reach a `blob:`, whose type comes from
- * this constructor, so the label has to be true: require the JPEG start-of-image marker. The app
- * publishes JPEG and nothing else (`publications/core/protocol.ts` declares `image/jpeg` in every
- * metadata document), so this refuses nothing legitimate.
+ * The one place publisher-controlled bytes become an image on this origin. They are hash-checked
+ * against the edition, but nothing checked that they are a JPEG, and a `blob:` URL is same-origin
+ * with erashot.app and takes its type from this constructor (`nosniff` does not reach it). So the
+ * `image/jpeg` label must be true: require the JPEG start-of-image marker. The app publishes JPEG
+ * only (`publications/core/protocol.ts`), so this refuses nothing legitimate.
  */
 export function jpegBlob(bytes: Uint8Array): Blob {
   if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff)
@@ -177,12 +168,9 @@ export interface Loaded {
 }
 
 /**
- * The publisher's own words about the moment, under the title. One line, and nothing else.
- *
- * The value goes in through `textContent`. A caption is up to 280 characters of somebody else's
- * text arriving from a public gateway. The reader has already refused control, zero-width and
- * bidi characters (`publications/core/details.ts`), so what lands here is one line of plain
- * text — and it is still assigned as text, never parsed as markup.
+ * The publisher's caption under the title: up to 280 characters of someone else's text from a
+ * public gateway. The reader already refused control, zero-width and bidi characters
+ * (`publications/core/details.ts`); it is still assigned as text, never parsed as markup.
  */
 function showMoment(description: string) {
   const line = el("moment-text");
@@ -191,9 +179,8 @@ function showMoment(description: string) {
 }
 
 /**
- * Protocol-specific screen wording, supplied by the adapter. The page never hard-codes a
- * standard's fees or nouns: the code that knows a claim creates a Core asset is the code that
- * owns the sentence telling the collector they pay Core's fee for it.
+ * Protocol-specific wording, supplied by the adapter: the code that knows a claim creates a Core
+ * asset owns the sentence telling the collector they pay Core's fee for it.
  */
 export interface Copy {
   /** `#availability` when the edition holds a single copy. */
@@ -256,12 +243,11 @@ class WalletConnectionChangedError extends Error {}
 class BrokenAttemptError extends Error {}
 
 /**
- * Did the wallet explicitly refuse to sign THIS request, so that nothing was sent? Only then may
- * the durable attempt be removed (`src/prints/collect.ts` does the same with `isSigningRefused`).
- * MWA says so with `ERROR_NOT_SIGNED`, which its Wallet Standard wallet rethrows as the `cause` of
- * a plain `Error`; any other wallet has no code, so its explicit rejection is recognised by the
- * sentence it throws. A closed association, a timeout or any other failure proves nothing about
- * whether the transaction left the wallet, so the attempt is kept and the chain decides.
+ * Did the wallet explicitly refuse to sign this request, so nothing was sent? Only then may the
+ * durable attempt be removed (as `isSigningRefused` does in `src/prints/collect.ts`). MWA says so
+ * with `ERROR_NOT_SIGNED`, rethrown as the `cause` of a plain `Error`; other wallets have no code,
+ * so their rejection is recognised by its sentence. Any other failure proves nothing about whether
+ * the transaction left the wallet, so the attempt is kept and the chain decides.
  */
 function signingRefused(e: unknown): boolean {
   let cause: unknown = e;
@@ -332,13 +318,11 @@ function qrSvg(url: string, size: number): SVGSVGElement {
 }
 
 /**
- * "Open in Signshot". The page URL itself is the app's verified App Link, so a tap on the link
- * from another app already opens Signshot; a viewer who is ALREADY in a browser on the phone
- * needs an explicit hand-off, which is what an Android `intent://` URL is for
- * (https://developer.chrome.com/docs/android/intents): Chrome opens the named package when it is
- * installed and otherwise follows `S.browser_fallback_url`, here the site's own home page rather
- * than a store listing that does not exist yet. Elsewhere the control is a QR of the public link
- * for the phone to scan; the app's own QR reader and the phone's camera both open it.
+ * "Open in Signshot". The page URL is the app's verified App Link, so a tap from another app
+ * already opens Signshot; a viewer already in the phone's browser needs an Android `intent://` URL
+ * (https://developer.chrome.com/docs/android/intents), which Chrome opens in the installed package
+ * or else follows `S.browser_fallback_url` to the site's home page. Elsewhere the control is a QR
+ * of the public link, which the app's QR reader and the phone's camera both open.
  */
 function showOpenInApp(url: string) {
   const link = el<HTMLAnchorElement>("open-app");
@@ -740,19 +724,14 @@ export function run(adapter: Adapter) {
     }
     const p = pending(); // throws BrokenAttemptError: collecting stays paused, the photo stays up
     if (p) {
-      // Numbered mints can belong to a competing collector. Only our permanent claim
-      // receipt proves success; an occupied print address must not block retries forever.
-      //
-      // The operation matters: `publications/rpc.ts` reads `StaleNumber`, `ExistingAsset`,
-      // `OfferChanged`, `PaymentRequired` and `NotForSale` as RETRYABLE only while claiming (the
-      // next attempt is a different transaction on a refreshed number or offer) and as terminal
-      // otherwise. Without it an on-chain race would lock this wallet out for good. Records
-      // written before `kind` existed carried a free collect.
-      //
-      // `checkAttempt`'s contract is that anything which is NOT "retryable" means "do not offer
-      // this again", which is how every caller in the app reads it. A "pending" attempt by
-      // another wallet in this browser still blocks, because it can still take the number. A
-      // retryable one is superseded by the record the next send writes.
+      // A competing collector can take a numbered copy, so only our permanent claim receipt proves
+      // success, and an occupied print address must not block retries forever. The operation
+      // matters: `publications/rpc.ts` reads `StaleNumber`, `ExistingAsset`, `OfferChanged`,
+      // `PaymentRequired` and `NotForSale` as retryable only while claiming (the next attempt is a
+      // new transaction on a fresh number or offer); otherwise a race would lock this wallet out.
+      // A record without `kind` is a free collect. Anything not "retryable" is never offered
+      // again; a "pending" attempt by another wallet in this browser still blocks, since it can
+      // still take the number.
       const previous = await checkAttempt(endpoint, p, { operation: p.kind ?? "collect" });
       if (p.wallet === connection.address) {
         if (previous === "pending")
@@ -803,10 +782,10 @@ export function run(adapter: Adapter) {
       const current = quote;
       quote = null;
       await adapter.assertProgram();
-      // The live offer on a fresh blockhash, right before the wallet opens: reading the quote, the
-      // program check and a slow approval can outlive the reviewed one (150 blocks). It is sent
-      // only as the reviewed transaction but for its lifetime, estimate included, which is the
-      // app's rule; the price, its revision and the copy number are in its bytes.
+      // Re-quote on a fresh blockhash right before the wallet opens: review, the program check and a
+      // slow approval can outlive the quoted one (150 blocks). It is sent only if it is the reviewed
+      // transaction apart from its lifetime, estimate included (the app's rule); the price, its
+      // revision and the copy number are in its bytes.
       const fresh = await quoteFor(connection.address, current.number);
       const height = await request<number>(endpoint, "getBlockHeight", [{ commitment: "confirmed" }]);
       if (!sameReviewedTransaction(current.prepared, fresh.prepared) || BigInt(height) + 10n >= fresh.prepared.lastValidBlockHeight) {
@@ -851,7 +830,6 @@ export function run(adapter: Adapter) {
   async function share() {
     if (!loaded || !imageUrl) return;
     const url = adapter.collectUrl();
-    // A real photo+QR artifact is also available to creators reopening their public link.
     const canvas = document.createElement("canvas");
     canvas.width = 1080;
     canvas.height = 1920;

@@ -12,12 +12,10 @@
  *   3. `proguard-rules.pro` is what prebuild would produce from `extraProguardRules` and
  *      `plugins/withProguardRules.js`.
  *
- * Everything under `android/` is prebuild output, not hand-written source: the correct state is the
- * Expo template plus what app.json and `plugins/` make of it, so template residue that looks dead —
- * the commented-out `react { }` options in `app/build.gradle`, `// add(MyReactNativePackage())` in
- * `MainApplication.kt`, `// setTheme(R.style.AppTheme);` (which expo-splash-screen's own plugin
- * comments out) — is left exactly as `npx expo prebuild --clean` writes it. Deleting it would put
- * the tree out of step with the next prebuild, not tidy it.
+ * `android/` is prebuild output: the Expo template plus what app.json and `plugins/` make of it.
+ * Template residue that looks dead (the commented-out `react { }` options,
+ * `// add(MyReactNativePackage())`, `// setTheme(R.style.AppTheme);`) stays as
+ * `npx expo prebuild --clean` writes it, so the tree matches the next prebuild.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -151,7 +149,7 @@ function permissionProblems(app: AppJson, manifest: string, template: string): s
   return problems;
 }
 
-/** Is `spec` (a string or a `[name, options]` pair) this plugin? */
+/** Whether app.json registers plugin `id`, as a string or a `[name, options]` pair. */
 function pluginRegistered(app: AppJson, id: string): boolean {
   const plugins = Array.isArray(app.expo?.plugins) ? app.expo.plugins : [];
   return plugins.some((entry) => (Array.isArray(entry) ? entry[0] : entry) === id);

@@ -1,11 +1,9 @@
 /**
  * Read one file out of the Expo bare template that `npx expo prebuild` generates `android/` from.
  *
- * `node_modules/expo/template.tgz` is the archive Expo's own prebuild unpacks, so it is the only
- * honest answer to "what would a fresh prebuild have written here?" available without running
- * one. Two gates ask that question — `check-signing.ts` about `android/app/build.gradle` and
- * `check-prebuild.ts` about the manifest and `proguard-rules.pro` — and they must ask it the same
- * way, so the reader lives here rather than in either of them.
+ * `node_modules/expo/template.tgz` is the archive Expo's prebuild unpacks, so it answers "what
+ * would a fresh prebuild write here?" without running one. `check-signing.ts` and
+ * `check-prebuild.ts` both ask, through this one reader.
  *
  * Gzipped POSIX tar, read with no tar binary: 512-byte headers, name in bytes 0..100, an optional
  * long-path prefix in 345..500, and an octal size in 124..136.

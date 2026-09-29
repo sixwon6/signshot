@@ -1,16 +1,12 @@
-// The submission artifact. Release variant, arm64-v8a only (the Seeker is arm64; the emulator's
-// x86_64 stays in gradle.properties for debug builds), R8 + resource shrinking on via
-// gradle.properties.
+// Builds the dApp Store APK: release variant, arm64-v8a only (the Seeker is arm64; debug builds keep
+// the emulator's x86_64), with R8 and resource shrinking on via gradle.properties.
 //
-// Signing: the dApp Store upload key, read by android/app/build.gradle from the four
-// SEEDSHOT_UPLOAD_* properties in ~/.gradle/gradle.properties. There is no fallback — a machine
-// without the key fails the packaging task with a message naming all four. The debug keystore is
-// committed to this repository and the store rejects debug-signed APKs, so "it built something"
-// is never good enough here: verify what came out with
-//   apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk
-// and match dapp-store/signing-certificate.json. The existing key's subject predates the rename;
-// its certificate fingerprint is the Android identity, not its display name. EAS is not the path for a store build
-// (eas.json's dapp-store profile exists so that EAS could never sign with a key of its own).
+// Signed with the upload key, which android/app/build.gradle reads from the four SEEDSHOT_UPLOAD_*
+// properties in ~/.gradle/gradle.properties; without them the packaging task fails. The debug
+// keystore is committed and the store rejects debug-signed APKs, so the signer is verified below
+// against dapp-store/signing-certificate.json by fingerprint (the key's subject is CN=Era Shot; the
+// fingerprint, not the display name, is the Android identity). Store builds never go through EAS:
+// eas.json's dapp-store profile exists so EAS never signs with a key of its own.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -29,9 +25,8 @@ const wrapper = resolve(android, process.platform === "win32" ? "gradlew.bat" : 
  * Arguments pass through, e.g. `npm run release:apk -- --allow-cluster devnet`.
  */
 const passthrough = process.argv.slice(2);
-// Run under this same Node with explicit script paths rather than shelling out to npm: it works
-// the same whether this file is invoked via `npm run release:apk` or directly with `node`, and
-// it needs no shell (on Windows `npm` is `npm.cmd`, which Node refuses to spawn without one).
+// This Node and tsx by path, not `npm`: the same whether run through npm or directly, and no shell
+// is needed (on Windows `npm` is `npm.cmd`, which Node will not spawn without one).
 const TSX_CLI = resolve(root, "node_modules", "tsx", "dist", "cli.mjs");
 const gate = spawnSync(
   process.execPath,

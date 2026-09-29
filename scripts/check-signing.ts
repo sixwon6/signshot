@@ -78,7 +78,7 @@ function main(): void {
     problems.push("plugins/withDappStoreSigning.js is not idempotent over the committed build.gradle.");
   }
 
-  // ABI list, exactly once.
+  // 4. The ABI list, exactly once.
   const props = lf(readFileSync(resolve(ROOT, "android/gradle.properties"), "utf8"));
   const wanted = plugin.applyArchitectures([]).find((p) => p.type === "property");
   if (wanted?.type !== "property") throw new Error("applyArchitectures wrote no property");

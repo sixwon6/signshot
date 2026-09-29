@@ -21,10 +21,8 @@ import { fileURLToPath } from "node:url";
  * at output texel centres, decoded with the constants read out of `ShaderGen.kt`. W is the scan
  * axis and the long edge, so uRefScale is W/4000.
  *
- * (5) is structural — node cannot run Kotlin. It was also checked directly, once, by compiling
- * ShaderGen.kt before and after this stage against a stub Profile on the JVM (kotlin-compiler-
- * embeddable from the gradle cache) and diffing `fragmentSrc` + `editedFragmentSrc` + the pipeline
- * digest for ten stage graphs, the three shipping looks among them: 61173 bytes, identical.
+ * (5) is structural, since node cannot run Kotlin: the stage's emission is cut out of the source
+ * and nothing smear-related may be left.
  */
 
 if (!process.argv.includes("--worker")) {

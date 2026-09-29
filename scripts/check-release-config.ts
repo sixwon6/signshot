@@ -286,7 +286,7 @@ async function main(argv: readonly string[]): Promise<void> {
     if (cluster !== "devnet" && process.env[name])
       fail(`${name} is set on a ${cluster} build; it belongs to a devnet test session only.`);
 
-  // Imported only now: deployments.ts reads the EXPO_PUBLIC_EDITIONS_* overrides at module load.
+  // Imported after the env is loaded: deployments.ts reads the EXPO_PUBLIC_EDITIONS_* overrides at module load.
   const { configuredProgram, pinnedImage } = await import("../publications/deployments");
   const resolved = resolveProgram(cluster, configuredProgram);
   if ("refusal" in resolved) fail(resolved.refusal);

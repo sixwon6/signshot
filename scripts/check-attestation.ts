@@ -267,8 +267,8 @@ ok("summary carries each certificate's serial and dates, leaf first",
     && summary.certificates[1].notBefore === ca.notBefore.getTime() && summary.certificates[1].notAfter === ca.notAfter.getTime());
 
 // Two chain shapes around the fixture's leaf, with the real roots' serials and dates: the Seeker's
-// RKP chain as observed on 2026-09-16 (StrongBox certificate for 13 days → Droid CA3 → Droid CA2 →
-// Key Attestation CA1) and a chain ending at the RSA root that leaked factory keyboxes chain to.
+// RKP chain (a 13-day StrongBox certificate → Droid CA3 → Droid CA2 → Key Attestation CA1) and a
+// chain ending at the RSA root that leaked factory keyboxes chain to.
 const ca1 = roots.find((r) => r.publicKey.kind === "ec")!;
 const rsaRoot = roots.find((r) => r.publicKey.kind === "rsa" && r.notAfter.getTime() > Date.now())!;
 const dated = (serial: string, from: string, to: string) => ({ serial, notBefore: Date.parse(from), notAfter: Date.parse(to) });

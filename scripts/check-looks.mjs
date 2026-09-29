@@ -77,7 +77,7 @@ if (!process.argv.includes("--worker")) {
     assert.ok(!/\s/.test(recipe.name), `${recipe.name}: one word, so a chip never breaks it`);
     assert.equal(starterById(recipe.id), recipe);
   }
-  // The phone's own look: its capture_pipeline_id hangs on these bytes. This is the manifest as it was at HEAD 99f7d34.
+  // The phone's own look: its capture_pipeline_id hangs on these bytes.
   assert.equal(JSON.stringify(STARTERS[0].manifest),
     '{"schema":1,"profileId":"prof.neutral","profileVersion":1,"rendererMin":"0.2.0","stages":[]}',
     "the neutral manifest is pinned byte for byte");
@@ -158,9 +158,9 @@ if (!process.argv.includes("--worker")) {
     foliage: [87, 108, 67], grass: [110, 160, 60], chartRed: [175, 54, 60], satRed: [225, 30, 35],
   };
   /**
-   * Three colours off the room the looks were measured in on 2026-09-20, as the fixed camera read
-   * them with no look on: a white wall in cool window light, a navy throw in shadow, a mustard
-   * cushion. A look's own claim about contrast, cast and colour is a claim about these.
+   * Three colours from the room the looks were measured in, as the fixed camera read them with no
+   * look on: a white wall in cool window light, a navy throw in shadow, a mustard cushion. A look's
+   * own claim about contrast, cast and colour is a claim about these.
    */
   const SCENE = { wall: [159, 186, 202], navy: [56, 66, 73], mustard: [123, 96, 62] };
   const sat = (c) => { const mx = Math.max(...c), mn = Math.min(...c); return mx > 0 ? (mx - mn) / mx : 0; };
@@ -235,9 +235,8 @@ if (!process.argv.includes("--worker")) {
         within(m.chroma.chartSky, 1.15, full ? 1.8 : 1.6, `${tag} sky goes deeper`);
       }
       if (recipe.id === "rec.disposable") {
-        // A drugstore print is contrasty, warm and saturated, and its blacks are dense. Measured on
-        // the phone on 2026-09-20 the look was flatter than the phone's own picture and passed anyway, because the
-        // targets here asked for a lifted black, a pulled-down white and a midtone slope of 1.0.
+        // A drugstore print is contrasty, warm and saturated, and its blacks are dense: never a
+        // lifted black, a pulled-down white or a flat midtone.
         within(m.black, 1.5, 6, `${tag} print black: paper, not a digital zero, and not a lift`);
         within(m.white, 244, 253, `${tag} paper white is creamy, not clipped and not pulled down`);
         within(m.whiteLab.b, 2, 9, `${tag} and it is warm`);
@@ -296,8 +295,8 @@ if (!process.argv.includes("--worker")) {
     for (const rgb8 of [[0, 0, 0], [128, 128, 128], [255, 255, 255], ...Object.values(PATCH), ...Object.values(SCENE)])
       assert.deepEqual(render(recipe, 0, rgb8), rgb8.map((v) => v / 255), `${recipe.name} at strength 0 is the input, untouched`);
 
-    // ---- 100 is a heavier picture, by as much again as the step into the default. The old law put
-    //      85 % of the colour in by 60, so 60 and 100 were the same photograph; this is the guard.
+    // ---- 100 is a heavier picture, by as much again as the step into the default, so 60 and 100
+    //      are never the same photograph.
     const swatches = [...Object.values(PATCH), ...Object.values(SCENE), [32, 32, 32], [64, 64, 64], [160, 160, 160], [220, 220, 220]];
     /** The furthest any reference colour moves between two strengths, in levels. */
     const apart = (a, b) => Math.max(...swatches.map((rgb8) => {
@@ -347,7 +346,7 @@ if (!process.argv.includes("--worker")) {
     assert.equal(recipe.name, was.name);
     assert.equal(RETIRED_NAMES[id], was.name, "a photograph taken with it keeps its name");
     assert.equal(recipe.builtIn, false, "retired: Develop shows it as any recipe that is off the row");
-    // sha-256 of JSON.stringify(manifest) and of the base64 LUT, taken from the starters at HEAD 99f7d34.
+    // sha-256 of JSON.stringify(manifest) and of the base64 LUT, as the starters shipped at 99f7d34.
     assert.equal(sha256(JSON.stringify(recipe.manifest)), was.manifest, `${id}: the manifest is exactly as it shipped`);
     assert.equal(sha256(recipe.lut), was.lut, `${id}: the LUT is exactly as it shipped`);
     assert.equal(RETIRED_SUCCESSOR[id], was.successor);
@@ -379,7 +378,7 @@ if (!process.argv.includes("--worker")) {
     overrides: {
       "rec.warm-film": overrideOf(editedWarm),                       // edited: must survive
       "rec.soft-digital": overrideOf(retiredById("rec.soft-digital")), // untouched: nothing of theirs to keep
-      "rec.video-tape": { manifest: { schema: 99 }, lut: null },       // no longer valid: was already unusable
+      "rec.video-tape": { manifest: { schema: 99 }, lut: null },       // invalid: already unusable
     },
     lastUsed: { recipeId: "rec.warm-film", strength: 0.65 },
   });

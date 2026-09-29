@@ -425,9 +425,9 @@ dApp Store match, not the display name. The four local Gradle properties use the
   Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint), apply
   `site/cloudflare/rate-limit-rule.json` again (now 120 requests per 10 s), and route mail for
   support@erashot.app.
-- **Devnet program:** redeploy through `npm run devnet` (`programs/editions/DEVNET.md`, about 2.4
-  devnet SOL, more than one faucet request grants): the listed devnet programs predate the
-  Seeker-only publish rule (`6caa4a2`). Then record its address, digest and upgrade authority.
+- **Deploy rehearsal:** finish `npm run mainnet -- <step> --cluster devnet` (deploy, verify,
+  authority, refund, record); it resumes from its saved state. Then send a collected copy from the
+  wallet screen on the Seeker.
 - **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
   address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
   length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a

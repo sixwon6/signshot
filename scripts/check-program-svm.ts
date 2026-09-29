@@ -6,7 +6,7 @@
  *   npm run test:svm -- --plain <elf> --plain-id <address> [--devnet <elf> --devnet-id <address>]
  *   npm run test:svm -- --devnet <elf> --devnet-id <address>      (a devnet-genesis build alone)
  *   env: SVM_PLAIN_ELF SVM_PLAIN_ID SVM_DEVNET_ELF SVM_DEVNET_ID SVM_TOOLS_ROOT SVM_HOST SVM_MAINNET_RPC
- *   With no ELF named at all it runs the scratch builds in `DEFAULT_BUILDS` that still exist.
+ *   With no ELF named it builds nothing and skips.
  *   Delete `.cache/svm/` to read mainnet again (after a Metaplex Core upgrade, say).
  *
  * The `litesvm` npm package ships no Windows binary, so LiteSVM runs as `programs/svm` (the Rust
@@ -107,14 +107,6 @@ const option = (flag: string, variable: string) => {
   const at = process.argv.indexOf(flag);
   return (at >= 0 ? process.argv[at + 1] : process.env[variable]) || undefined;
 };
-// The two builds with royalties and Seeker-only editions, at throwaway addresses, used when
-// nothing else is named and they are still there.
-const SCRATCH = join(tmpdir(), "claude", "signshot",
-  "06931168-1a5d-4a3f-bb87-8e52d8afa74b", "scratchpad", "elf");
-const DEFAULT_BUILDS = {
-  plain: { elf: join(SCRATCH, "plain-v3.so"), id: "8J4TFxHcbU3TbLpRh6f1QGMjYC8XHh7g2kvTNJcs7dJ3" },
-  devnet: { elf: join(SCRATCH, "devnet-v3.so"), id: "41UayL5qxYF6V8R7BG9aTtVR5nAdhE2iooWoKWB9kQXC" },
-};
 function named(kind: "plain" | "devnet"): { elf: string; id: Address } | null {
   const upper = kind.toUpperCase();
   const elf = option(`--${kind}`, `SVM_${upper}_ELF`);
@@ -124,14 +116,9 @@ function named(kind: "plain" | "devnet"): { elf: string; id: Address } | null {
   if (!existsSync(elf)) throw new Error(`No ELF at ${elf}`);
   return { elf: resolve(elf), id: address(id) };
 }
-/** The named builds; the default ones only when no ELF is named at all, so a named run is exactly what was named. */
+/** Exactly the builds named on the command line or in the environment. */
 function builds() {
-  const plain = named("plain");
-  const devnet = named("devnet");
-  if (plain || devnet) return { plain, devnet };
-  const fallback = (kind: "plain" | "devnet") =>
-    existsSync(DEFAULT_BUILDS[kind].elf) ? { elf: DEFAULT_BUILDS[kind].elf, id: address(DEFAULT_BUILDS[kind].id) } : null;
-  return { plain: fallback("plain"), devnet: fallback("devnet") };
+  return { plain: named("plain"), devnet: named("devnet") };
 }
 
 // --- The LiteSVM host -----------------------------------------------------------------------------

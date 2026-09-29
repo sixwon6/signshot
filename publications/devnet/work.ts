@@ -12,32 +12,14 @@
  *    response is reconciled rather than duplicated,
  *  - a deployment is accepted only after the uploaded and the deployed bytes are compared with
  *    the locally built ELF byte for byte, and only for the reviewed source this repository holds.
+ *
+ * The journalled send and the loader-v3 upload are `../deploy/loaderV3`, shared with `../mainnet/`.
  */
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import {
-  getAddressEncoder,
-  getProgramDerivedAddress,
-  createTransactionMessage,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-  appendTransactionMessageInstructions,
-  compileTransaction,
-  partiallySignTransaction,
-  getBase64EncodedWireTransaction,
-  getSignatureFromTransaction,
-  type Instruction,
-  type KeyPairSigner,
-} from "@solana/kit";
-import { getCreateAccountInstruction } from "@solana-program/system";
-import {
-  LOADER_V3_PROGRAM_ADDRESS as LOADER,
-  getInitializeBufferInstruction,
-  getWriteInstruction,
-  getDeployWithMaxDataLenInstruction,
-} from "@solana-program/loader-v3";
+import { type Instruction, type KeyPairSigner } from "@solana/kit";
 import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
 import {
   LEGACY_WITHOUT_GENESIS,
@@ -46,8 +28,17 @@ import {
   LEGACY_WITHOUT_ROYALTIES_AND_SEEKER_ONLY,
   programFeatures,
 } from "../deployments";
-import { request, confirmTransaction } from "../rpc";
-import { checkAttempt, type TransactionAttempt } from "../lifecycle";
+import { request } from "../rpc";
+import { type TransactionAttempt } from "../lifecycle";
+import {
+  LAMPORTS_PER_SIGNATURE,
+  UPLOAD_CHUNK_BYTES,
+  retryRateLimited,
+  sendJournalled,
+  uploadAndDeploy,
+  verifyDeployed,
+  type Sender,
+} from "../deploy/loaderV3";
 
 /** The reviewed program source this session is allowed to deploy a copy of. */
 const PROGRAM_SOURCE = new URL("../../programs/editions/src/lib.rs", import.meta.url);
@@ -78,7 +69,6 @@ export interface Context {
   deployed?: boolean;
   deploymentSignature?: string;
 }
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export async function guard(c: Pick<Context, "endpoint">) {
   assert.equal(c.endpoint, "https://api.devnet.solana.com");
   assert.equal(
@@ -86,10 +76,6 @@ export async function guard(c: Pick<Context, "endpoint">) {
     "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
   );
 }
-
-// `ArrayLike<number>`, not `Uint8Array`: a Kit instruction's `data` is a ReadonlyUint8Array.
-const hex = (bytes: ArrayLike<number>) =>
-  Buffer.from(Uint8Array.from(Array.from(bytes))).toString("hex");
 
 /**
  * What this session must still be able to pay for AFTER the program is deployed.
@@ -208,16 +194,6 @@ export function testReserve(): number {
 }
 
 /**
- * Buffer writes and the two account creations. Each write has one signature; buffer creation
- * and deployment each have two. Keep the chunk size shared with the upload loop so a larger
- * ELF cannot silently outgrow a fixed fee allowance. No priority fee is requested here.
- * The buffer's own rent is not counted: `DeployWithMaxDataLen` drains it to the payer before it
- * funds program-data, so the two never coexist.
- */
-const UPLOAD_CHUNK_BYTES = 900;
-const LAMPORTS_PER_SIGNATURE = 5_000;
-
-/**
  * The most a single devnet `requestAirdrop` is granted. The public faucet refuses larger amounts
  * outright, and this session makes exactly ONE request, so asking for more than it can give would
  * spend the only request on a guaranteed failure.
@@ -230,6 +206,13 @@ export const FAUCET_MAX = 2_000_000_000;
  * The paid-sales build is larger than the v1 acceptance program, and the cluster's rent schedule
  * can change. Compute the target from this build and live rent so the session can report how much
  * owner-authorized devnet SOL the run needs.
+ *
+ * Fees are the buffer writes and the two account creations. Each write has one signature; buffer
+ * creation and deployment each have two. The chunk size is the upload loop's
+ * (`UPLOAD_CHUNK_BYTES` in `../deploy/loaderV3`), so a larger ELF cannot silently outgrow a fixed
+ * fee allowance. No priority fee is requested here. The buffer's own rent is not counted:
+ * `DeployWithMaxDataLen` drains it to the payer before it funds program-data, so the two never
+ * coexist.
  */
 export async function sessionBudget(c: Pick<Context, "endpoint">, elfBytes: number) {
   assert.ok(Number.isSafeInteger(elfBytes) && elfBytes > 0, "Invalid program byte count");
@@ -247,117 +230,27 @@ export async function sessionBudget(c: Pick<Context, "endpoint">, elfBytes: numb
   };
 }
 
-export async function send(
+/** The journalled send of `../deploy/loaderV3`, guarded to devnet, its journal in the report folder. */
+export function send(
   c: Context,
   instructions: Instruction[],
   signers = [c.payer],
   expectedFailure?: RegExp,
 ) {
-  await guard(c);
-  // Stable instruction identity, independent of the blockhash: retrying the same
-  // command first resolves its known signature, even after a lost send response.
-  const operation = createHash("sha256")
-    .update(
-      JSON.stringify({
-        payer: c.payer.address,
-        instructions: instructions.map((ix) => ({
-          program: ix.programAddress,
-          accounts: ix.accounts?.map((a) => ({
-            address: a.address,
-            role: a.role,
-          })),
-          data: hex(ix.data ?? new Uint8Array()),
-        })),
-      }),
-    )
-    .digest("hex");
-  const save = () =>
+  return sendJournalled(sender(c), instructions, signers, expectedFailure);
+}
+
+const sender = (c: Context): Sender => ({
+  endpoint: c.endpoint,
+  payer: c.payer,
+  journal: c.sendJournal,
+  guard: () => guard(c),
+  save: () =>
     writeFileSync(
       join(c.reportRoot, "transactions.json"),
       JSON.stringify(c.sendJournal, null, 2),
-    );
-  const previous = !expectedFailure && c.sendJournal[operation];
-  if (previous) {
-    const state = previous.confirmed
-      ? "confirmed"
-      : await checkAttempt(c.endpoint, previous);
-    if (state === "confirmed") {
-      previous.confirmed = true;
-      save();
-      return previous.signature!;
-    }
-    if (state !== "retryable")
-      throw new Error(
-        `Previous transaction is still unresolved; do not duplicate it: ${previous.signature}`,
-      );
-  }
-  const { value: lifetime } = await request<any>(
-    c.endpoint,
-    "getLatestBlockhash",
-    [{ commitment: "confirmed" }],
-  );
-  const paid = setTransactionMessageFeePayer(
-    c.payer.address,
-    createTransactionMessage({ version: 0 }),
-  );
-  const expiring = setTransactionMessageLifetimeUsingBlockhash(
-    {
-      ...lifetime,
-      lastValidBlockHeight: BigInt(lifetime.lastValidBlockHeight),
-    },
-    paid,
-  );
-  const message = appendTransactionMessageInstructions(instructions, expiring);
-  const tx = await partiallySignTransaction(
-    signers.map((s) => s.keyPair),
-    compileTransaction(message),
-  );
-  const wire = getBase64EncodedWireTransaction(tx);
-  assert.ok(
-    Buffer.from(wire, "base64").length <= 1232,
-    "Transaction exceeds network packet limit",
-  );
-  const { value: simulation } = await request<any>(
-    c.endpoint,
-    "simulateTransaction",
-    [wire, { encoding: "base64", commitment: "confirmed", sigVerify: true }],
-  );
-  if (expectedFailure) {
-    assert.ok(simulation.err, "Expected rejection; transaction was not sent");
-    assert.match(simulation.logs?.join("\n") ?? "", expectedFailure);
-    console.log("Expected rejection verified:", expectedFailure.source);
-    return `simulation-rejected:${expectedFailure.source}`;
-  }
-  if (simulation.err)
-    throw new Error(
-      `Simulation failed: ${JSON.stringify(simulation.err)}\n${simulation.logs?.join("\n")}`,
-    );
-  const signature = getSignatureFromTransaction(tx);
-  c.sendJournal[operation] = {
-    signature,
-    lastValidBlockHeight: String(lifetime.lastValidBlockHeight),
-  };
-  save();
-  console.log(
-    "Simulation OK:",
-    simulation.unitsConsumed,
-    "CU; sending",
-    signature,
-  );
-  const submitted = await request<string>(c.endpoint, "sendTransaction", [
-    wire,
-    { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 5 },
-  ]);
-  assert.equal(submitted, signature);
-  await confirmTransaction(
-    c.endpoint,
-    signature,
-    BigInt(lifetime.lastValidBlockHeight),
-  );
-  c.sendJournal[operation].confirmed = true;
-  save();
-  return signature;
-}
+    ),
+});
 
 /** An account's current confirmed balance, used for funding and deployment preparation. */
 export async function balanceOf(c: Pick<Context, "endpoint">, key: string): Promise<number> {
@@ -376,40 +269,6 @@ export async function test(c: Context) {
   // The lifecycle journals completed checks and transaction signatures on the same context.
   // Resume that work after public RPC throttling, including a lost confirmation response.
   await retryRateLimited(() => lifecycle(c));
-}
-
-/**
- * The public devnet endpoint reports rate limiting two ways: HTTP 429, which
- * `publications/rpc.ts` turns into "Solana connection unavailable (429)", and HTTP 200
- * carrying a JSON-RPC error, whose bare message ("Too many requests") that same helper
- * rethrows with no status in it. Match both, plus the generic wording.
- */
-const RATE_LIMITED = /\(429\)|too many requests|rate limit/i;
-/**
- * A 429 raised while confirming leaves a broadcast attempt pending in the journal, so the
- * next `send` of that operation refuses to duplicate it. Waiting is the only safe response:
- * the attempt resolves itself once it confirms or its blockhash expires.
- */
-const UNRESOLVED = /still unresolved; do not duplicate it/;
-
-async function retryRateLimited<T>(
-  work: () => Promise<T>,
-  pause: () => Promise<void> = () => sleep(20_000),
-): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try { return await work(); }
-    catch (error) {
-      if (attempt >= 5 || !(error instanceof Error)) throw error;
-      const limited = RATE_LIMITED.test(error.message);
-      if (!limited && !UNRESOLVED.test(error.message)) throw error;
-      console.log(
-        limited
-          ? "Devnet RPC rate limit; waiting before reconciling the saved operation."
-          : "A broadcast attempt is still pending; waiting for it to confirm or expire.",
-      );
-      await pause();
-    }
-  }
 }
 
 export async function deploy(c: Context, pause?: () => Promise<void>) {
@@ -484,36 +343,15 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
   );
   const rent = async (size: number) =>
     request<number>(c.endpoint, "getMinimumBalanceForRentExemption", [size]);
-  const [programData] = await getProgramDerivedAddress({
-    programAddress: LOADER,
-    seeds: [getAddressEncoder().encode(c.program.address)],
-  });
-  const existing = await request<any>(c.endpoint, "getAccountInfo", [
-    c.program.address,
-    { encoding: "base64", commitment: "confirmed" },
-  ]);
-  // A lost final deployment response is resolved by the exact executable bytes;
-  // its buffer was consumed, so do not try to create/upload that buffer again.
-  if (!existing.value) {
-    if (!c.initialized) {
-      const held = await request<any>(c.endpoint, "getAccountInfo", [
-        c.buffer.address,
-        { encoding: "base64", commitment: "confirmed" },
-      ]);
-      if (held.value) {
-        assert.equal(held.value.owner, LOADER);
-        const data = Buffer.from(held.value.data[0], "base64");
-        assert.equal(data.length, binary.length + 37);
-        assert.equal(data.readUInt32LE(0), 1);
-        assert.equal(data[4], 1);
-        assert.deepEqual(
-          data.subarray(5, 37),
-          Buffer.from(getAddressEncoder().encode(c.payer.address)),
-        );
-        c.initialized = true;
-      }
-    }
-    if (!c.initialized) {
+  await uploadAndDeploy({
+    sender: sender(c),
+    program: c.program,
+    buffer: c.buffer,
+    binary,
+    progress: c,
+    saveProgress: () => {},
+    rent,
+    beforeBuffer: async () => {
       const balance = (
         await request<any>(c.endpoint, "getBalance", [c.payer.address])
       ).value;
@@ -526,101 +364,17 @@ async function deployAttempt(c: Context, pause?: () => Promise<void>) {
           `holds ${balance}, short by ${budget.total - balance}. Fund the generated ` +
           "payer from existing devnet SOL, or stop: do not lower the reserve to fit.",
       );
-      await send(
-        c,
-        [
-          getCreateAccountInstruction({
-            payer: c.payer,
-            newAccount: c.buffer,
-            lamports: await rent(binary.length + 45),
-            space: binary.length + 37,
-            programAddress: LOADER,
-          }),
-          getInitializeBufferInstruction({
-            sourceAccount: c.buffer.address,
-            bufferAuthority: c.payer.address,
-          }),
-        ],
-        [c.payer, c.buffer],
-      );
-      c.initialized = true;
-    }
-    for (let offset = c.offset ?? 0; offset < binary.length; offset += UPLOAD_CHUNK_BYTES) {
-      await retryRateLimited(() => send(c, [
-        getWriteInstruction({
-          bufferAccount: c.buffer.address,
-          bufferAuthority: c.payer,
-          offset,
-          bytes: binary.subarray(offset, offset + UPLOAD_CHUNK_BYTES),
-        }),
-      ]), pause);
-      c.offset = Math.min(offset + UPLOAD_CHUNK_BYTES, binary.length);
-      if (offset % (UPLOAD_CHUNK_BYTES * 10) === 0)
-        console.log("Program upload:", c.offset, "/", binary.length);
-      await sleep(1500);
-    }
-    const info = await request<any>(c.endpoint, "getAccountInfo", [
-      c.buffer.address,
-      { encoding: "base64", commitment: "confirmed" },
-    ]);
-    assert.equal(info.value.owner, LOADER);
-    assert.deepEqual(
-      Buffer.from(info.value.data[0], "base64").subarray(37),
-      binary,
-      "Uploaded binary differs",
-    );
-    c.deploymentSignature = await send(
-      c,
-      [
-        getSetComputeUnitLimitInstruction({ units: 1_400_000 }),
-        getCreateAccountInstruction({
-          payer: c.payer,
-          newAccount: c.program,
-          lamports: await rent(36),
-          space: 36,
-          programAddress: LOADER,
-        }),
-        getDeployWithMaxDataLenInstruction({
-          payerAccount: c.payer,
-          programDataAccount: programData,
-          programAccount: c.program.address,
-          bufferAccount: c.buffer.address,
-          authority: c.payer,
-          maxDataLen: binary.length,
-        }),
-      ],
-      [c.payer, c.program],
-    );
-    await sleep(1500);
-  }
-  const deployed = await request<any>(c.endpoint, "getAccountInfo", [
-    c.program.address,
-    { encoding: "base64", commitment: "confirmed" },
-  ]);
-  assert.equal(deployed.value.owner, LOADER);
-  assert.equal(deployed.value.executable, true);
-  const programBytes = Buffer.from(deployed.value.data[0], "base64");
-  assert.equal(programBytes.readUInt32LE(0), 2);
-  assert.deepEqual(
-    programBytes.subarray(4),
-    Buffer.from(getAddressEncoder().encode(programData)),
-  );
-  const data = await request<any>(c.endpoint, "getAccountInfo", [
-    programData,
-    { encoding: "base64", commitment: "confirmed" },
-  ]);
-  assert.equal(data.value.owner, LOADER);
-  const programDataBytes = Buffer.from(data.value.data[0], "base64");
-  assert.equal(programDataBytes.readUInt32LE(0), 3);
-  assert.equal(programDataBytes[12], 1);
-  assert.deepEqual(
-    programDataBytes.subarray(13, 45),
-    Buffer.from(getAddressEncoder().encode(c.payer.address)),
-  );
-  assert.deepEqual(
-    Buffer.from(data.value.data[0], "base64").subarray(45),
-    binary,
-  );
+    },
+    prefix: {
+      buffer: [],
+      write: [],
+      deploy: [getSetComputeUnitLimitInstruction({ units: 1_400_000 })],
+    },
+    pauseMs: 1500,
+    skipWritten: false,
+    retryPause: pause,
+  });
+  const { programData } = await verifyDeployed(c.endpoint, c.program.address, binary, c.payer.address);
   c.deployed = true;
   const sha256 = createHash("sha256").update(binary).digest("hex");
   writeFileSync(

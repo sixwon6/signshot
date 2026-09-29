@@ -1,9 +1,7 @@
 /**
- * Chip — the recipe picker's chip, h 44, mono 10 label.
- *
- * Selected carries the fill colour and a darker mono label; unselected is a 22 % ink hairline
- * with the label at 72 %. A caller may pass its own `fill`, which must be a light theme accent
- * so the dark label still reads.
+ * Chip — a rounded choice or action, h 44 (32 small), mono 10 label. Selected carries the fill
+ * colour and a dark label; unselected is a 22 % ink hairline with the label at 72 %. A caller's
+ * own `fill` must be a light theme accent so the dark label still reads.
  */
 import { Pressable, StyleSheet, Text, type Insets, type StyleProp, type ViewStyle } from "react-native";
 import { colors, radius } from "../theme";

@@ -72,8 +72,6 @@ export function PhotoFrame({
         CAPTION_GAP +
         monoWidth(mark, imprint.size, imprint.mark) <=
         captionWidth);
-  // A captioned print takes the full-print border of 10 px; an uncaptioned grid print takes
-  // the tighter 8 px one.
   const pad = captioned || !grid ? FULL_PAD : GRID_PAD;
   const foot = captioned ? 0 : FOOT;
 

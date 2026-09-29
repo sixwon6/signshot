@@ -431,11 +431,8 @@ class SeekerCameraModule : Module() {
     /**
      * Opens the QR scanner (QrScanner.kt) and resolves the first QR code's text, null when the
      * person backs out. Rejects with a readable sentence when scanning cannot happen: camera access
-     * refused, no back camera, or the bundled ML Kit model failing to run.
-     *
-     * Refuses while a camera view is mounted: the scanner binds the back camera through CameraX and
-     * `CameraController` holds camera "0" for the whole life of the view. The Collection tab, the
-     * only caller, has no camera view up.
+     * refused, no back camera, or the bundled ML Kit model failing to run. Refuses while a camera
+     * view is mounted, since both would own camera "0" (see QrScanner.kt).
      */
     AsyncFunction("scanQrCode") { promise: Promise ->
       if (activeView != null) {

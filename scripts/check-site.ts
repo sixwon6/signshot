@@ -279,9 +279,9 @@ ok("the terms page names the version the app asks agreement to, at the URL it li
   termsPage.includes(`Version ${TERMS_VERSION} ·`) && TERMS_URL === "https://erashot.app/terms/" && MODERATION_URL === "https://erashot.app/moderation.json");
 const privacyPage = readFileSync(resolve(publicDir, "privacy.html"), "utf8").replace(/\s+/g, " ");
 ok("the privacy page says blocks and the agreement stay on the phone and names erashot.app",
-  /blocks and <a href="\/terms\/">terms<\/a> agreement stay on your phone/.test(privacyPage) && /erashot\.app see your IP/.test(privacyPage));
-ok("the privacy page says one phone's publications can be linked",
-  privacyPage.includes("Photos from the same phone can be linked."));
+  /Photos, drafts, blocks and your terms agreement are stored only on your phone/.test(privacyPage) && /erashot.app. Each sees your IP/.test(privacyPage));
+ok("the email addresses are outside Cloudflare's email obfuscation, which the pages' CSP would leave unreadable",
+  staticPages.every((page) => !page.includes("mailto:") || (page.includes("<!--email_off-->") && page.includes("<!--email_on-->"))));
 
 // --- The app's re-quote rule --------------------------------------------------------------------------
 /**

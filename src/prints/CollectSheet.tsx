@@ -3,9 +3,9 @@ import { sheetStyles } from "./sheetStyles";
 /**
  * CollectSheet: taking one numbered copy of somebody else's edition into this wallet.
  *
- * Two taps, as in PrintSheet and SendSheet: "Continue" connects the wallet and shows a simulated
- * estimate; only the next tap opens the wallet to sign. The estimate always belongs to the check
- * that produced it, and a cleared quote can never be approved. A priced edition shows the
+ * "Connect" learns which account is collecting, "Continue" simulates the claim and shows the
+ * estimate, and only the last tap opens the wallet to sign. The estimate always belongs to the
+ * check that produced it, and a cleared quote can never be approved. A priced edition shows the
  * publisher's price and the network costs on separate lines, so neither reads as the other.
  */
 import { useEffect, useRef, useState } from "react";
@@ -217,8 +217,7 @@ export function CollectSheet({
       setQuote(next);
     } catch (e) {
       clearQuote();
-      // A cost check opens the wallet for nothing but the account, so nothing can have been
-      // collected — but the eligibility may have moved under us, so it is re-read.
+      // A cost check signs nothing; eligibility may have moved, so it is re-read.
       const timedOut = isWalletResponseTimeout(e);
       setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
       setStatus(

@@ -841,8 +841,8 @@ if (!process.argv.includes("--worker")) {
   await staged;
   assert.equal(freshShown.length, 0, "late remote results must not overwrite a newer photo selection");
 
-  // Arweave reads: `/raw/` on arweave.net first (the bare path redirects to a sandbox host the
-  // collect page's CSP refuses), the Turbo gateway second. The on-chain `uri` is untouched.
+  // Arweave reads: `/raw/` on arweave.net first (the bare path redirects to a per-item sandbox
+  // host), the Turbo gateway second. The on-chain `uri` is untouched.
   const { sha256: sha256Of } = await import("@noble/hashes/sha2.js");
   const { bytesToHex: hexOf } = await import("@noble/hashes/utils.js");
   const { arweaveBytes } = await import("../publications/rpc.ts");
@@ -952,18 +952,13 @@ if (!process.argv.includes("--worker")) {
   }
   {
     // Every path that asks a wallet to sign against the program checks it: each signing module
-    // at quote and again before its wallet opens, and the collect page right before sending.
+    // at quote and again before its wallet opens.
     const { readFileSync } = await import("node:fs");
     const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
     const calls = (text) => text.split("await assertReviewedProgram(").length - 1;
     assert.equal(calls(source("../src/prints/collect.ts")), 2, "collect and buy check at quote and before the wallet");
     assert.equal(calls(source("../src/prints/offer.ts")), 2, "set_offer checks at quote and before the wallet");
     assert.ok(calls(source("../src/prints/PrintSheet.tsx")) >= 1, "publish checks before the wallet");
-    const page = source("../site/collect/page.ts");
-    assert.ok(page.indexOf("await adapter.assertProgram();") > 0 &&
-      page.indexOf("await adapter.assertProgram();") < page.indexOf("p.signature = await connection.send("),
-      "the collect page checks the program again right before the wallet opens");
-    assert.match(source("../site/collect/core.ts"), /assertProgram: \(\) => assertReviewedProgram\(/);
   }
   for (const cluster of CLUSTERS)
     for (const program of TRUSTED[cluster]) {

@@ -1,18 +1,12 @@
-# Cloudflare Pages response headers, for static assets only: Cloudflare does not apply this file
-# to Pages Functions responses (https://developers.cloudflare.com/pages/configuration/headers/),
-# so `functions/api/*.ts` set nosniff, no-referrer and DENY themselves. Keep the two in step.
+# Cloudflare Pages response headers (https://developers.cloudflare.com/pages/configuration/headers/).
+# The site is static: no Functions, and no page makes a request of its own.
 #
-# The pages render strings from the chain and from Arweave, written by whoever signed a
-# transaction. Escaping at the point of use is the fix; this file is the second wall.
-#
-# `collect/index.html` repeats its CSP as a <meta> so the policy travels with the document; that
-# copy omits `frame-ancestors`, which CSP3 ignores in a <meta>. `scripts/check-site.ts` asserts
-# the two copies match.
+# `collect/index.html` and `404.html` repeat their CSP as a <meta> so the policy travels with the
+# document; that copy omits `frame-ancestors`, which CSP3 ignores in a <meta>.
+# `scripts/check-site.ts` asserts the copies match.
 
-# Deny every page-level API the site never calls; `payment`, `usb`, `hid` and `serial` because a
-# wallet page must never raise a payment or hardware-wallet prompt. `web-share` keeps its `self`
-# default for the share card (`site/collect/page.ts`). No HSTS `preload`: `.app` is preloaded at
-# the TLD, so it would add nothing and is hard to reverse.
+# Deny every page-level API the site never calls. No HSTS `preload`: `.app` is preloaded at the
+# TLD, so it would add nothing and is hard to reverse.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
@@ -20,11 +14,9 @@
   Permissions-Policy: geolocation=(), camera=(), microphone=(), browsing-topics=(), payment=(), usb=(), hid=(), serial=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
-# The static pages, by exact path. Cloudflare joins duplicate headers from matching rules
-# (https://developers.cloudflare.com/pages/configuration/headers/), so two CSPs both apply: a `/*`
-# baseline of `default-src 'none'` would forbid `/collect/*` its own bundle. These pages have no
-# script and no inline style, one same-origin stylesheet (no url(), no @import), one SVG and the
-# icon. The file paths are listed beside the served paths so a direct request is covered too.
+# The static pages, by exact path. No script and no inline style: one same-origin stylesheet (no
+# url(), no @import), one SVG and the icon. The file paths are listed beside the served paths so a
+# direct request is covered too.
 /
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
@@ -48,8 +40,8 @@
 /terms/index.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-# Signshot's moderation list, read by the app and the collect page (`src/moderation/core.ts`).
-# Short-lived, so an edit reaches readers within minutes; readers fail open if it is unreadable.
+# Signshot's moderation list, read by the app (`src/moderation/core.ts`). Short-lived, so an edit
+# reaches readers within minutes; the app fails open if it is unreadable.
 /moderation.json
   Cache-Control: public, max-age=300
 
@@ -58,25 +50,11 @@
 /404.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-# The collector: same-origin bundle and RPC proxy (/api/solana), devnet RPC direct, the two
-# Arweave gateways at `/raw/<id>` (the bare `arweave.net/<id>` redirects to a per-item host this
-# policy does not allow), and blob: for images built from hash-checked bytes. No 'unsafe-inline'
-# and no data:, since nothing sets styles inline and every image is a blob:; that closes the
-# CSS-selector exfiltration path and the data: image sink to any future injection.
-#
-# `require-trusted-types-for 'script'` makes the page's no-markup rule (`site/collect/page.ts`)
-# browser-enforced: an assignment to a DOM XSS sink throws. `trusted-types default` is the one
-# exception, for Mobile Wallet Adapter, whose dialogs assign their own templates to `innerHTML`
-# and can only pass through a policy named `default`; that policy (`site/collect/mwa.ts`) admits
-# them by SHA-256 and nothing else. Neither directive falls back to `default-src`. The five
-# `style-src` hashes are the same dialogs' `<style>` blocks. `scripts/check-site.ts` recomputes
-# every digest from the installed package.
-#
-# `ws://localhost:*` is MWA's browser transport to the wallet after the `solana-wallet://`
-# hand-off; `http://localhost` is the request that raises Chrome's Local Network Access prompt.
-# `scripts/check-site.ts` checks every connection origin in the built bundle against this list.
+# The collect link page: the static policy plus the one inline script, by hash, which only sets
+# the "Open in Signshot" link. It fetches nothing (`connect-src 'none'`) and uses no DOM XSS sink,
+# so Trusted Types is required and no policy may be created.
 /collect/*
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'sha256-tmRbhDKtp/NkzzwS7ghxJMe1VTkenFoPVs4i/8YUH9Y=' 'sha256-sen7ZoAG9PuEEbYrzXrC+mgAQtKbEdz27Vl9VDk22b4=' 'sha256-a3+3UU0WYPDxSAQsmQ2ZP+l7uHX0qqkn0B97M/lHa2Y=' 'sha256-JL4jR/a9x8E6RvQBgmpjIKwquuV9zBrwhVjG11+WErU=' 'sha256-9y+0omBcAXmVSpYuadfUp/k8GxCIDiw2wrEyqM1cQnc='; img-src 'self' blob:; connect-src 'self' http://localhost ws://localhost:* https://api.devnet.solana.com https://turbo-gateway.com https://arweave.net; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-egJvXt1btdP6enz/y1WzhQopgbniaOsQWWfcQy4VNQM='; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'
 
 # Digital Asset Links: Android accepts `/.well-known/assetlinks.json` only as JSON, and the short
 # max-age keeps a certificate rotation from being cached for a day. Everything under

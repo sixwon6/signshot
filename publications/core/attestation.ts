@@ -99,7 +99,7 @@ function fail(what: string): never {
 /** The manufacturer/model pair the Seeker's keystore attests. */
 const SEEKER = { manufacturer: "Solana Mobile Inc.", model: "Seeker" } as const;
 
-export const isSeeker = (s: AttestationSummary) =>
+const isSeeker = (s: AttestationSummary) =>
   s.manufacturer === SEEKER.manufacturer && s.model === SEEKER.model;
 
 /** The name a wallet shows for the attested device. */
@@ -243,8 +243,8 @@ export function checkAttributes(value: unknown, summary: AttestationSummary, for
 
 /**
  * The release build, from `dapp-store/signing-certificate.json` (the key the dApp Store APK and
- * `.well-known/assetlinks.json` are signed with). The one pin the verifier, the app and the site
- * compare the attested app against; a debug or test build attests another signer.
+ * `.well-known/assetlinks.json` are signed with). The one pin the verifier and the app compare the
+ * attested app against; a debug or test build attests another signer.
  */
 export const RELEASE_APP: { readonly packageName: string; readonly signerDigest: string } = {
   packageName: signingCertificate.packageName,

@@ -3,125 +3,48 @@
   <head>
     <meta charset="utf-8" />
     <!--
-      The `/collect/*` policy from `site/public/_headers`, minus `frame-ancestors`, which CSP3
-      ignores in a <meta> (https://www.w3.org/TR/CSP3/); the header supplies it with
-      `X-Frame-Options: DENY`. Repeated here so the policy travels with the document if the
-      headers stop applying. `scripts/check-site.ts` asserts the two copies match.
+      The `/collect/*` policy from `site/public/_headers` minus `frame-ancestors`, which CSP3
+      ignores in a <meta>. `scripts/check-site.ts` asserts the two copies match and that the one
+      script hash is the script below.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'sha256-tmRbhDKtp/NkzzwS7ghxJMe1VTkenFoPVs4i/8YUH9Y=' 'sha256-sen7ZoAG9PuEEbYrzXrC+mgAQtKbEdz27Vl9VDk22b4=' 'sha256-a3+3UU0WYPDxSAQsmQ2ZP+l7uHX0qqkn0B97M/lHa2Y=' 'sha256-JL4jR/a9x8E6RvQBgmpjIKwquuV9zBrwhVjG11+WErU=' 'sha256-9y+0omBcAXmVSpYuadfUp/k8GxCIDiw2wrEyqM1cQnc='; img-src 'self' blob:; connect-src 'self' http://localhost ws://localhost:* https://api.devnet.solana.com https://turbo-gateway.com https://arweave.net; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default"
+      content="default-src 'none'; script-src 'sha256-egJvXt1btdP6enz/y1WzhQopgbniaOsQWWfcQy4VNQM='; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
     />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#f2efe6" />
-    <meta
-      name="description"
-      content="A photograph published as a numbered edition on Solana. Open it in Signshot, or review the costs and collect a copy here."
-    />
-    <title>Collect a photograph · Signshot</title>
+    <title>Signshot</title>
     <link rel="icon" href="/icon.png" />
-    <link rel="stylesheet" href="./collect.css" />
+    <link rel="stylesheet" href="/brand/era-shot.css" />
   </head>
   <body>
-    <header>
-      <a href="/" class="wordmark">Signshot<span>PHOTO EDITIONS</span></a
-      ><span id="network" hidden>DEVNET · TEST EDITION</span>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Signshot home"
+        ><img src="/brand/era-shot-mark.svg" width="36" height="36" alt="" />Signshot</a
+      >
     </header>
-    <main>
-      <div id="loading" role="status">Opening the photograph…</div>
-      <section id="error-panel" hidden>
-        <h1>We couldn’t open this edition.</h1>
-        <p id="load-error" role="alert"></p>
-        <button id="retry-load">Try again</button>
-      </section>
-      <article id="edition" hidden>
-        <div class="photo-stage">
-          <button class="photograph" id="view-photo" aria-label="View full photograph">
-            <img id="photo" alt="Photograph offered by the publisher" decoding="async" />
-            <span class="photo-open">View full photo ↗</span>
-          </button>
-          <!-- In place of the picture when Signshot's list hides it or this browser blocked its publisher. -->
-          <div id="veil" class="photograph veil" hidden><span></span></div>
-        </div>
-        <div class="details">
-          <!-- Names the Seeker only once the device row has verified one. -->
-          <p id="eyebrow" class="eyebrow">A PHOTOGRAPH TO KEEP</p>
-          <h1 id="title"></h1>
-          <p class="byline">Published by <span id="creator"></span></p>
-          <div id="moment" hidden><p id="moment-text" class="byline"></p></div>
-          <!--
-            The device row: derived from the certificate chain in the publication document once
-            the reader verified it to Google's roots and checked the release app, boot state,
-            revocation and dates at publication. It names the device, key and boot state, never
-            the scene.
-          -->
-          <div id="device" class="device" hidden>
-            <p class="eyebrow">DEVICE</p>
-            <p id="device-text" class="device-text"></p>
-            <p id="device-fine" class="fine device-fine" hidden>Shows which device signed this, not what was photographed.</p>
-          </div>
-          <!--
-            The Genesis Token row. The document names a Seeker Genesis Token mint; the text is what
-            mainnet answered when the page asked whether the publishing wallet holds it.
-          -->
-          <div id="genesis" class="device" hidden>
-            <p class="eyebrow">SEEKER GENESIS TOKEN</p>
-            <p id="genesis-text" class="device-text"></p>
-            <p id="genesis-mint" class="fine device-fine"></p>
-            <p id="genesis-sealed" class="fine device-fine" hidden>Verified and sealed by the edition program at publish.</p>
-          </div>
-          <p id="availability" class="availability" aria-live="polite"></p>
-          <progress id="supply-progress" aria-label="Copies collected"></progress>
-          <p id="price" class="price" hidden></p>
-          <p id="seeker-only" class="price" hidden></p>
-          <div class="open-app">
-            <a id="open-app" class="open-app-link" hidden>Open in Signshot</a>
-            <div id="open-qr" class="open-qr" hidden></div>
-            <p class="fine">Scan to open in Signshot.</p>
-          </div>
-          <button id="collect" disabled>Collect a copy</button>
-          <!-- Once per browser, before a first collect or buy. -->
-          <div id="agreement" class="agreement" hidden>
-            <a href="/terms/" target="_blank" rel="noopener noreferrer">Terms</a
-            ><button id="agree">Agree</button>
-          </div>
-          <div id="wallets" hidden aria-label="Choose a wallet"></div>
-          <p id="cost" class="fine"></p>
-          <p id="status" role="status" aria-live="polite"></p>
-          <a id="receipt" hidden target="_blank" rel="noopener noreferrer"
-            >View your collection transaction ↗</a
-          >
-          <div class="secondary">
-            <button id="share" aria-label="Share QR code" title="Share QR code">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                <rect x="3" y="3" width="6" height="6" rx="1" />
-                <rect x="15" y="3" width="6" height="6" rx="1" />
-                <rect x="3" y="15" width="6" height="6" rx="1" />
-                <path d="M12 3v3m0 3v3H3m9 3v6m3-9h6m-6 3h3v3h3m-6 3h3m3-6v-3" />
-              </svg>
-            </button>
-            <a id="report" href="mailto:support@erashot.app">Report</a
-            ><button id="block">Block</button>
-          </div>
-          <details>
-            <summary>Publication &amp; details</summary>
-            <p id="about" class="fine"></p>
-            <p id="fees" class="fine"></p>
-            <a id="source" target="_blank" rel="noopener noreferrer">View the Solana publication ↗</a
-            ><a id="container" hidden target="_blank" rel="noopener noreferrer"></a>
-          </details>
-        </div>
-      </article>
-      <dialog id="photo-viewer" aria-label="Full photograph">
-        <button id="close-photo" aria-label="Close full photograph">Close ×</button>
-        <img id="full-photo" alt="" />
-        <p id="full-photo-title"></p>
-      </dialog>
+    <main class="document">
+      <a id="open" class="button primary" hidden>Open in Signshot</a>
     </main>
-    <footer>
-      <a href="/">Signshot · Photo editions</a
-      ><span class="legal"><a href="/privacy">Privacy</a><a href="/terms/">Terms</a></span>
-    </footer>
-    <script type="module" src="./collect.js"></script>
+    <script>
+      // `collectUrl()`'s link rebuilt from checked values (one 32-byte address; devnet or no
+      // cluster) as an Android intent for the app's package. Anything else shows no control.
+      const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      const isAddress = (text) => {
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(text)) return false;
+        let n = 0n, bytes = /^1*/.exec(text)[0].length;
+        for (const c of text) n = n * 58n + BigInt(B58.indexOf(c));
+        for (; n > 0n; n >>= 8n) bytes += 1;
+        return bytes === 32;
+      };
+      const query = new URLSearchParams(location.search);
+      const core = query.getAll("core"), cluster = query.getAll("cluster");
+      if (core.length === 1 && isAddress(core[0]) && (cluster.length === 0 || (cluster.length === 1 && cluster[0] === "devnet"))) {
+        const open = document.getElementById("open");
+        open.href = "intent://erashot.app/collect/?core=" + core[0] + (cluster.length ? "&cluster=devnet" : "") +
+          "#Intent;scheme=https;package=app.seekershot;S.browser_fallback_url=https%3A%2F%2Ferashot.app%2F;end";
+        open.hidden = false;
+      }
+    </script>
   </body>
 </html>

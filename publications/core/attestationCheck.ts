@@ -1,8 +1,8 @@
 /**
  * The network half of the device verdict (`deviceVerdict` in `attestation.ts`): Google's
  * attestation revocation list, and the edition's on-chain publication time the certificates'
- * validity is judged at. Shared by the app, the collect page and `scripts/verify-attestation.ts`,
- * so all three reach the same answer from the same inputs.
+ * validity is judged at. Shared by the app and `scripts/verify-attestation.ts`, so both reach the
+ * same answer from the same inputs.
  *
  * Neither is ever guessed. A list that cannot be fetched or read, or a publication time that cannot
  * be read, leaves the verdict "unchecked" and the screen says "Couldn't check.".
@@ -12,10 +12,7 @@ import { request } from "../rpc";
 import { deviceVerdict, type AttestationSummary, type DeviceVerdict, type RevocationList } from "./attestation";
 import { account, addresses, readEdition } from "./protocol";
 
-/**
- * Google's list. The app and the verifier fetch it directly; the collect page through its own
- * `/api/attestation-status`, since Google sends no CORS header (so this is never its default).
- */
+/** Google's list, which the app and the verifier fetch directly. */
 export const GOOGLE_STATUS_URL = "https://android.googleapis.com/attestation/status";
 
 /** 179 KB with 1,755 entries as of 2026-09-24; the bound leaves room for years of growth. */

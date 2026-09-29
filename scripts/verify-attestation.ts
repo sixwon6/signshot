@@ -12,7 +12,7 @@
  *      (skipped with --offline).
  *   5. The attested app: package name and signer digest against `RELEASE_APP`, the pin from
  *      dapp-store/signing-certificate.json (a debug build fails this one; reported, not hidden).
- *   6. The verdict: what the app's Proof sheet and the collect page say for these inputs
+ *   6. The verdict: what the app's Proof sheet says for these inputs
  *      (`deviceVerdict`), so a disagreement with the checks above shows here.
  *
  * Usage:
@@ -73,7 +73,7 @@ function pinnedRootKeys(): string[] {
  * are short-lived (a Seeker's StrongBox certificate lives 13 days), so a chain is judged at
  * PUBLICATION time, never "now": by edition, its `published_at`, or on a legacy deployment the
  * block time of the transaction that created the publisher's claim receipt (`publicationTime`,
- * which the app and the collect page use too); by file, `--at <ISO date>` or, failing that, now.
+ * which the app uses too); by file, `--at <ISO date>` or, failing that, now.
  */
 let validAt: { time: Date; source: string } = { time: new Date(), source: "now (no publication time known)" };
 if (arg("at")) {
@@ -204,7 +204,7 @@ async function main() {
     ? `attested app is exactly ${RELEASE_APP.packageName} signed by exactly the release key`
     : `attested packages [${summary.packageNames.join(", ")}] / signers [${summary.signerDigests.join(", ")}] are not exactly the release build (${RELEASE_APP.packageName} / ${RELEASE_APP.signerDigest})`);
 
-  // 6. What the app and the collect page say for exactly these inputs.
+  // 6. What the app says for exactly these inputs.
   const verdict = deviceVerdict(summary, validAt.time, list);
   check("verdict", verdict.status === "verified", verdict.status === "verified"
     ? `readers show "Signed on a ${deviceName(summary)}"`

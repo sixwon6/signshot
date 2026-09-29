@@ -52,6 +52,9 @@ button {
 img {
   max-width: 100%;
 }
+[hidden] {
+  display: none !important;
+}
 .site-header,
 .site-footer {
   max-width: 1440px;
@@ -515,6 +518,9 @@ h1 em:after {
 .document a {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.document a.button {
+  text-decoration: none;
 }
 .document .date {
   font: 11px monospace;

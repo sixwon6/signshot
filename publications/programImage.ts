@@ -35,12 +35,12 @@ const PROGRAM_ACCOUNT_BYTES = 36;
 /** 4-byte enum + 8-byte slot + 1-byte Option tag + 32-byte authority. */
 const PROGRAM_DATA_HEADER = 45;
 /**
- * Bytes per ELF read. Base64 grows a slice by a third, so each answer stays well under the site
- * proxy's 1 MB upstream cap (`site/functions/api/solana.ts`) whatever size a later build reaches.
+ * Bytes per ELF read. Base64 grows a slice by a third, so each answer stays about 350 KB whatever
+ * size a later build reaches.
  */
 const CHUNK_BYTES = 262_144;
 
-/** The one line a refusal says, on the phone and on the collect page. */
+/** The one line a refusal says. */
 export const PROGRAM_CHANGED = "Program changed. Update Signshot.";
 
 type Header = {

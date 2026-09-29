@@ -79,15 +79,15 @@ await check("Wallet identity icon", async () => {
     await response.body?.cancel();
   }
 });
-await check("Public photo page", async () => {
+await check("Collect link page", async () => {
   const response = await fetch(`${APP_IDENTITY.uri}/collect/`,
     { signal: AbortSignal.timeout(15_000), redirect: "error" });
   try {
     assert.equal(response.status, 200,
-      `Public photo page returned HTTP ${response.status}; shared links must open without a password`);
+      `Collect link page returned HTTP ${response.status}; shared links must open without a password`);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i,
-      "Public photo page does not serve HTML");
-    return "public collection page reachable without authentication";
+      "Collect link page does not serve HTML");
+    return "collect link page reachable without authentication";
   } finally {
     await response.body?.cancel();
   }

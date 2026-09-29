@@ -18,7 +18,7 @@
       <p class="eyebrow">YOUR PHOTOGRAPHS. YOUR CHOICES.</p>
       <h1>Privacy & publication</h1>
       <p class="date">
-        Updated 25 September 2026 · Signshot for Android, app.seekershot
+        Updated 29 September 2026 · Signshot for Android, app.seekershot
       </p>
       <p>
         Signshot is a camera app that can publish a photograph with a Solana
@@ -50,8 +50,7 @@
         </li>
         <li>
           The publishers you block and your agreement to the
-          <a href="/terms/">terms</a>. On the collect page they stay in your
-          browser's storage instead. Neither is ever sent to Signshot.
+          <a href="/terms/">terms</a>. Neither is ever sent to Signshot.
         </li>
       </ul>
       <p>
@@ -145,8 +144,8 @@
               address stays the same if the token moves to another of your
               wallets, so publications from different wallets that name it can
               be recognised as coming from the same Seeker owner. Anyone
-              viewing the photograph, in the app or on this website, can ask
-              mainnet whether the publishing wallet still holds it. If your
+              viewing the photograph in the app can ask mainnet whether the
+              publishing wallet still holds it. If your
               wallet holds none, or mainnet does not answer, the photograph
               publishes without this.
             </td>
@@ -168,20 +167,20 @@
             </td>
           </tr>
           <tr>
-            <td>Collect or buy a copy, in the app or on this website</td>
+            <td>Collect or buy a copy</td>
             <td>
               The wallet you choose supplies its public address and signs the
               transaction. The public edition and claim accounts identify who
               collected. When a copy has a price, the payment goes to the
               publisher's address in that same transaction and is public. The
-              app and the page store pending-operation information locally so
-              they can recover after an interruption.
+              app stores pending-operation information locally so it can
+              recover after an interruption.
             </td>
           </tr>
           <tr>
             <td>Open the Wallet screen or a collect link</td>
             <td>
-              The app and the collect page read Signshot's moderation list from
+              The app reads Signshot's moderation list from
               <code>erashot.app</code>. The request names no wallet and no
               edition; the host receives normal connection information.
             </td>
@@ -258,14 +257,11 @@
           names no photograph, wallet or device.
         </li>
         <li>
-          <strong>This website:</strong> static pages, a read-only Solana
-          proxy and a copy of Google's attestation revocation list, hosted with
-          Cloudflare Pages. The proxy sends permitted RPC
-          requests to its configured Solana provider. A collection link that carries <code>&amp;cluster=devnet</code> does not
-          use the proxy: your browser reads the test network directly from
-          <code>api.devnet.solana.com</code>, which then sees your IP address
-          alongside the edition you are looking at. The host and providers may process
-          IP addresses and request logs for delivery and abuse prevention.
+          <strong>This website:</strong> static pages hosted with Cloudflare
+          Pages. They load nothing from other sites and carry no advertising
+          or analytics trackers; a collect link opened in a browser only
+          offers to open the app. The host may process IP addresses and
+          request logs for delivery and abuse prevention.
         </li>
       </ul>
       <h2>Approval, permanence and recovery</h2>
@@ -306,16 +302,6 @@
         wallet can be reached and clears the app's local authorization. You can
         also revoke Signshot inside your wallet. Disconnecting does not remove
         public transactions or change token ownership.
-      </p>
-      <h2>Checking a photograph on this website</h2>
-      <p>
-        The public photo page retrieves the recorded image and metadata to check
-        their fingerprints and edition information. The earlier-record verifier
-        sends the wallet or transaction reference you enter to Solana RPC
-        providers and retrieves associated Arweave metadata. If you select a
-        local file to check, its fingerprint is calculated in your browser; that
-        file is not uploaded. The pages do not add advertising or analytics
-        trackers.
       </p>
       <h2>Children and contact</h2>
       <p>

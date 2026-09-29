@@ -53,10 +53,7 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((byte, index) => byte === b[index]);
 }
 
-/**
- * Is `fresh` the reviewed transaction with nothing changed but its lifetime? The collect page
- * holds its own re-quote to the same rule.
- */
+/** Is `fresh` the reviewed transaction with nothing changed but its lifetime? */
 export function sameReviewedTransaction(reviewed: PreparedQuote, fresh: PreparedQuote): boolean {
   // The number beside the approve button is part of what was reviewed.
   if (reviewed.estimatedLamports !== fresh.estimatedLamports) return false;

@@ -2,8 +2,7 @@
  * Claiming a copy of a Seeker-only edition. The claim is keyed on the collector's Seeker Genesis
  * Token instead of their wallet, one copy per token, and the edition program checks the token
  * itself: `collect` and `buy` take its mint and the token account holding it, and answer
- * `GenesisTokenRequired` without them. The app's Collect sheet and the collect page both come
- * through here, so they find the same token and read the same receipt.
+ * `GenesisTokenRequired` without them.
  */
 
 import { findHeldGenesisToken } from "./genesisToken";

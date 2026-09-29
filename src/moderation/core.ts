@@ -1,7 +1,6 @@
 /**
  * Terms, reports, blocks and the moderation list, as data. No React, no storage, no DOM: the app
- * (`src/moderation/store.ts`), the collect page (`site/collect/page.ts`) and `scripts/check-site.ts`
- * all read these same rules.
+ * (`src/moderation/store.ts`) and `scripts/check-site.ts` read these same rules.
  *
  * A publication is permanent on Arweave and Solana and nobody can delete it. What Signshot can do
  * is decide what its own views show: Signshot's list at `MODERATION_URL` hides editions and
@@ -23,10 +22,7 @@ export const TERMS_VERSION = 1;
 export const termsAgreed = (stored: string | null | undefined): boolean =>
   stored === String(TERMS_VERSION);
 
-/**
- * Signshot's moderation list (`site/public/moderation.json`). The collect page reads the same path
- * on its own origin, so a preview deployment reads its own copy.
- */
+/** Signshot's moderation list (`site/public/moderation.json`). */
 export const MODERATION_URL = "https://erashot.app/moderation.json";
 /** Far above any real list, far below anything that could hurt to allocate. */
 export const MODERATION_MAX_BYTES = 256 * 1024;

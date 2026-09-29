@@ -47,8 +47,8 @@ export const actions = {
   checkAlbumCost: "Check album cost",
   createAlbum: "Create album",
   creatingAlbum: "Creating album…",
-  openPublicPage: "Open the public photo page",
-  openAlbumPage: "Open public album page",
+  openPublicPage: "Open collect link",
+  openAlbumPage: "Open album link",
   viewEdition: "View edition on Solana",
   viewTransaction: "View Solana transaction",
   viewTransactionShort: "View transaction",
@@ -413,7 +413,7 @@ export const proof = {
   attestationProblem: (reason: string): string => `Not accepted: ${reason}.`,
   /** While Google's revocation list and the publication time are fetched. */
   attestationChecking: "Checking…",
-  /** Either could not be fetched: nothing is claimed. The collect page says the same. */
+  /** Either could not be fetched: nothing is claimed. */
   attestationUnchecked: "Couldn’t check.",
   /**
    * Said beside an accepted attestation. The claim is the key and the device the keystore
@@ -614,10 +614,7 @@ export const settings = {
   developerTools: "Developer tools",
 } as const;
 
-/**
- * Terms, reports and blocks (`src/moderation/`). Labels only; the collect page says the same words
- * (`MODERATION_WORDS` in `site/collect/summary.ts`).
- */
+/** Terms, reports and blocks (`src/moderation/`). Labels only. */
 export const moderation = {
   terms: "Terms",
   agree: "Agree",

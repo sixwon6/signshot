@@ -45,7 +45,7 @@ export const HISTORICAL: Record<Cluster, readonly string[]> = {
  * bytes can change under the same address, and a signer's privileges reach every program it
  * calls, so publish, collect and buy refuse unless the deployed bytes hash to `sha256` and the
  * upgrade authority is `upgradeAuthority` (`programImage.ts`). Every trusted program needs one;
- * `npm test` and the site build refuse a trusted address without it.
+ * `npm test` refuses a trusted address without it.
  */
 export type ProgramImage = {
   /**

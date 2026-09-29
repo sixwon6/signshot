@@ -43,7 +43,6 @@ import { DEVNET_GENESIS_GROUP as FIXTURE_GROUP } from "../publications/devnet/ge
 import { claimGenesis, claimedCopy } from "../publications/core/seekerClaim";
 import { findSeekerGenesisToken } from "../src/seeker/genesisToken";
 import { proof } from "../src/ui/copy";
-import { GENESIS_LINE } from "../site/collect/summary";
 import type { AttestationBundle } from "../publications/core/attestation";
 import { readPhotoMetadata, readSavedPhotoMetadata } from "../publications/core/metadataDocument";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -486,8 +485,6 @@ ok("a devnet seal counts for nothing",
 ok("the words: \"now\" only where a seal stands behind it",
   proof.genesisStanding["not-held"] === "Not held by the publishing wallet." &&
   proof.genesisStanding["not-held-now"] === "Not held by the publishing wallet now.");
-ok("the collect page says exactly what the Proof sheet says",
-  canonicalize(GENESIS_LINE as unknown as JcsValue) === canonicalize(proof.genesisStanding as unknown as JcsValue));
 
 // --- verifyGenesisToken and the app's lookup, against a stubbed chain ---------------------------------
 const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";

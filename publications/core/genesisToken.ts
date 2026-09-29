@@ -343,8 +343,7 @@ export function chooseGenesis<T extends { mint: string; member: bigint }>(found:
 /**
  * Candidate mints one lookup reads, `MINT_BATCH` per request: a wallet with more single-unit
  * Token-2022 holdings is not checked. Anyone can send a wallet such tokens, so the bound sits far
- * above a real one. Through the collect page's proxy, the 1 MB bound on the token account listing
- * (`MAX_UPSTREAM` in `site/functions/api/solana.ts`) is reached first, at roughly 1,500 accounts.
+ * above a real one.
  */
 export const MAX_GENESIS_CANDIDATES = 1000;
 
@@ -389,7 +388,7 @@ export async function findHeldGenesisToken(
   const expected = genesisAddresses(cluster);
   const candidates = [...held];
   const found: { mint: string; token: string; member: bigint }[] = [];
-  // One request after another: the collect page's proxy is rate-limited per visitor.
+  // One request after another: RPC providers rate-limit bursts.
   for (let i = 0; i < candidates.length; i += MINT_BATCH) {
     const batch = candidates.slice(i, i + MINT_BATCH);
     const slices = await mintSlices(endpoint, batch.map(([mint]) => mint));
@@ -419,15 +418,15 @@ export function publishedGenesisClaim(cluster: Cluster, claimed: string | undefi
 /** A claim's check as a screen holds it. `unavailable`: mainnet could not be asked. */
 export type GenesisCheck = GenesisStanding | "checking" | "unavailable";
 
-/** The row's line: a key of `proof.genesisStanding` in `src/ui/copy.ts` and of `GENESIS_LINE`. */
+/** The row's line: a key of `proof.genesisStanding` in `src/ui/copy.ts`. */
 export type GenesisLine = "checking" | "held" | "not-held" | "not-held-now" | "not-genesis" | "unavailable";
 
 /**
- * The Genesis Token row for a claim, the same on the Proof sheet and the collect page. `sealed` is
- * the edition's seal (`genesisSealed`). A seal counts on mainnet only: a devnet seal comes from
- * the acceptance build's stand-ins. A counted seal says the program verified the SGT at publish,
- * so "now" is only said of a sealed claim, and a sealed mint whose account is gone was burned, not
- * forged. The seal line shows only once mainnet has found the mint to be a real SGT.
+ * The Genesis Token row for a claim. `sealed` is the edition's seal (`genesisSealed`). A seal
+ * counts on mainnet only: a devnet seal comes from the acceptance build's stand-ins. A counted seal
+ * says the program verified the SGT at publish, so "now" is only said of a sealed claim, and a
+ * sealed mint whose account is gone was burned, not forged. The seal line shows only once mainnet
+ * has found the mint to be a real SGT.
  */
 export function genesisDisplay(
   check: GenesisCheck,

@@ -1,8 +1,7 @@
 /**
  * Local preview of `site/dist/` (run `npm run build:site` first). Serves the extensionless links
- * Cloudflare Pages serves (`/privacy`), answers 503 for `/api/*` instead of faking a Solana
- * service, and applies the `_headers` rules for the paths it knows so a CSP mistake shows up
- * here rather than in production. Binds to 127.0.0.1 only.
+ * Cloudflare Pages serves (`/privacy`) and applies the `_headers` rules for the paths it knows so
+ * a CSP mistake shows up here rather than in production. Binds to 127.0.0.1 only.
  */
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -54,12 +53,6 @@ function headersFor(pathname) {
 createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
-    if (pathname.startsWith("/api/")) {
-      res.writeHead(503, { "Content-Type": "application/json" });
-      return res.end(
-        JSON.stringify({ error: { message: "The local preview has no production Solana connection." } }),
-      );
-    }
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405);
       return res.end();

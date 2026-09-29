@@ -316,7 +316,7 @@ export async function createAlbum(
   });
 }
 
-/** The album's public page. */
+/** The album's link. */
 export function albumPublicUrl(group: string): string {
   return albumUrl(group, cluster);
 }

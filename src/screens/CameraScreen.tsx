@@ -1,14 +1,9 @@
 /**
- * The camera, and the app's home screen. One layout under a mode dial, and one grammar in every
- * mode: the bottom row chooses, the row above it adjusts, the shutter shoots. All of it is in the
- * sheet, under the thumb, and the picture carries nothing at rest.
- *
- * AUTO is the point-and-shoot: the row chooses a look, with brightness pinned beside them, and
- * the row above is the look's strength. P and M are the same camera with its readout up: the row
- * is the readout's cells, the look among them as it is in a camera's quick menu, and the row
- * above is the live cell's dial. Nothing moves between modes; the dial only decides how much
- * there is. State lives in `useRecipes` (the look) and `useCaptureControls` (the camera and its
- * dial); the components they feed keep none of their own.
+ * The camera, and the app's home screen: one layout under an AUTO · P · M dial. In every mode the
+ * bottom row chooses, the row above it adjusts and the shutter shoots, all in the bottom sheet.
+ * AUTO's row is the looks (brightness beside them) under the look's strength; P and M show the
+ * readout cells (the look among them) under the live cell's dial. State lives in `useRecipes`
+ * (the look) and `useCaptureControls` (the camera and its dial).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -123,9 +118,9 @@ export function CameraScreen() {
     });
   }, [focusRing, ring]);
   /**
-   * The picture answers two touches, as a phone's camera does: a tap focuses and meters there, and
-   * a drag up or down is brightness, in the camera's own steps. What the handlers need changes
-   * with every render, so they read it from `pictureTouch`, set just before the screen is drawn.
+   * A tap on the picture focuses and meters there; a vertical drag sets brightness in the camera's
+   * own steps. The PanResponder is created once, so it reads this render's handlers from
+   * `pictureTouch`, which an effect refreshes after every render.
    */
   const [brightDrag, setBrightDrag] = useState<{ x: number; y: number; steps: number } | null>(null);
   const brightFade = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -212,8 +207,8 @@ export function CameraScreen() {
     }
   };
   /**
-   * AUTO held down: everything back to the camera and nothing set aside, where a tap on AUTO keeps
-   * what P and M held for their return. The two-button reset a camera body has.
+   * AUTO held down: everything back to the camera with nothing set aside. A tap on AUTO instead
+   * keeps what P and M held for their return.
    */
   const resetAll = () => {
     setChosenCell(null);

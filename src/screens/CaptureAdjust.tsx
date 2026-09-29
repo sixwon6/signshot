@@ -1,16 +1,10 @@
 /**
- * The adjust row: the one control that is live, in the sheet directly above the cells, so the
- * thumb that chose a cell turns its dial without leaving. Nothing here opens or closes, and
- * nothing is drawn on the picture.
- *
- * AUTO has brightness on the slider its look's strength uses: two stops either way from a zero in
- * the middle, the whole stops marked. P and M have a ruler with detents, the way a camera dial
- * works: ISO in third stops, shutter in full stops, brightness in the device's own steps, Kelvin
- * by the hundred, focus in fine positions. The key at the row's end hands the control back to
- * the camera. It fills with ink, not the accent: the accent is for what the photographer holds.
- *
- * The live cell below carries the value, so the row does not say it again. Presentational: state
- * lives in `useCaptureControls`, and every value shown is what native said it applied.
+ * The adjust row: the live control's dial, directly above the readout cells. AUTO's brightness is
+ * the strength slider's shape, two stops either way of a centred zero. In P and M each control is
+ * a detented ruler: ISO in third stops, shutter in full stops, brightness in the device's own
+ * steps, Kelvin by the hundred, focus in 2 % positions. The key at the row's end hands the control
+ * back to the camera. The live cell below shows the value, so the row does not repeat it.
+ * Presentational: state lives in `useCaptureControls`, and every value is what native applied.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {

@@ -110,7 +110,7 @@ const row = (s: AttestationSummary, at: Date | null, list: RevocationList | null
 const seekerLine = "Signed on a Solana Seeker · StrongBox hardware key · verified boot, bootloader locked";
 ok("release app, locked, in date, not revoked: the Seeker line",
   row(release, publishedAt, new Map()).text === seekerLine && row(release, publishedAt, new Map()).state === "device-ok");
-ok("the 2026-09-16 test app with a debug signer no longer gets the Seeker line",
+ok("the 2026-09-16 test app with a debug signer does not get the Seeker line",
   row({ ...summary, packageNames: ["expo.modules.seekercamera.test"] }, publishedAt, new Map()).text === "Device attestation not accepted: another app");
 ok("a build signed by another key: another app", row(summary, publishedAt, new Map()).text === "Device attestation not accepted: another app");
 ok("an unlocked bootloader is said, never hidden, and never with the device line",
@@ -139,7 +139,7 @@ const attributes = [
 const doc = { name: e.title, description: e.description, image: e.image, attributes, properties: { seedshot: bundle } };
 const serialized = canonicalize(doc as unknown as JcsValue);
 const attested = readPhotoMetadata(JSON.parse(serialized), e, serialized);
-ok("a five-key document loads through the page's reader (the old page refused it)", attested.image === e.image);
+ok("a five-key document loads through the page's reader", attested.image === e.image);
 ok("evidence the reader set aside renders as set aside, with the reason",
   attested.attestation === undefined && !!attested.attestationProblem
     && deviceProblem(attested.attestationProblem) === "Device attestation not accepted: the chain does not end at a Google attestation root");
@@ -341,7 +341,7 @@ const mwaDir = resolve(root, "node_modules", "@solana-mobile", "wallet-standard-
 const mwaVersion = (JSON.parse(readFileSync(resolve(mwaDir, "package.json"), "utf8")) as { version: string }).version;
 ok("wallet-standard-mobile is pinned to the exact version installed (0.5.0 or later handles Local Network Access)",
   manifest.devDependencies["@solana-mobile/wallet-standard-mobile"] === mwaVersion && /^0\.(?:[5-9]|\d{2,})\.\d+$/.test(mwaVersion));
-ok("the page no longer calls the protocol's transact directly",
+ok("the page never calls the protocol's transact directly",
   !/mobile-wallet-adapter-protocol-kit|\btransact\(/.test(sources));
 ok("MWA is registered as the recipe says, for the link's one chain and with no remote association",
   /registerMwa\(\{[\s\S]*appIdentity:[\s\S]*authorizationCache:[\s\S]*chains: \[chain\],[\s\S]*chainSelector: createDefaultChainSelector\(\),[\s\S]*onWalletNotFound: createDefaultWalletNotFoundHandler\(\),[\s\S]*\}\);/.test(mwaSource)

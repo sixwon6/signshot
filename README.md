@@ -415,7 +415,7 @@ dApp Store match, not the display name. The four local Gradle properties use the
   time out and background the wallet mid-publish and mid-upload, and recover. Judge the looks in
   daylight with a face and something red in frame; check Camcorder's smear in both landscapes; save
   one photograph per look and compare it with the preview. Connect a wallet from the wallet
-  screen. Publish from the wallet that holds the Genesis Token and read its row on the review, the
+  screen and send a collected copy from it. Publish from the wallet that holds the Genesis Token and read its row on the review, the
   Proof sheet and the collect page. Read the Device row of a draft left past its certificates
   (Continue renews it). Terms and Agree before the first publish and collect; Report; Block and
   Unblock; an edition in `moderation.json` reads Hidden.
@@ -425,10 +425,8 @@ dApp Store match, not the display name. The four local Gradle properties use the
   Set `SOLANA_RPC_URL` to a provider (without it the proxy uses Solana's public endpoint), apply
   `site/cloudflare/rate-limit-rule.json` again (now 120 requests per 10 s), and route mail for
   support@erashot.app.
-- **Deploy rehearsal:** finish `npm run mainnet -- <step> --cluster devnet` (deploy, verify,
-  authority, refund, record); it resumes from its saved state. Then send a collected copy from the
-  wallet screen on the Seeker.
-- **Mainnet:** `programs/editions/MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
+- **Mainnet:** the Squads multisig and its test proposal (`programs/editions/MAINNET.md` steps
+  2–4), then the rest of `MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
   address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
   length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a
   key-free HTTPS URL, a keyless proxy or a provider's key-free frontend URL, since the APK carries it

@@ -36,8 +36,8 @@ export function shoulder(x: number, knee: number, rate: number): number {
 }
 
 /**
- * Builds an RGBA8 3D LUT (size^3, r fastest) and returns it base64-encoded, matching the layout
- * the native lut3d stage uploads. The transform is applied to gamma-encoded, display-referred
+ * Builds an RGBA8 3D LUT (size^3, r fastest) and returns it base64-encoded, in the layout the
+ * renderer uploads as its 3D texture. The transform is applied to gamma-encoded, display-referred
  * RGB — that is what the renderer feeds the LUT.
  */
 export function buildLut(size: number, fn: RgbTransform): string {

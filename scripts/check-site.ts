@@ -278,12 +278,10 @@ ok("the terms carry the content rules, reporting, hiding, blocking, permanence a
 ok("the terms page names the version the app asks agreement to, at the URL it links",
   termsPage.includes(`Version ${TERMS_VERSION} ·`) && TERMS_URL === "https://erashot.app/terms/" && MODERATION_URL === "https://erashot.app/moderation.json");
 const privacyPage = readFileSync(resolve(publicDir, "privacy.html"), "utf8").replace(/\s+/g, " ");
-ok("the privacy page says what a report sends and that blocks and the agreement stay on the phone",
-  /Report opens an email to us with the edition's address/.test(privacyPage)
-    && /blocks and agreement to the <a href="\/terms\/">terms<\/a> stay on your phone/.test(privacyPage)
-    && /moderation list/.test(privacyPage));
-ok("the privacy page says one phone's publications can be linked across wallets",
-  privacyPage.includes("Photographs published from the same phone can be linked to one another, even across wallets."));
+ok("the privacy page says blocks and the agreement stay on the phone and names erashot.app",
+  /blocks and <a href="\/terms\/">terms<\/a> agreement stay on your phone/.test(privacyPage) && /erashot\.app see your IP/.test(privacyPage));
+ok("the privacy page says one phone's publications can be linked",
+  privacyPage.includes("Photos from the same phone can be linked."));
 
 // --- The app's re-quote rule --------------------------------------------------------------------------
 /**

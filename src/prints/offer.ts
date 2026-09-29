@@ -2,26 +2,18 @@
  * Pricing a published edition: the creator sets, changes or removes what a copy costs, with one
  * `set_offer` instruction and one wallet approval.
  *
- * WHY THIS IS KEYED BY EDITION AND NOT BY PHOTOGRAPH. `creator.ts` is keyed by `CaptureRecord`,
- * because a draft belongs to a photograph on this phone. A price does not: the Collection tab lists
- * editions read back off the chain, and a photograph published from another device — or from this
- * one before its local record was lost — has no `CaptureRecord` at all. The edition address is the
- * only identity both sides share, so the lock, the durable attempt and the storage key all use it.
+ * Keyed by edition, not photograph: the Collection tab lists editions read off the chain, and one
+ * published from another device has no `CaptureRecord` here. The lock, the durable attempt and the
+ * storage key all use the edition address.
  *
- * WHAT THE PROGRAM GUARANTEES, so that this file does not have to. `struct SetOffer` takes the
- * Edition account READ-ONLY with `has_one = creator`: only the publisher can call it, and the
- * instruction cannot touch supply, title, uri, the hashes or the issuance counter — not by a check,
- * but because it never writes that account. `Offer` is `init_if_needed`, so the same instruction
- * creates the account on the first call and rewrites it afterwards, carrying `revision` forward
- * with a saturating `+1` so an approval signed against an earlier price can never match again.
+ * `struct SetOffer` takes the Edition account read-only with `has_one = creator`, so only the
+ * publisher can call it and it cannot touch supply, title, uri, the hashes or the issuance counter.
+ * `Offer` is `init_if_needed`, and every call advances `revision` (saturating `+1`), so an approval
+ * signed against an earlier price never matches again.
  *
- * WHAT PROVES IT WORKED. The `Offer` account, re-read after confirmation, never the signature: a
- * wallet can return a receipt for a transaction that failed, and a node can report a confirmation
- * it is behind on. The price must be the approved one AND the revision must have moved, so a
- * confirmation that is really a view of the state before this call is not mistaken for success.
- *
- * No UI lives here. The attempt is persisted before the wallet opens, the offer is re-read
- * immediately before it opens, and one in-process lock per edition stops two taps racing.
+ * Success is the re-read `Offer` account, never the signature: the price must be the approved one
+ * and the revision must have moved, so a view of the state before this call is not mistaken for it.
+ * The attempt is persisted before the wallet opens, and one lock per edition stops two taps racing.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -48,8 +40,6 @@ import {
 import { checkPriceMinimum, MAX_PRICE_LAMPORTS, minimumPriceLamports } from "./price";
 import { CORE_PROTOCOL, type CoreMetadata, type PublicationAttempt } from "../../publications/types";
 
-/** The one chain this build talks to. An edition on any other is refused, never retargeted. */
-
 const UNREVIEWED =
   "This edition uses a program this app has not reviewed.";
 const NO_OFFERS = "Prices are not available on this network yet.";
@@ -72,12 +62,8 @@ export const isOfferWorking = (edition: string) => operationInProgress(lock(edit
 // ---------------------------------------------------------------------------
 
 /**
- * What this edition currently asks for a copy.
- *
- * `supported` is about the DEPLOYMENT, not the edition: the program that owns this edition either
- * has the `Offer` account and its instructions or it does not, and where it does not there is no
- * price to show and nothing to set. `offer` is `null` for an edition that has never been priced and
- * for one priced at zero alike — both are free, which is exactly how the program reads them.
+ * What this edition currently asks for a copy. `supported` is about the deployment: a program
+ * without the `Offer` account has no price to show or set.
  */
 export async function getOffer(
   e: CoreMetadata,
@@ -189,12 +175,9 @@ export interface OfferQuote {
 }
 
 /**
- * Everything checked before the review screen shows a cost, and the transaction that cost belongs
- * to. Nothing is signed.
- *
- * The edition is re-read from the chain first, and its on-chain `creator` — not the local record's
- * copy of it — is what must match: `has_one = creator` is the program's rule, and a local record
- * that disagrees would build a transaction the program refuses after a wallet had opened.
+ * Everything checked before the review shows a cost, and the transaction that cost belongs to.
+ * Nothing is signed. The edition is re-read first and must match the local record: `has_one =
+ * creator` would otherwise refuse the transaction after the wallet had opened.
  */
 export async function prepareOffer(
   e: CoreMetadata,
@@ -254,11 +237,9 @@ export async function prepareOffer(
 type OfferProgress = "wallet" | "confirming";
 
 /**
- * Approve, confirm, and verify the price change. Returns the offer as it now stands on chain.
- *
- * The wallet that signs must be the edition's own creator: checked against the authorised session
- * rather than trusted from the argument, because `has_one = creator` is what the program enforces
- * and a mismatch is worth saying plainly instead of as a simulation failure.
+ * Approve, confirm, and verify the price change. Returns the offer as it now stands on chain. The
+ * authorised wallet must be the edition's creator (`has_one = creator`), refused plainly here
+ * rather than as a simulation failure.
  */
 export async function sendOffer(
   e: CoreMetadata,
@@ -320,10 +301,8 @@ export async function sendOffer(
 
     onProgress?.("confirming");
     await confirmTransaction(RPC_ENDPOINT, attempt.signature, BigInt(attempt.lastValidBlockHeight));
-    // The account, not the signature. Both halves matter: the price must be the approved one, and
-    // `revision` must have advanced past what was there before, so a read of the PREVIOUS state —
-    // an endpoint a slot behind, or a confirmation belonging to some other transaction — cannot
-    // pass as this change having landed.
+    // The account, not the signature: the approved price and an advanced `revision`, so a read of
+    // the previous state (a lagging endpoint, another transaction's confirmation) cannot pass.
     const offer = await readOfferAccount(RPC_ENDPOINT, e.program, e.edition);
     if (!offer)
       throw new Error(

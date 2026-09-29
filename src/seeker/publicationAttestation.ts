@@ -3,7 +3,7 @@
  * keystore attest and sign it, and read the result back through the SAME reader every document
  * goes through, so nothing is written that this app could not later read. Never throws and never
  * waits forever: a phone that cannot attest, or does not answer in time, publishes a plain
- * document, exactly as before.
+ * document.
  */
 
 import { SeekerCamera, type CaptureRecord } from "../../modules/seeker-camera";

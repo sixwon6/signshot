@@ -156,8 +156,8 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
         const transaction = signed[0];
         const signature = getSignatureFromTransaction(transaction);
         const wire = getBase64EncodedWireTransaction(transaction);
-        // Preserve the public signed candidate even if validation fails, so it can be diagnosed
-        // without asking the owner to repeat an approval. Sign-only has not broadcast it.
+        // Keep the signed candidate even if validation fails, so it can be diagnosed without
+        // another approval. Sign-only has not broadcast it.
         await AsyncStorage.setItem(`${key}:signed`, JSON.stringify({ wire, quoteId, signature }));
         if (!matchesReviewedMessage(new Uint8Array(transaction.messageBytes), quoteId))
           throw new Error("The signed transfer changed its recipient, amount or allowed fee. Nothing was submitted.");

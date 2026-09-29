@@ -1,9 +1,8 @@
 /**
- * The recipe's stages as a bar of tabs, and the camera's editor: that bar over ONE open stage's
- * sliders, in a panel over the foot of the picture. The editor is not part of the camera at rest;
- * the recipe in force opens it. Tapping a stage opens it and closes the one before, tapping the
- * open one closes the editor, and the picture stays live above. No state of its own: the recipe
- * is `useRecipes`', the open stage its caller's, and the bar's refs only park it on the open tab.
+ * The recipe's stages as a bar of tabs, and the camera's editor: that bar over one open stage's
+ * sliders, in a panel over the foot of the picture. Tapping a stage opens it and closes the one
+ * before; tapping the open one closes the editor. No state of its own: the recipe is
+ * `useRecipes`', the open stage its caller's, and the bar's refs only park it on the open tab.
  */
 import { useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";

@@ -32,16 +32,14 @@ Camera resolutions are selected from the device's supported 4:3 YUV sizes.
 
 ## Before release
 
-- **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; send a copy; buy
-  a priced copy from a second wallet; collect from the link in a browser wallet (Chrome's local
-  network prompt, then Seed Vault signs and declines); cancel, time out and background the wallet
-  mid-publish and mid-upload, and recover. Judge the looks in daylight with a face and something
-  red in frame; check Camcorder's smear in both landscapes; save one photograph per look and
-  compare it with the preview. Open a print from the wallet screen, and connect a wallet from that
-  screen. A buy's Total equals what the wallet shows; decline in the wallet, then publish, price and
-  send again at once. Publish from the wallet that holds the Genesis
-  Token and read its row on the review, the Proof sheet and the collect page. Read the Device row
-  of a release-build publication, and of a draft left past its certificates (Continue renews it).
+- **On the Seeker:** brightness by dragging on the picture and on AUTO's slider; collect from the
+  link in a browser wallet (Chrome's local network prompt, then Seed Vault signs and declines);
+  time out and background the wallet mid-publish and mid-upload, and recover. Judge the looks in
+  daylight with a face and something red in frame; check Camcorder's smear in both landscapes; save
+  one photograph per look and compare it with the preview. Connect a wallet from the wallet
+  screen. Publish from the wallet that holds the Genesis Token and read its row on the review, the
+  Proof sheet and the collect page. Read the Device row of a draft left past its certificates
+  (Continue renews it).
   Terms and Agree before the first publish and collect; Report; Block and Unblock; an edition in
   `moderation.json` reads Hidden.
 - **Site:** redeploy `site/` (page, `/api/solana`, `/api/attestation-status`, `/terms/`,

@@ -1,11 +1,9 @@
 /**
- * The camera's readout: a row of cells in the sheet, under the thumb, plus the vocabulary the
- * adjust row shares (`CaptureAdjust.tsx`) and the histogram DISP draws on the picture. The cells
- * keep one order in every mode; the dial only decides how many of them there are. AUTO carries
- * brightness alone, beside its looks; P and M carry all five and the look as a sixth, the way a
- * camera's quick menu lists film simulation among ISO and white balance. Presentational: state
- * lives in `useCaptureControls`. A control the camera lacks is absent; one the mode forbids is
- * dimmed.
+ * The camera's readout cells, the histogram DISP draws on the picture, and the control vocabulary
+ * `CaptureAdjust.tsx` shares. The cells keep one order in every mode: AUTO shows brightness alone
+ * beside its looks; P and M show all five controls and the look as a sixth. A control the camera
+ * lacks is absent; one the mode forbids is dimmed. Presentational: state lives in
+ * `useCaptureControls`.
  */
 import { StyleSheet, Text, View } from "react-native";
 import {

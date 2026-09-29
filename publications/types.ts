@@ -145,16 +145,11 @@ export interface CoreDraft {
    */
   genesisUnchecked?: true;
   /**
-   * The price of a copy in LAMPORTS, written as a decimal integer string: "100000000" is 0.1 SOL.
-   *
-   * A string because a draft is JSON and `JSON.stringify` throws on a bigint, and because the
-   * the amount must be preserved EXACTLY through review, signing and recovery — a
-   * JSON number is a double, so a price above 2^53 lamports would come back a different price.
-   * Absent or "0" means free, which is also what having no `Offer` account means; a present,
-   * non-zero value makes `prepareSetup` append `set_offer` to the publication transaction.
-   *
-   * Not part of the hashed metadata document and not publication evidence: the edition commitment
-   * is sealed, the distribution offer beside it is not.
+   * The price of a copy in LAMPORTS, as a decimal integer string: "100000000" is 0.1 SOL. A string
+   * because `JSON.stringify` throws on a bigint and a JSON number would change a price above 2^53.
+   * Absent or "0" means free, as does no `Offer` account; a non-zero value makes `prepareSetup`
+   * append `set_offer` to the publication transaction. Not part of the hashed metadata document:
+   * the edition commitment is sealed, the distribution offer beside it is not.
    */
   price?: string;
   /**

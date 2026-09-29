@@ -4,7 +4,9 @@
  * Metaplex Core and a Seeker Genesis Token from mainnet (read only, cached in `.cache/svm/`).
  *
  *   npm run test:svm -- --plain <elf> --plain-id <address> [--devnet <elf> --devnet-id <address>]
+ *   npm run test:svm -- --devnet <elf> --devnet-id <address>      (a devnet-genesis build alone)
  *   env: SVM_PLAIN_ELF SVM_PLAIN_ID SVM_DEVNET_ELF SVM_DEVNET_ID SVM_TOOLS_ROOT SVM_HOST SVM_MAINNET_RPC
+ *   With no ELF named at all it runs the scratch builds in `DEFAULT_BUILDS` that still exist.
  *   Delete `.cache/svm/` to read mainnet again (after a Metaplex Core upgrade, say).
  *
  * The `litesvm` npm package ships no Windows binary, so LiteSVM runs as `programs/svm` (the Rust
@@ -113,17 +115,23 @@ const DEFAULT_BUILDS = {
   plain: { elf: join(SCRATCH, "plain-v3.so"), id: "8J4TFxHcbU3TbLpRh6f1QGMjYC8XHh7g2kvTNJcs7dJ3" },
   devnet: { elf: join(SCRATCH, "devnet-v3.so"), id: "41UayL5qxYF6V8R7BG9aTtVR5nAdhE2iooWoKWB9kQXC" },
 };
-function build(kind: "plain" | "devnet"): { elf: string; id: Address } | null {
+function named(kind: "plain" | "devnet"): { elf: string; id: Address } | null {
   const upper = kind.toUpperCase();
   const elf = option(`--${kind}`, `SVM_${upper}_ELF`);
   const id = option(`--${kind}-id`, `SVM_${upper}_ID`);
-  if (elf) {
-    if (!id) throw new Error(`--${kind} needs --${kind}-id: the address that ELF's declare_id! names.`);
-    if (!existsSync(elf)) throw new Error(`No ELF at ${elf}`);
-    return { elf: resolve(elf), id: address(id) };
-  }
-  const fallback = DEFAULT_BUILDS[kind];
-  return existsSync(fallback.elf) ? { elf: fallback.elf, id: address(id ?? fallback.id) } : null;
+  if (!elf) return null;
+  if (!id) throw new Error(`--${kind} needs --${kind}-id: the address that ELF's declare_id! names.`);
+  if (!existsSync(elf)) throw new Error(`No ELF at ${elf}`);
+  return { elf: resolve(elf), id: address(id) };
+}
+/** The named builds; the default ones only when no ELF is named at all, so a named run is exactly what was named. */
+function builds() {
+  const plain = named("plain");
+  const devnet = named("devnet");
+  if (plain || devnet) return { plain, devnet };
+  const fallback = (kind: "plain" | "devnet") =>
+    existsSync(DEFAULT_BUILDS[kind].elf) ? { elf: DEFAULT_BUILDS[kind].elf, id: address(DEFAULT_BUILDS[kind].id) } : null;
+  return { plain: fallback("plain"), devnet: fallback("devnet") };
 }
 
 // --- The LiteSVM host -----------------------------------------------------------------------------
@@ -1048,6 +1056,7 @@ async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet)
 
 async function elsewhere(plain: { elf: string; id: Address }, chain: Mainnet) {
   console.log(`\n8. ${plain.elf} at other addresses`);
+  // Every build answers DeclaredProgramIdMismatch away from its declare_id!, a devnet one included.
   const placeholder = address("Ds4LT9zQ3a9V9ZxqKgwYQxskh1DgeYPhoCYz5iHjAizE"); // lib.rs declare_id!
   for (const at of [placeholder, (await generateKeyPairSigner()).address]) {
     await fresh(plain.elf, at, chain);
@@ -1058,19 +1067,19 @@ async function elsewhere(plain: { elf: string; id: Address }, chain: Mainnet) {
 }
 
 async function main(): Promise<boolean> {
-  const plain = build("plain");
-  const devnet = build("devnet");
-  if (!plain) {
-    console.log("SKIP  no plain ELF: pass --plain <elf> --plain-id <address> (or SVM_PLAIN_ELF / SVM_PLAIN_ID).");
+  const { plain, devnet } = builds();
+  if (!plain && !devnet) {
+    console.log("SKIP  no ELF: pass --plain <elf> --plain-id <address> (or SVM_PLAIN_ELF / SVM_PLAIN_ID).");
     return false;
   }
   const chain = await mainnet();
   host = new Host(hostExecutable());
   try {
-    await plainBuild(plain, chain);
+    if (plain) await plainBuild(plain, chain);
+    else console.log("\nSKIP  1-6. no plain ELF: pass --plain <elf> --plain-id <address>.");
     if (devnet) await devnetBuild(devnet, chain);
     else console.log("\nSKIP  7. no devnet-genesis ELF: pass --devnet <elf> --devnet-id <address>.");
-    await elsewhere(plain, chain);
+    await elsewhere((plain ?? devnet)!, chain);
   } finally {
     host.close();
   }

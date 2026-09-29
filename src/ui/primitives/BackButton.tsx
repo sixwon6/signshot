@@ -1,9 +1,7 @@
 /**
- * BackButton — a chevron and where it goes.
- *
- * There is no tab bar: the camera is home, and Photos, Collection and Settings each carry this at
- * their head to return to it. The photo detail uses the same control to return to Photos. 44 tall,
- * an ink chevron and a muted label; Android's back gesture goes to the same place.
+ * BackButton — a chevron and where it goes. There is no tab bar: the camera is home, and Photos,
+ * Wallet and Settings each carry this at their head to return to it; the photo detail uses it to
+ * return to Photos. Android's back gesture goes to the same place.
  */
 import {
   Pressable,

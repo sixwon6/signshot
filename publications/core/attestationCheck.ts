@@ -18,7 +18,7 @@ import { account, addresses, readEdition } from "./protocol";
  */
 export const GOOGLE_STATUS_URL = "https://android.googleapis.com/attestation/status";
 
-/** 179 KB with 1,755 entries on 2026-09-24; the bound leaves room for years of growth. */
+/** 179 KB with 1,755 entries as of 2026-09-24; the bound leaves room for years of growth. */
 export const MAX_STATUS_BYTES = 4_000_000;
 /** Held when the response names no max-age; Google sends `max-age=86400`, which is honoured. */
 const STATUS_DEFAULT_TTL_MS = 60 * 60 * 1000;

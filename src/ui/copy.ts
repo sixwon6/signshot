@@ -60,18 +60,16 @@ export const actions = {
 
   /**
    * Collecting. Two taps, like publishing: "Continue" connects and shows the cost, "Collect"
-   * opens the wallet — only the tap that spends carries the verb. The Collection tab's own entry
-   * is one word per pill, since the pills sit in a row beside each other.
+   * opens the wallet — only the tap that spends carries the verb. The Wallet screen's entry is
+   * one word per chip, since they sit in a row.
    */
   collect: "Collect",
   /**
-   * Buying: the same two taps, for an edition with a price. "Collect" is the free word and "Buy"
-   * the priced one, so the tap that spends says which of the two it is. `buy` is the vocabulary's
-   * one-word counterpart of `collect` above; `confirmBuy` is the tap that opens the wallet, chosen
+   * Buying: the same two taps, for an edition with a price. `confirmBuy` opens the wallet, chosen
    * by the reviewed quote's own `kind` rather than by anything a screen read earlier.
    */
   confirmBuy: "Buy",
-  /** The creator's own price control, on the photograph and in the Collection. */
+  /** The creator's own price control, on the photograph and on the Wallet screen. */
   price: "Price",
   setPrice: "Set price",
   scan: "Scan",
@@ -243,12 +241,12 @@ export const camera = {
  * is a position, never a distance: the Seeker's lens is uncalibrated.
  */
 export const captureControls = {
-  /** The mode dial, as a camera's dial prints it. The structure says the rest. */
+  /** The mode dial's positions, as a camera's dial prints them. */
   modes: { auto: "Auto", program: "P", manual: "M" },
   /** The key that cycles what is drawn over the picture, named as it is on a camera's back. */
   disp: "Disp",
   applyError: "Camera controls did not apply. Restart the camera and try again.",
-  /** Tray names. */
+  /** Full control names, spoken. */
   iso: "ISO",
   shutter: "Shutter",
   ev: "Brightness",
@@ -464,16 +462,15 @@ export const send = {
   burned: "This copy has been burned.",
   frozen: "This copy is frozen.",
   recheck: "Checking current ownership…",
-  /** "Copy 1 of 5" for the sender's own numbered copy. */
-  copyLine: (supply: number): string => `Copy 1 of ${supply}`,
+  /** "Copy 3 of 5": the numbered copy being sent. */
+  copyLine: (number: number, supply: number): string => `Copy ${number} of ${supply}`,
 } as const;
 
 /**
  * Collecting: taking one numbered copy of somebody else's edition into your own wallet. A free
- * edition is collected — no price, and nothing reaches the publisher; a priced one is bought, and
- * its price does reach the publisher (`price` below owns every word about that). Either way the
- * collector also pays Solana's own costs, the same three the publisher paid (`estimate`). One copy
- * per wallet, for as long as copies remain.
+ * edition is collected and nothing reaches the publisher; a priced one is bought and its price
+ * does (`price` owns those words). Either way the collector pays Solana's own costs (`estimate`).
+ * One copy per wallet, while copies remain.
  */
 export const collect = {
   network: "SOLANA MAINNET",
@@ -498,7 +495,7 @@ export const collect = {
   yourCopy: (number: number, supply: number): string =>
     `COPY ${number} OF ${supply} · YOUR COPY`,
   publishedBy: "PUBLISHED BY",
-  /** Imprinted on the paper, under the title, the way the Collection imprints it. */
+  /** Imprinted on the paper, under the title, as the Wallet screen imprints it. */
   by: (address: string): string => `By ${address}`,
   momentLabel: "MOMENT",
   issuedLabel: "ISSUED SO FAR",
@@ -533,13 +530,10 @@ export const collect = {
 } as const;
 
 /**
- * The price: the publisher's own amount for a copy, in SOL. Never a cost — the costs are Solana's
- * network fee, account rent and the Metaplex Core fee, which the signer pays either way — so the
- * two are always shown as separate lines and only then added up
- * ("1 numbered copy · 0.25 SOL + network and account costs").
- *
- * A price of nothing is a free edition: it is collected, not bought, and nothing reaches the
- * publisher. That is the only difference the words are allowed to blur.
+ * The price: the publisher's own amount for a copy, in SOL. Never a cost: the costs (network fee,
+ * account rent, the Metaplex Core fee) are the signer's either way, so the two are separate lines
+ * and only then added up ("1 numbered copy · 0.25 SOL + network and account costs"). A price of
+ * nothing is a free edition: collected, not bought, and nothing reaches the publisher.
  */
 export const price = {
   network: "SOLANA MAINNET",
@@ -639,11 +633,9 @@ export const moderation = {
 const figures = (value: number): string => String(value).padStart(3, "0");
 
 /**
- * The Wallet screen: the address, what it holds, and what it published, in Collected and Published
- * views. The route stays `Chain` so saved navigation state and deep links keep working.
- *
- * Readouts are set in the mono step, so their words are short enough to stay on one line at the
- * phone's largest text size. Sentences are kept for the things retrying cannot fix.
+ * The Wallet screen (route `Chain`): the address, what it holds, and what it published, in
+ * Collected and Published views. Readouts are set in the mono step, so their words stay on one
+ * line at the largest text size; sentences are kept for what retrying cannot fix.
  */
 export const collection = {
   collected: "Collected",

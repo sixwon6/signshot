@@ -13,9 +13,9 @@ const LUT_SIZE = 17;
 
 /**
  * One strength law for every starter: the dial is the mix. The LUT and every stage parameter ride
- * one straight line from neutral at 0 to the look's full value at 100, so 0 is exactly the phone's own picture, the
- * default is 60 % of the look, and the last forty points of travel are worth as much as the first
- * forty. Each grade below is therefore written as the look at 100.
+ * one straight line from neutral at 0 to the look's full value at 100, so 0 is exactly the phone's
+ * own picture, the default is 60 % of the look, and the last forty points of travel are worth as
+ * much as the first forty. Each grade below is therefore written as the look at 100.
  */
 const ramp = (full: number, neutral = 0): [number, number][] => [[0, neutral], [100, full]];
 
@@ -261,7 +261,7 @@ const camcorderManifest: RecipeManifest = {
   schema: 1,
   profileId: "rec.camcorder",
   profileVersion: 1,
-  // chromaSmear arrived with renderer 0.3.0.
+  // chromaSmear needs renderer 0.3.0.
   rendererMin: "0.3.0",
   lut: { size: LUT_SIZE, space: "gamma" },
   stages: [

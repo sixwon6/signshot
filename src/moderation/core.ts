@@ -4,7 +4,7 @@
  * all read these same rules.
  *
  * A publication is permanent on Arweave and Solana and nobody can delete it. What Signshot can do
- * is decide what its own views show: the owner's list at `MODERATION_URL` hides editions and
+ * is decide what its own views show: Signshot's list at `MODERATION_URL` hides editions and
  * creators for everyone, and a viewer's block list hides creators for that viewer alone. The list
  * FAILS OPEN — unreadable, oversized, late or malformed means nothing is hidden — because a list
  * that failed closed would let one bad deploy blank every photograph in the app.
@@ -24,11 +24,11 @@ export const termsAgreed = (stored: string | null | undefined): boolean =>
   stored === String(TERMS_VERSION);
 
 /**
- * The owner-maintained list (`site/public/moderation.json`). The collect page reads the same path
+ * Signshot's moderation list (`site/public/moderation.json`). The collect page reads the same path
  * on its own origin, so a preview deployment reads its own copy.
  */
 export const MODERATION_URL = "https://erashot.app/moderation.json";
-/** Far above any list the owner will write, far below anything that could hurt to allocate. */
+/** Far above any real list, far below anything that could hurt to allocate. */
 export const MODERATION_MAX_BYTES = 256 * 1024;
 /** Per array. */
 export const MODERATION_MAX_ENTRIES = 4096;
@@ -123,8 +123,8 @@ export function withBlocked(list: Iterable<string>, creator: string, blocked: bo
 }
 
 /**
- * What stands in for a publication's picture, title and caption: `hidden` by the owner's list,
- * `blocked` by this viewer, or `null` to show it. The owner's list wins, since Unblock cannot
+ * What stands in for a publication's picture, title and caption: `hidden` by the moderation list,
+ * `blocked` by this viewer, or `null` to show it. The moderation list wins, since Unblock cannot
  * bring back what the list hides.
  */
 export type Veil = "hidden" | "blocked" | null;

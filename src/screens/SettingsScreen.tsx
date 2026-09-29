@@ -125,8 +125,7 @@ export function SettingsScreen() {
         return;
       }
       // The wallet is gone, uninstalled, or refused the session. The token is unusable either
-      // way, so the cache must still go: leaving it would show an address the app cannot sign
-      // with, which is worse than an unrevoked token on a wallet that is gone.
+      // way, so the cache is still cleared rather than showing an address the app cannot sign with.
       setWalletError(safeErrorText(e));
       try {
         const disconnecting = wallet;
@@ -142,9 +141,7 @@ export function SettingsScreen() {
     }
   }, [connectAnd, deauthorizeSession, disconnect, stamp]);
 
-  // A device with no browser at all is the only way this rejects, and there is nothing useful to
-  // say about that inside a camera app — the row shows the URL it opens, so it stays readable and
-  // typable either way.
+  // These reject only on a device with no browser, where there is nothing useful to show.
   const onPrivacy = useCallback(() => {
     void Linking.openURL(PRIVACY_URL).catch(() => undefined);
   }, []);
@@ -184,9 +181,8 @@ export function SettingsScreen() {
       >
         <Text style={s.heading}>{copy.heading}</Text>
 
-        {/* The wallet card shows both the `.skr` name and the address, never the name instead of
-            the address — a `.skr` label is a third-party claim, and the address is the thing
-            every other surface can be checked against. `PrintSheet` and `ProofSheet` match. */}
+        {/* The `.skr` name is shown beside the address, never instead of it: the name is a
+            third-party claim, and the address is what every other surface is checked against. */}
         <View style={s.wallet}>
           <Wash />
           <View style={s.walletTop}>
@@ -246,10 +242,9 @@ export function SettingsScreen() {
             value={devnet ? copy.networkDevnet : copy.networkMainnet}
             last
           />
-          {/* The two rows above are mainnet facts even on a devnet build (`getMainnetReadRpc`), so
-              the section says which network each half is about. Nothing is gated on them; the SGT
-              mint is also what a publication records, and every reader checks it again
-              (`publications/core/genesisToken.ts`). */}
+          {/* The token and name rows are read from mainnet even on a devnet build
+              (`getMainnetReadRpc`). Nothing is gated on them; a publication's recorded SGT mint is
+              checked again by every reader (`publications/core/genesisToken.ts`). */}
           {devnet && <Text style={s.note}>{copy.seekerSourceDevnet}</Text>}
           {!!identity.error && <Text style={s.error}>{identity.error}</Text>}
           <Pill
@@ -324,7 +319,7 @@ export function SettingsScreen() {
  */
 const WASH_BANDS = 64;
 const WASH_COLUMNS = 48;
-/** Smoothstep: 0 and 1 held, the change in the middle. No easing library, no dependency. */
+/** Smoothstep: flat at 0 and 1, the change in the middle. */
 const ease = (t: number) => t * t * (3 - 2 * t);
 function channels(hex: string): [number, number, number] {
   return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [

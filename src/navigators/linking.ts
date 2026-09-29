@@ -1,5 +1,5 @@
 /**
- * Collect links open the Collection tab; core/cluster query parameters are validated there.
+ * Collect links open the Wallet screen (`Chain`); core/cluster query parameters are validated there.
  * React Navigation normalizes trailing slashes. Android routing lives in app.json intentFilters.
  * https://reactnavigation.org/docs/configuring-links
  */

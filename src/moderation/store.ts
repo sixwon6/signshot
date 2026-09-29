@@ -1,6 +1,6 @@
 /**
  * The app's side of `core.ts`: the terms agreement and the block list in AsyncStorage, and the
- * owner's moderation list read over the network, held in one module-level store so a Block on the
+ * moderation list read over the network, held in one module-level store so a Block on the
  * Collect sheet is already in force on the Wallet screen behind it.
  *
  * Both stored values are per phone, not per wallet: the agreement is the person's, and a block

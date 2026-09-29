@@ -3,11 +3,9 @@
  * deep links and saved navigation state keep working; every visible word comes from the
  * `collection` export of `src/ui/copy.ts`.
  *
- * The prints are the content, so the chrome is set in type the way the camera's is, in two
- * classes and no more: a `TextKey` is a word that navigates or turns the view, and anything that
- * acts on the chain or the clipboard is a small outlined `Chip`. A fact is a tag over its value.
- * Teal keeps its one meaning — this is yours — and each screenful spends it once: the wallet
- * address on the list, the copy number on a photograph the wallet holds.
+ * The chrome is set in type, as on the camera: a `TextKey` navigates or switches the view, and
+ * anything that acts on the chain or the clipboard is a small outlined `Chip`. Teal means "yours"
+ * and appears once per screen: the wallet address on the list, the copy number on a held print.
  */
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { RouteProp } from "@react-navigation/native";
@@ -31,6 +29,8 @@ import { isUserCancellation } from "../solana/walletErrors";
 import type { WalletSession } from "../solana/walletSession";
 import { CollectSheet } from "../prints/CollectSheet";
 import { OfferSheet } from "../prints/OfferSheet";
+import { SendSheet } from "../prints/SendSheet";
+import { heldCopy, type TransferTarget } from "../prints/transfer";
 import { formatSol } from "../prints/price";
 import { parseCollectLink, type CollectTarget } from "../prints/collect";
 import { scanQr, scanQrAvailable } from "../prints/collectQr";
@@ -154,6 +154,8 @@ export function ChainScreen() {
   const [collectTarget, setCollectTarget] = useState<CollectTarget | null>(null);
   /** Set means the price sheet is open on this edition. The creator's own control. */
   const [priceEdition, setPriceEdition] = useState<LibraryPhoto["photo"]["edition"] | null>(null);
+  /** Set means the Send sheet is open on this copy; `sent` once a send from it confirmed. */
+  const [sending, setSending] = useState<{ item: LibraryPhoto; target: TransferTarget; sent?: boolean } | null>(null);
   const key = `${wallet ?? ""}:${cluster}:${mode}`;
   const current = state.key === key ? state : undefined;
   const loading = Boolean(wallet && (!current || current.loading));
@@ -164,11 +166,14 @@ export function ChainScreen() {
     return a && !veilOf(item) ? [[a.group, albumLabel(a)] as const] : [];
   })).entries()];
   const filtered = items.filter(item => !album || item.photo.publication.album?.group === album);
-  const activePhoto = focused && current ? items.find(item => item.id === selected) : undefined;
+  // The copy being sent stays on screen while its sheet is open, even once a re-read drops it.
+  const activePhoto = focused && current
+    ? items.find(item => item.id === selected) ?? (sending?.item.id === selected ? sending.item : undefined)
+    : undefined;
 
   useEffect(() => {
-    setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSaid(null);
-    // A wallet that changed answers the question the word was reporting on.
+    setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null);
+    // A different wallet clears the last failed connect.
     setConnectFailed(false);
   }, [key]);
   useEffect(() => {
@@ -177,7 +182,7 @@ export function ChainScreen() {
     setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: true }));
     // The endpoint's cluster is checked first; a mismatch keeps its own sentence, since retrying
     // cannot fix configuration. `known` seeds the rescue scan with collections already verified
-    // for this wallet, so a collector-only wallet survives a crowd-out.
+    // for this wallet, so its prints are still found when other assets crowd the first page.
     assertEndpointCluster()
       .then(() => readKnownCollections(cluster, wallet))
       .then(known => loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal, known))
@@ -296,7 +301,7 @@ export function ChainScreen() {
   const retry = () => setRefresh(n => n + 1);
   const close = () => { if (immersive) setImmersive(false); else { setSelected(null); setPriceEdition(null); setSaid(null); } };
   const toCamera = () => navigation.navigate("Camera");
-  const open = (item: LibraryPhoto) => { setSelected(item.id); setImmersive(false); setPriceEdition(null); setSaid(null); };
+  const open = (item: LibraryPhoto) => { setSelected(item.id); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null); };
   const copy = async (id: string, value: string) => {
     try { await Clipboard.setStringAsync(value); say(id, collection.copied); }
     catch { say(id, collection.copyFailed); }
@@ -310,6 +315,8 @@ export function ChainScreen() {
   const e = activePhoto?.photo.edition;
   const activeVeil = activePhoto ? veilOf(activePhoto) : null;
   const activeBlocked = !!e && moderation.isBlocked(e.creator);
+  /** Only a copy this wallet was read holding can be sent from here. */
+  const sendable = activePhoto ? heldCopy(activePhoto, wallet) : null;
   const activeIndex = activePhoto ? filtered.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
   /** The wallet's value word: the address, or where the connection got to. */
@@ -364,9 +371,9 @@ export function ChainScreen() {
           <Chip size="small" fill={colors.ink} label={collection.allAlbums} selected={!album} onPress={() => setAlbum(null)} hitSlop={CHIP_SLOP} />
           {albums.map(([group, label]) => <Chip key={group} size="small" fill={colors.ink} label={label} accessibilityLabel={`Filter album ${label}`} selected={album === group} onPress={() => setAlbum(group)} hitSlop={CHIP_SLOP} />)}
         </ScrollView>}
-        {/* The count, not just a flag: anyone can mint Core assets to any owner and grind addresses
-            to sort first, so the owner is told how many the scan's cap hid. This line carries the
-            only RETRY over a list that still has rows. */}
+        {/* A count, not just a flag: anyone can mint Core assets to any wallet and grind addresses
+            to sort first, so the line says how many the scan's cap hid. It carries the only RETRY
+            over a list that still has rows. */}
         {(current?.failed || result && (result.unavailable > 0 || result.hiddenCount > 0)) && !!result && <View style={s.notice}>
           <Text style={s.state}>{current?.failed ? collection.notRefreshed
             : result.unavailable > 0 ? collection.unread(result.unavailable)
@@ -376,8 +383,7 @@ export function ChainScreen() {
         </View>}
       </>}
       ListEmptyComponent={!wallet ? null : <View style={s.empty}>
-        {/* One word where a word will do. With no wallet nothing stands here at all: the line
-            above already reads NO WALLET, and CONNECT is on it. */}
+        {/* With no wallet this stays empty: the wallet line above reads NO WALLET beside CONNECT. */}
         {loading && !result ? <><ActivityIndicator color={colors.muted} /><Text style={s.state}>{collection.loading}</Text></> :
           current?.failed && !result ? (current.error
             ? <Text style={s.stateLine}>{current.error}</Text>
@@ -450,6 +456,8 @@ export function ChainScreen() {
             <View style={[s.bottomBar, { paddingBottom: insets.bottom + space.sm }]}>
               <View style={s.chipRow}>
                 {!activeVeil && <Chip size="small" label={labelOf("share", actions.share)} accessibilityLabel={collection.shareMoment} onPress={share} hitSlop={CHIP_SLOP} testID="wallet-share" />}
+                {sendable && <Chip size="small" label={actions.send} hitSlop={CHIP_SLOP} testID="wallet-send"
+                  onPress={() => setSending({ item: activePhoto, target: sendable })} />}
                 <Chip size="small" label={labelOf("link", collection.copyLink)} accessibilityLabel={collection.copyMomentLink} hitSlop={CHIP_SLOP} testID="wallet-copy-link"
                   onPress={() => void copy("link", collectUrl(e.edition, cluster))} />
                 {/* Somebody else's photograph: report it, or stop this phone showing its publisher. */}
@@ -462,6 +470,11 @@ export function ChainScreen() {
               </View>
             </View>
             {priceEdition && <OfferSheet edition={priceEdition} session={session} onClose={() => setPriceEdition(null)} onSaved={() => setRefresh(n => n + 1)} />}
+            {/* A confirmed send re-reads the wallet at once; closing then goes back to the grid,
+                which no longer holds the copy. */}
+            {sending && <SendSheet target={sending.target} image={activeVeil ? undefined : sending.item.imageUri} session={session}
+              onSent={() => { setSending(s => s && { ...s, sent: true }); setRefresh(n => n + 1); }}
+              onClose={() => { if (sending.sent) setSelected(null); setSending(null); }} />}
           </Screen>)}
     </Modal>
     {/* The Collect entry: one field and three chips. Paste or scan a link; everything else about

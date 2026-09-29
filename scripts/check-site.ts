@@ -1,37 +1,33 @@
 /**
- * Gate for the public collect page (`site/`). Runs in `npm test`, needs no network.
- *
- * What it holds still:
- *   - the page's wording for the device row, derived through the SAME reader and verdict the app
- *     uses, on the synthetic attestation fixture: the verified line only when the release app,
- *     the boot state, revocation and the dates at publication all hold, the refusal for each, the
- *     "Couldn't check." line, the set-aside line and the plain-document line, so a wording change
- *     is a reviewed change;
+ * Gate for the public collect page (`site/`). Runs in `npm test` and needs no network. It holds:
+ *   - the device row's wording, through the same reader and verdict the app uses, on the synthetic
+ *     attestation fixture: the verified line only when the release app, the boot state, revocation
+ *     and the dates at publication all hold, plus each refusal, "Couldn't check.", the set-aside
+ *     line and the plain-document line, so a wording change is a reviewed change;
  *   - `functions/api/attestation-status.ts`, against a stubbed Google and Cache API: the list is
  *     re-served same-origin, bounded, reshaped and cached, and anything else is a 502;
- *   - the two copies of the collect page's Content-Security-Policy (`_headers` and the <meta>)
- *     say the same thing, so a hosting change cannot leave the page with no policy;
+ *   - the collect page's two Content-Security-Policy copies (`_headers` and the <meta>) agree, so
+ *     a hosting change cannot leave the page with no policy;
  *   - `.well-known/assetlinks.json` is byte-identical to the file Android verified the App Link
  *     against, and names the release certificate in `dapp-store/signing-certificate.json`;
  *   - the collect sources never assign markup (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
  *     `document.write`), which the CSP's Trusted Types directive would turn into a runtime throw;
  *   - Mobile Wallet Adapter is registered through `@solana-mobile/wallet-standard-mobile`, and the
- *     one Trusted Types policy and the `style-src` hashes admit exactly its dialogs, recomputed
- *     from the installed package;
- *   - the RPC proxy's upstream is its `SOLANA_RPC_URL` binding, or Solana's public mainnet with
+ *     Trusted Types policy and `style-src` hashes admit exactly its dialogs, recomputed from the
+ *     installed package;
+ *   - the RPC proxy's upstream is `SOLANA_RPC_URL`, or Solana's public mainnet with
  *     `X-Upstream: public` on every answer; its allowlist equals the methods the page sends, every
- *     request the page's own callers send passes it byte for byte (the collector's Genesis Token
- *     lookup for a seeker-only edition included) and near misses are refused, and an upstream body
+ *     request the page sends passes byte for byte, near misses are refused, and an upstream body
  *     with no Content-Length is cut off at the cap as it streams;
- *   - a seeker-only edition in the app's own words, and the page naming a Seeker only once the
- *     device row verified one: nothing static on the page says "from a Seeker";
+ *   - the seeker-only wording is the app's own, and the page names a Seeker only beside a device
+ *     row that verified one;
  *   - the privacy page says publications from one phone can be linked, and a sealed Genesis Token
  *     links the publishing wallet to its Seeker;
  *   - the bundle builds, carries the trusted programs, reads no `process.env`, and includes no
- *     React Native module (the build's own guards, exercised here so `npm test` runs them);
+ *     React Native module (the build's own guards, run here so `npm test` covers them);
  *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
- *     failing open, the veil, the report email, the terms page's §10.6 clauses and its headers, and
- *     the app and the page asking for agreement before a first publish or collect.
+ *     failing open, the veil, the report email, the terms page's §10.6 clauses and headers, and
+ *     agreement before a first publish or collect in the app and on the page.
  */
 
 import { createHash } from "node:crypto";
@@ -333,11 +329,11 @@ ok("the page never takes an endpoint or program from the link",
 // --- Mobile Wallet Adapter, through Wallet Standard ---------------------------------------------
 /**
  * The page signs through `@solana-mobile/wallet-standard-mobile`'s registered wallet, never the
- * protocol's `transact`. That library assigns its own dialog templates to `innerHTML` and writes its
- * own `<style>` blocks, and the page admits exactly those: the Trusted Types `default` policy by
- * SHA-256 (`site/collect/mwa.ts`) and `style-src` by CSP hash. Both are recomputed here from the
- * installed package, and every `innerHTML` and style write in it must be one of those read below,
- * so a version change cannot slip a new sink or template past the policy.
+ * protocol's `transact`. The library assigns its own dialog templates to `innerHTML` and writes its
+ * own `<style>` blocks; the page admits exactly those, by SHA-256 in the Trusted Types `default`
+ * policy (`site/collect/mwa.ts`) and by hash in `style-src`. Both are recomputed here from the
+ * installed package, whose every `innerHTML` and style write must be one read below, so a version
+ * change cannot slip a new sink or template past the policy.
  */
 const mwaSource = readFileSync(resolve(site, "collect", "mwa.ts"), "utf8");
 const manifest = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as { devDependencies: Record<string, string> };
@@ -463,15 +459,12 @@ async function upstreamChecks() {
 }
 
 /**
- * Every request the collect page sends `/api/solana`, recorded from the page's own callers against a
- * stubbed chain and kept byte for byte: the edition read (`loadTrustedEdition`, whose `account` also
- * serves `hasCollected` and the offer), the program check's sliced reads (`assertReviewedProgram`,
- * through both ELF chunks), the Genesis Token check (`verifyGenesisToken`), a collector's own token
- * for a seeker-only edition (`findHeldGenesisToken`, which `claim` and `hasCollected` make), the device row's time
- * (`publicationTime`: a recorded `published_at`, and a legacy deployment's receipt history over two
- * pages), the quote (`prepareTransaction`), the attempt check
- * (`checkAttempt`), the confirmation (`confirmTransaction`) and the block height `collect` reads
- * before the wallet opens (`site/collect/page.ts`).
+ * Every request the collect page sends `/api/solana`, recorded byte for byte from the page's own
+ * callers against a stubbed chain: `loadTrustedEdition` (whose `account` also serves `hasCollected`
+ * and the offer), `assertReviewedProgram` through both ELF chunks, `verifyGenesisToken`,
+ * `findHeldGenesisToken` (a collector's own token for a seeker-only edition), `publicationTime` (a
+ * recorded `published_at`, and a legacy receipt history over two pages), `prepareTransaction`,
+ * `checkAttempt`, `confirmTransaction`, and the block height `collect` reads before the wallet opens.
  */
 async function pageRequests(): Promise<string[]> {
   const ENDPOINT = "https://erashot.app/api/solana";

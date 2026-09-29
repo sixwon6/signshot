@@ -7,23 +7,21 @@ import { mock } from "node:test";
 
 /**
  * The capture hook's wiring, with no device. `check-runtime-behavior.mjs` covers the pure dial in
- * `src/capture/mode.ts`; this renders the REAL `useCaptureControls` and turns it through what it
- * returns, so a hook that forgets to carry brightness, loses what AUTO set aside, or drops a
- * revision guard fails here. Nothing below reads the hook's refs or state: only its return value,
- * what the camera was told, and what reached storage.
+ * `src/capture/mode.ts`; this renders the real `useCaptureControls` and drives it only through its
+ * return value, checking what the camera was told and what reached storage.
  *
- * Two modules are replaced, at the edge where the app stops being JavaScript:
+ * Two modules are replaced where the app stops being JavaScript:
  *   modules/seeker-camera     a fake camera that answers as `resolve` in CaptureControls.kt does
  *   AsyncStorage              a Map
- * Everything between them and the hook is the real thing: apply.ts, store.ts, captureChrome.ts,
- * timing.ts. `mock.module` needs --experimental-test-module-mocks, so the checks run in a worker
- * started with it. It matches on the resolved file URL (a bare Windows path is silently ignored),
- * and works here because tsx loads the app's .ts as CommonJS.
+ * apply.ts, store.ts, captureChrome.ts and timing.ts are the real ones. `mock.module` needs
+ * --experimental-test-module-mocks, so the checks run in a worker started with it; it matches on
+ * the resolved file URL (a bare Windows path is silently ignored) and works because tsx loads the
+ * app's .ts as CommonJS.
  *
- * The hook is rendered by react-dom into a container that is not a DOM. The probe returns null, so
- * react-dom only needs something to hang its listeners on, and `act` needs the development React.
+ * react-dom renders into a stub container: the probe returns null, so react-dom only needs
+ * something to hang its listeners on, and `act` needs the development React.
  *
- * `--hook <file>` checks another copy of the hook instead: a mutant, to prove a check has teeth.
+ * `--hook <file>` checks another copy of the hook instead, e.g. a mutant, to prove a check has teeth.
  */
 
 const hookArg = process.argv.indexOf("--hook");
@@ -194,8 +192,8 @@ if (!process.argv.includes("--worker")) {
   const exposure = (settings) => [settings.iso, settings.shutterNs, settings.ev];
 
   {
-    // A failed restore. FIRST, and the next block second: the real apply.ts remembers the
-    // capabilities once it has them, so these are the only mounts that can be refused them.
+    // A failed restore. This block and the next run first: apply.ts caches the capabilities once
+    // it has them, so only these mounts can be refused them.
     fresh();
     native.capabilityRefusals = Infinity;
     seed(null, { readout: true, display: "grid" });
@@ -485,7 +483,7 @@ if (!process.argv.includes("--worker")) {
 
   {
     // A control moved while the cold start waits for the view takes the revision, and the waiting
-    // with it. It used to end the cold start's wait and have none of its own.
+    // with it.
     fresh();
     seed({ ...AUTOMATIC, whiteBalance: "shade" }, { readout: true, display: "plain" });
     native.refusals = [NO_VIEW, NO_VIEW, NO_VIEW];

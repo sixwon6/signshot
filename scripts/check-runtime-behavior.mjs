@@ -275,7 +275,7 @@ if (!process.argv.includes("--worker")) {
     imageHash: "44c81f3e00c67d4a144f4af71271896e435c706d9f506961421319bd301fa876",
   };
   const legacyImage = "https://arweave.net/OpjuPPyPMVacebbDOwA1reqQ_5vNO2oTSDjWnEnNukQ";
-  // Reproduce the published format that the newer three-field-only parser rejected.
+  // A document in the legacy `erashot-core/1` format, as published on the legacy deployment.
   const legacyDocument = {
     name: "Airpod", image: legacyImage,
     description: "An Era Shot photograph published by a wallet. Ownership does not transfer copyright.",
@@ -367,7 +367,7 @@ if (!process.argv.includes("--worker")) {
       const { method, params } = JSON.parse(options.body);
       assert.equal(method, "getMinimumBalanceForRentExemption");
       rentQueries.push(params[0]);
-      // A changed rent schedule must be read from RPC rather than the old documented formula.
+      // Rent comes from the RPC, never from a hard-coded formula.
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: (params[0] + 128) * 5080 }));
     };
     const budget = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 438_912);
@@ -391,8 +391,8 @@ if (!process.argv.includes("--worker")) {
     settingsLeavingAuto, withBrightnessCarried, parseCaptureChrome, chromeHolding, DEFAULT_CAPTURE_CHROME,
     turnDial, holdsExposure, rememberedMode, rememberedFor } =
     await import("../src/capture/mode.ts");
-  // Moving either exposure dial makes Camera2 hold BOTH values; restoring only the requested
-  // dial made the companion read Auto and change unexpectedly after reopening the camera.
+  // Camera2 holds ISO and shutter together, so both are stored; restoring only one would let the
+  // other read Auto and drift when the camera reopens.
   const manualCapture = { ...DEFAULT_CAPTURE_SETTINGS, manualExposure: true,
     iso: 320, shutterNs: 8_000_000, whiteBalance: "daylight", focus: 1.5 };
   const heldCapture = settingsFromEffective(manualCapture);
@@ -441,8 +441,8 @@ if (!process.argv.includes("--worker")) {
   assert.equal(manualSettings(unheld, null, plainCaps), null);
   assert.equal(manualSettings(unheld, { ...reading, iso: null }, plainCaps), null);
   assert.equal(manualSettings(heldCapture, null, plainCaps), heldCapture, "an exposure already held is kept, never re-metered");
-  // Seen on the Seeker with the lens covered: the meter read ISO 20000 over a manual range ending
-  // at 11470, and M held 11470 at the same shutter, most of a stop darker. The shutter takes it up.
+  // The Seeker's meter can read past its manual ISO range (20000 against a maximum of 11470): M
+  // clamps ISO and lengthens the shutter so the exposure stays the one metered.
   const seekerCaps = { ...plainCaps, iso: { min: 100, max: 11470 }, shutterNs: { min: 100_000, max: 16_000_000_000 } };
   const inTheDark = manualSettings(unheld, { ...reading, iso: 20000, shutterNs: 100_000_000 }, seekerCaps);
   assert.equal(inTheDark.iso, 11470);
@@ -471,7 +471,7 @@ if (!process.argv.includes("--worker")) {
   assert.equal(backToProgram.aside, null);
   assert.equal(withBrightnessCarried(heldCapture, DEFAULT_CAPTURE_SETTINGS, null).settings.ev, 0);
   assert.equal(withBrightnessCarried(plusOne, { ...plusOne, ev: 6 }, null).settings.ev, 6);
-  // The stored chrome: the record from before DISP, garbage, and a held value it would hide.
+  // The stored chrome: the older `histogram` record, garbage, and a held value it would hide.
   assert.deepEqual(parseCaptureChrome('{"v":1,"histogram":true}'), { readout: false, display: "histogram" });
   assert.deepEqual(parseCaptureChrome('{"v":1,"readout":true,"display":"grid"}'), { readout: true, display: "grid" });
   assert.deepEqual(parseCaptureChrome('{"v":1,"readout":"yes","display":"zebra"}'), DEFAULT_CAPTURE_CHROME);

@@ -17,6 +17,7 @@ import {
   address,
   appendTransactionMessageInstructions,
   compileTransaction,
+  createNoopSigner,
   createTransactionMessage,
   getAddressDecoder,
   getAddressEncoder,
@@ -25,6 +26,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   type Instruction,
   type KeyPairSigner,
+  type TransactionSigner,
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 import {
@@ -39,7 +41,10 @@ import { programFeatures } from "../deployments";
 import { assertProgramImage } from "../programImage";
 import {
   BUFFER_HEADER,
+  PROGRAM_ACCOUNT_BYTES,
   PROGRAM_DATA_HEADER,
+  deployInstructions,
+  operationId,
   programDataAddress,
   retryRateLimited,
   sendJournalled,
@@ -187,6 +192,18 @@ function assertImage(state: DeployState, read: { bytes: number; sha256: string }
     throw new Error(`ProgramData space is 45 + ${read.bytes}, not 45 + ${p.bytes}`);
   if (read.sha256 !== p.sha256)
     throw new Error(`The ProgramData tail hashes to ${read.sha256}, not the prepared ${p.sha256}`);
+}
+
+/**
+ * The signature of `instructions` when they landed, from the journal entry saved before they were
+ * sent: a re-run after a lost response knows the transaction happened but not its signature.
+ */
+async function landed(d: Deps, state: DeployState, instructions: Instruction[]): Promise<string | undefined> {
+  const entry = state.journal[operationId(state.deployer, instructions)];
+  if (!entry?.signature) return undefined;
+  if (!entry.confirmed && (await checkAttempt(d.endpoint!, entry)) !== "confirmed") return undefined;
+  entry.confirmed = true;
+  return entry.signature;
 }
 
 function sender(d: Deps, state: DeployState, payer: KeyPairSigner): Sender {
@@ -378,6 +395,10 @@ export async function deploy(d: Deps) {
     return;
   }
   const { programData, slot } = await verifyDeployed(d.endpoint!, state.program, binary, state.deployer);
+  if (!progress.deploymentSignature && frozen[PROGRAM_ACCOUNT_BYTES] !== undefined)
+    progress.deploymentSignature = await landed(d, state, deployInstructions(budget(COMPUTE_UNITS.deploy),
+      createNoopSigner(address(state.deployer)), createNoopSigner(address(state.program)), state.buffer,
+      programData, frozen[PROGRAM_ACCOUNT_BYTES], p.bytes));
   Object.assign(progress, { deployed: true, programData, slot: String(slot) });
   save();
   d.log(`DEPLOYED AND BYTE-VERIFIED ${state.program} (ProgramData ${programData}, slot ${slot}).\n` +
@@ -459,7 +480,7 @@ export async function vault(d: Deps, multisig: string) {
  * the loader's own id, which would leave the program with no usable authority, so the three
  * accounts are checked before anything is signed.
  */
-export function setAuthorityInstruction(programData: string, current: KeyPairSigner, to: string): Instruction {
+export function setAuthorityInstruction(programData: string, current: TransactionSigner, to: string): Instruction {
   const ix = getSetAuthorityInstruction({
     bufferOrProgramDataAccount: address(programData),
     currentAuthority: current,
@@ -515,20 +536,22 @@ export async function authority(d: Deps, to: string, wallet?: string) {
     throw new Error("The vault no longer derives from the recorded multisig");
   const read = await readProgram(d, state);
   assertImage(state, read);
+  const transfer = (current: TransactionSigner) =>
+    [...budget(COMPUTE_UNITS.authority), setAuthorityInstruction(read.programData, current, to)];
   if (read.authority === to) {
-    state.authority = { ...state.authority, to, kind, confirmed: true, at: state.authority?.at ?? d.now().toISOString() };
+    const signature = state.authority?.signature ?? await landed(d, state, transfer(createNoopSigner(address(state.deployer))));
+    state.authority = { ...state.authority, to, kind, signature, confirmed: true, at: state.authority?.at ?? d.now().toISOString() };
     saveState(d.root, state);
-    d.log(`The upgrade authority is already ${to}. Next: ${run(d, "verify")}`);
+    d.log(`The upgrade authority is already ${to}${signature ? ` (${signature})` : ""}. Next: ${run(d, "verify")}`);
     return;
   }
   if (read.authority !== state.deployer)
     throw new Error(`The upgrade authority is ${read.authority ?? "none"}, neither the deployer nor ${to}`);
   const keys = await loadKeys(d.root, state);
-  const ix = setAuthorityInstruction(read.programData, keys.deployer, to);
   state.authority = { to, kind, at: d.now().toISOString() };
   saveState(d.root, state);
   const signature = await retryRateLimited(() =>
-    sendJournalled(sender(d, state, keys.deployer), [...budget(COMPUTE_UNITS.authority), ix]));
+    sendJournalled(sender(d, state, keys.deployer), transfer(keys.deployer)));
   const after = await readProgram(d, state);
   if (after.authority !== to) throw new Error(`The upgrade authority reads ${after.authority} after ${signature}`);
   Object.assign(state.authority, { signature, confirmed: true });
@@ -568,29 +591,46 @@ async function feeFor(d: Deps, payer: string, instructions: Instruction[]): Prom
   return value!;
 }
 
-/** Sends everything the deployer holds, less the fee, to `to`; the deployer ends at exactly 0. */
+/**
+ * Sends everything the deployer holds, less the fee, to `to`; the deployer ends at exactly 0. Once
+ * a program exists that is after the authority transfer; before, it ends an abandoned upload, whose
+ * buffer `close-buffer` has returned.
+ */
 export async function refund(d: Deps, to: string) {
   const state = need(d);
-  if (!state.authority?.confirmed) throw new Error("Transfer the upgrade authority first: the deployer pays its fee");
+  const abandoned = !state.authority?.confirmed;
+  if (abandoned && state.deploy?.deployed)
+    throw new Error("Transfer the upgrade authority first: the deployer pays its fee");
   address(to);
   if ([state.deployer, state.program, state.buffer, state.deploy?.programData].includes(to))
     throw new Error(`${to} is one of this deploy's own accounts`);
   if (state.refund && !state.refund.confirmed && state.refund.to !== to)
     throw new Error(`A refund to ${state.refund.to} was started; finish it with --to ${state.refund.to}`);
   await guard(d);
-  const read = await readProgram(d, state);
-  if (read.authority !== state.authority.to) throw new Error(`The upgrade authority reads ${read.authority}, not ${state.authority.to}`);
+  if (abandoned) {
+    if (await account(d, state.program)) throw new Error("The program is deployed: transfer the upgrade authority first");
+    for (const attempt of Object.values(state.journal))
+      if (!attempt.confirmed && (await checkAttempt(d.endpoint!, attempt)) === "pending")
+        throw new Error(`${attempt.signature} may still land; run refund again in a minute`);
+  } else {
+    const read = await readProgram(d, state);
+    if (read.authority !== state.authority!.to)
+      throw new Error(`The upgrade authority reads ${read.authority}, not ${state.authority!.to}`);
+  }
   // This deploy makes one buffer, at the recorded address; getProgramAccounts is a second look.
   if (await account(d, state.buffer)) throw new Error(`The buffer ${state.buffer} still exists; run ${run(d, "close-buffer")}`);
   const others = await buffersOf(d, state.deployer);
   if (others === null) d.log("This endpoint refused getProgramAccounts; the recorded buffer, the only one this deploy made, is gone.");
   else if (others.length) throw new Error(`Buffers with the deployer as authority remain: ${others.join(", ")}`);
+  const next = abandoned
+    ? `Nothing is deployed; to deploy after all, fund the deployer and run ${run(d, "deploy")}`
+    : `Next: ${run(d, "record --reviewed-by <names>")}`;
   const held = await balance(d, state.deployer);
   if (held === 0) {
     if (state.refund) Object.assign(state.refund, { confirmed: true });
     else state.refund = { to, lamports: 0, confirmed: true, at: d.now().toISOString() };
     saveState(d.root, state);
-    d.log(`The deployer holds nothing. Next: ${run(d, "record --reviewed-by <names>")}`);
+    d.log(`The deployer holds nothing. ${next}`);
     return;
   }
   const keys = await loadKeys(d.root, state);
@@ -611,8 +651,7 @@ export async function refund(d: Deps, to: string) {
   if (left !== 0) throw new Error(`The deployer still holds ${left} lamports after ${signature}`);
   Object.assign(state.refund, { signature, confirmed: true });
   saveState(d.root, state);
-  d.log(`REFUNDED ${lamportsText(lamports)} to ${to} (${signature}); the deployer is empty.\n` +
-    `Next: ${run(d, "record --reviewed-by <names>")}`);
+  d.log(`REFUNDED ${lamportsText(lamports)} to ${to} (${signature}); the deployer is empty.\n${next}`);
 }
 
 /**

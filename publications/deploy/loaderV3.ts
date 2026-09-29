@@ -30,6 +30,7 @@ import {
   type Address,
   type Instruction,
   type KeyPairSigner,
+  type TransactionSigner,
 } from "@solana/kit";
 import { getCreateAccountInstruction } from "@solana-program/system";
 import {
@@ -338,29 +339,46 @@ export async function uploadAndDeploy(u: Upload): Promise<"deployed" | "paused">
   );
   if (u.deadline !== undefined && Date.now() > u.deadline) return "paused";
   progress.deploymentSignature = await send(
-    [
-      ...u.prefix.deploy,
-      getCreateAccountInstruction({
-        payer: sender.payer,
-        newAccount: program,
-        lamports: await u.rent(PROGRAM_ACCOUNT_BYTES),
-        space: PROGRAM_ACCOUNT_BYTES,
-        programAddress: LOADER,
-      }),
-      getDeployWithMaxDataLenInstruction({
-        payerAccount: sender.payer,
-        programDataAccount: programData,
-        programAccount: program.address,
-        bufferAccount: buffer.address,
-        authority: sender.payer,
-        maxDataLen: binary.length,
-      }),
-    ],
+    deployInstructions(u.prefix.deploy, sender.payer, program, buffer.address, programData,
+      await u.rent(PROGRAM_ACCOUNT_BYTES), binary.length),
     [sender.payer, program],
   );
   u.saveProgress();
   await sleep(1500);
   return "deployed";
+}
+
+/**
+ * The deploy transaction: the 36-byte program account, then `DeployWithMaxDataLen` at exactly
+ * `maxDataLen`, the payer as upgrade authority. Deterministic, so a caller can find its journal entry.
+ */
+export function deployInstructions(
+  prefix: Instruction[],
+  payer: TransactionSigner,
+  program: TransactionSigner,
+  buffer: string,
+  programData: Address,
+  lamports: number,
+  maxDataLen: number,
+): Instruction[] {
+  return [
+    ...prefix,
+    getCreateAccountInstruction({
+      payer,
+      newAccount: program,
+      lamports,
+      space: PROGRAM_ACCOUNT_BYTES,
+      programAddress: LOADER,
+    }),
+    getDeployWithMaxDataLenInstruction({
+      payerAccount: payer,
+      programDataAccount: programData,
+      programAccount: program.address,
+      bufferAccount: buffer as Address,
+      authority: payer,
+      maxDataLen,
+    }),
+  ];
 }
 
 /**

@@ -300,6 +300,7 @@ function decodeMessage(bytes: ArrayLike<number>) {
 class Chain {
   accounts = new Map<string, Account>();
   landed = new Set<string>();
+  sent: { signature: string; names: string[] }[] = [];
   fees = new Map<string, number>();
   applied: string[] = [];
   lose: (names: string[]) => boolean = () => false;
@@ -392,6 +393,7 @@ class Chain {
     if (commit) {
       this.accounts = work;
       this.landed.add(signature);
+      this.sent.push({ signature, names });
       this.fees.set(keys[0], (this.fees.get(keys[0]) ?? 0) + fee);
       this.applied.push(...names);
     }
@@ -468,8 +470,14 @@ async function chainTests() {
   chain.lose = (names) => names.includes("Write") && ++writes === 3;
   ok("a response lost on the third write stops deploy after that write landed",
     /socket hang up/.test(await rejection(() => steps.deploy(d))) && chain.applied.filter((n) => n === "Write").length === 3);
+  chain.lose = (names) => names.includes("DeployWithMaxDataLen");
+  ok("a lost response on the deploy itself stops deploy after it landed",
+    /socket hang up/.test(await rejection(() => steps.deploy(d))) && chain.applied.includes("DeployWithMaxDataLen"));
   chain.lose = () => false;
   await steps.deploy(d);
+  const signatureOf = (name: string) => chain.sent.find((s) => s.names.includes(name))?.signature;
+  ok("deploy run again verifies the program and takes the lost deploy's signature from its journal",
+    readState(d.root)!.deploy?.deploymentSignature === signatureOf("DeployWithMaxDataLen") && Boolean(signatureOf("DeployWithMaxDataLen")));
   const elf = readFileSync(start.prepared!.elf);
   ok("deploy run again skips what the buffer already holds: every chunk written exactly once",
     chain.applied.filter((n) => n === "Write").length === Math.ceil(elf.length / UPLOAD_CHUNK_BYTES) &&
@@ -493,8 +501,9 @@ async function chainTests() {
     /socket hang up/.test(await rejection(() => steps.authority(d, vault))) && chain.applied.includes("SetAuthority"));
   chain.lose = () => false;
   await steps.authority(d, vault);
-  ok("authority run again finds the vault already in place and sends nothing more",
-    readState(d.root)!.authority?.confirmed === true && chain.applied.filter((n) => n === "SetAuthority").length === 1);
+  ok("authority run again finds the vault in place, sends nothing more, and takes the signature from its journal",
+    readState(d.root)!.authority?.confirmed === true && chain.applied.filter((n) => n === "SetAuthority").length === 1 &&
+    readState(d.root)!.authority?.signature === signatureOf("SetAuthority"));
   ok("forget before the refund is still refused", /refund is not confirmed/.test(await rejection(() => steps.forget(d))));
   await steps.verify(d);
   ok("verify after the transfer expects the vault", readState(d.root)!.verified?.authority === vault);
@@ -519,6 +528,8 @@ async function chainTests() {
   ok("the record names the vault, the multisig policy, the ELF digest and the ProgramData slot",
     entry.authority === vault && entry.policy === "multisig" && entry.elfSha256 === sha256(elf) &&
     entry.deployedSlot === 451_600_000 && entry.reviewedBy.join() === "Owner,Lead" && entry.notes.includes(multisig));
+  ok("the record carries the deploy signature and names the SetAuthority signature, both landed",
+    entry.signature === signatureOf("DeployWithMaxDataLen") && entry.notes.includes(signatureOf("SetAuthority")!));
   ok("record prints the PROGRAM_IMAGES pin read from ProgramData",
     out.join("\n").includes(`sha256: "${sha256(elf)}"`) && out.join("\n").includes(`upgradeAuthority: "${vault}"`));
   ok("a second record the same day is refused", /already exists/.test(await rejection(() => steps.record(d, ["Owner"]))));
@@ -546,6 +557,9 @@ async function chainTests() {
   await steps.deploy({ ...dev, deadline: Date.now() - 1 });
   ok("past its deadline, deploy stops between sends with the buffer made and progress saved",
     devChain.accounts.has(rehearsal.buffer) && !devChain.applied.includes("Write") && /Stopped between sends/.test(out.join("\n")));
+  const funder = (await generateKeyPairSigner()).address;
+  ok("refund with the buffer still there is refused, naming close-buffer",
+    /still exists; run npm run mainnet -- close-buffer --cluster devnet/.test(await rejection(() => steps.refund(dev, funder))));
   const beforeClose = devChain.accounts.get(rehearsal.deployer)!.lamports;
   const bufferLamports = devChain.accounts.get(rehearsal.buffer)!.lamports;
   await steps.closeBuffer(dev);
@@ -553,6 +567,12 @@ async function chainTests() {
     !devChain.accounts.has(rehearsal.buffer) &&
     devChain.accounts.get(rehearsal.deployer)!.lamports === beforeClose + bufferLamports - 5000 - Math.ceil(COMPUTE_UNITS.close * 50_000 / 1e6) &&
     Object.keys(readState(dev.root)!.journal).length === 0 && !readState(dev.root)!.deploy?.initialized);
+  const abandoned = devChain.accounts.get(rehearsal.deployer)!.lamports;
+  await steps.refund(dev, funder);
+  ok("an abandoned upload refunds without an authority transfer: the deployer ends at 0",
+    !devChain.accounts.has(rehearsal.deployer) &&
+    devChain.accounts.get(funder)!.lamports === abandoned - 5000 - Math.ceil(COMPUTE_UNITS.refund * 50_000 / 1e6));
+  devChain.accounts.set(rehearsal.deployer, { lamports: required + 100_000, owner: SYSTEM, executable: false, data: Buffer.alloc(0) });
   await steps.deploy(dev);
   ok("deploy after close-buffer makes a new buffer and finishes", readState(dev.root)!.deploy?.deployed === true);
   await steps.verify(dev);

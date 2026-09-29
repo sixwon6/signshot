@@ -114,6 +114,18 @@ if (!process.argv.includes("--worker")) {
       "a declined send restores the attempt before it, with its still-live messages");
     assert.match(transferFlow, /return holding\(c, async \(\) => \{[\s\S]*?forgetIfRefused\(wallet\.signAndSendTransactions\(/,
       "every send signs inside its copy's lock");
+    // The WALLET screen sends through the same sheet and module: Send only for a copy the
+    // connected wallet was read holding, and no signing of its own.
+    const chainScreen = readFileSync(new URL("../src/screens/ChainScreen.tsx", import.meta.url), "utf8");
+    const sendSheet = readFileSync(new URL("../src/prints/SendSheet.tsx", import.meta.url), "utf8");
+    assert.match(chainScreen, /const sendable = activePhoto \? heldCopy\(activePhoto, wallet\) : null;/);
+    assert.equal(chainScreen.split('testID="wallet-send"').length - 1, 1, "one Send chip");
+    assert.match(chainScreen, /\{sendable && <Chip size="small" label=\{actions\.send\}[^>]*testID="wallet-send"/,
+      "the Send chip stands behind heldCopy");
+    assert.match(chainScreen, /<SendSheet target=\{sending\.target\}/);
+    assert.match(sendSheet, /await sendTransfer\(target, session, quote,/);
+    for (const [name, text] of [["ChainScreen", chainScreen], ["SendSheet", sendSheet]])
+      assert.ok(!text.includes("signAndSendTransactions"), `${name} opens no signing of its own`);
   }
   {
     // The estimate is the payer's simulated balance delta, so a buy's already holds its price: the

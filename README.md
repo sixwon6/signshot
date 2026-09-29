@@ -243,7 +243,7 @@ app on a phone that has it (an Android App Link) and on the web page everywhere 
 
 `publications/deployments.ts` is the reviewed allowlist: every trusted program is pinned to its
 ELF digest and upgrade authority, and `EXPO_PUBLIC_EDITIONS_*` can only select an address listed
-there. It lists five devnet acceptance deployments; `programFeatures` tells their instruction
+there. It lists every reviewed devnet deployment; `programFeatures` tells their instruction
 layouts apart by address, so editions on older deployments stay readable. The newest,
 `4Rk11vaKzxqJhX1kkScRuJ4PKuPnjik6LHwus4J67ipM`, carries the Seeker-only publish rule; a Seeker run
 of publishing, pricing, buying, free collection and sending against it is recorded in
@@ -271,8 +271,9 @@ same way once deployed (see "Deploy the program").
   URL carrying a query string or credentials, an RPC on another network, and any difference from
   Google's live attestation roots. `npm run release:apk` deletes an APK whose bundle does not match
   what the gate recorded or whose signer is not the upload key.
-- **Collect page.** A strict CSP with Trusted Types and no inline script or style; the RPC
-  endpoint and trusted programs come from the build, never from the link. Its mainnet RPC proxy
+- **Collect page.** A strict CSP with Trusted Types, no inline script, and inline style only by
+  hash for the wallet adapter's dialogs; the RPC endpoint and trusted programs come from the
+  build, never from the link. Its mainnet RPC proxy
   (`site/functions/api/solana.ts`) allows only the read-only methods the page calls, holds their
   params to the exact shapes it sends, bounds request and response sizes, refuses cross-origin and
   `Origin`-less callers, and sits behind a Cloudflare rate-limit rule.
@@ -317,8 +318,8 @@ npx expo start --dev-client
 
 ## Deploy the program
 
-The pinned toolchain lives outside the repository; `programs/editions/README.md` says how to fetch
-it.
+The pinned toolchain lives outside the repository; `build-native-windows.ps1 -Bootstrap` fetches
+it (`programs/editions/README.md`, "Build").
 
 - **Devnet** (`programs/editions/DEVNET.md`): `npm run devnet` opens a session whose `prepare`
   step builds the program with the pinned toolchain in an isolated tree and records the ELF

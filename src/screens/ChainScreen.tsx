@@ -31,6 +31,8 @@ import { isUserCancellation } from "../solana/walletErrors";
 import type { WalletSession } from "../solana/walletSession";
 import { CollectSheet } from "../prints/CollectSheet";
 import { OfferSheet } from "../prints/OfferSheet";
+import { SendSheet } from "../prints/SendSheet";
+import { heldCopy, type TransferTarget } from "../prints/transfer";
 import { formatSol } from "../prints/price";
 import { parseCollectLink, type CollectTarget } from "../prints/collect";
 import { scanQr, scanQrAvailable } from "../prints/collectQr";
@@ -154,6 +156,8 @@ export function ChainScreen() {
   const [collectTarget, setCollectTarget] = useState<CollectTarget | null>(null);
   /** Set means the price sheet is open on this edition. The creator's own control. */
   const [priceEdition, setPriceEdition] = useState<LibraryPhoto["photo"]["edition"] | null>(null);
+  /** Set means the Send sheet is open on this copy; `sent` once a send from it confirmed. */
+  const [sending, setSending] = useState<{ item: LibraryPhoto; target: TransferTarget; sent?: boolean } | null>(null);
   const key = `${wallet ?? ""}:${cluster}:${mode}`;
   const current = state.key === key ? state : undefined;
   const loading = Boolean(wallet && (!current || current.loading));
@@ -164,10 +168,13 @@ export function ChainScreen() {
     return a && !veilOf(item) ? [[a.group, albumLabel(a)] as const] : [];
   })).entries()];
   const filtered = items.filter(item => !album || item.photo.publication.album?.group === album);
-  const activePhoto = focused && current ? items.find(item => item.id === selected) : undefined;
+  // The copy being sent stays on screen while its sheet is open, even once a re-read drops it.
+  const activePhoto = focused && current
+    ? items.find(item => item.id === selected) ?? (sending?.item.id === selected ? sending.item : undefined)
+    : undefined;
 
   useEffect(() => {
-    setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSaid(null);
+    setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null);
     // A wallet that changed answers the question the word was reporting on.
     setConnectFailed(false);
   }, [key]);
@@ -296,7 +303,7 @@ export function ChainScreen() {
   const retry = () => setRefresh(n => n + 1);
   const close = () => { if (immersive) setImmersive(false); else { setSelected(null); setPriceEdition(null); setSaid(null); } };
   const toCamera = () => navigation.navigate("Camera");
-  const open = (item: LibraryPhoto) => { setSelected(item.id); setImmersive(false); setPriceEdition(null); setSaid(null); };
+  const open = (item: LibraryPhoto) => { setSelected(item.id); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null); };
   const copy = async (id: string, value: string) => {
     try { await Clipboard.setStringAsync(value); say(id, collection.copied); }
     catch { say(id, collection.copyFailed); }
@@ -310,6 +317,8 @@ export function ChainScreen() {
   const e = activePhoto?.photo.edition;
   const activeVeil = activePhoto ? veilOf(activePhoto) : null;
   const activeBlocked = !!e && moderation.isBlocked(e.creator);
+  /** Only a copy this wallet was read holding can be sent from here. */
+  const sendable = activePhoto ? heldCopy(activePhoto, wallet) : null;
   const activeIndex = activePhoto ? filtered.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
   /** The wallet's value word: the address, or where the connection got to. */
@@ -450,6 +459,8 @@ export function ChainScreen() {
             <View style={[s.bottomBar, { paddingBottom: insets.bottom + space.sm }]}>
               <View style={s.chipRow}>
                 {!activeVeil && <Chip size="small" label={labelOf("share", actions.share)} accessibilityLabel={collection.shareMoment} onPress={share} hitSlop={CHIP_SLOP} testID="wallet-share" />}
+                {sendable && <Chip size="small" label={actions.send} hitSlop={CHIP_SLOP} testID="wallet-send"
+                  onPress={() => setSending({ item: activePhoto, target: sendable })} />}
                 <Chip size="small" label={labelOf("link", collection.copyLink)} accessibilityLabel={collection.copyMomentLink} hitSlop={CHIP_SLOP} testID="wallet-copy-link"
                   onPress={() => void copy("link", collectUrl(e.edition, cluster))} />
                 {/* Somebody else's photograph: report it, or stop this phone showing its publisher. */}
@@ -462,6 +473,11 @@ export function ChainScreen() {
               </View>
             </View>
             {priceEdition && <OfferSheet edition={priceEdition} session={session} onClose={() => setPriceEdition(null)} onSaved={() => setRefresh(n => n + 1)} />}
+            {/* A confirmed send re-reads the wallet at once; closing then goes back to the grid,
+                which no longer holds the copy. */}
+            {sending && <SendSheet target={sending.target} image={activeVeil ? undefined : sending.item.imageUri} session={session}
+              onSent={() => { setSending(s => s && { ...s, sent: true }); setRefresh(n => n + 1); }}
+              onClose={() => { if (sending.sent) setSelected(null); setSending(null); }} />}
           </Screen>)}
     </Modal>
     {/* The Collect entry: one field and three chips. Paste or scan a link; everything else about

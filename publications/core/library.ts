@@ -21,6 +21,8 @@ export type LibraryPhoto = {
   photo: Awaited<ReturnType<typeof loadTrustedEdition>>;
   imageUri: string;
   number?: number;
+  /** The wallet the scan found holding this copy. Collected copies only. */
+  owner?: string;
 };
 export type LibraryResult = {
   items: LibraryPhoto[];
@@ -179,7 +181,7 @@ export async function loadLibrary(
         if (state.address !== row.pubkey) throw new Error("Noncanonical print");
       } else if (photo.edition.creator !== wallet) throw new Error("Wrong publisher");
       // Display exactly the bytes whose fingerprint passed verification, without refetching.
-      result.items.push({ id: row.pubkey, photo, number,
+      result.items.push({ id: row.pubkey, photo, number, ...(mode === "collected" ? { owner: wallet } : {}),
         imageUri: `data:image/jpeg;base64,${getBase64Decoder().decode(photo.imageBytes)}` });
     } catch {
       check();

@@ -278,12 +278,12 @@ ok("the terms carry the content rules, reporting, hiding, blocking, permanence a
 ok("the terms page names the version the app asks agreement to, at the URL it links",
   termsPage.includes(`Version ${TERMS_VERSION} ·`) && TERMS_URL === "https://erashot.app/terms/" && MODERATION_URL === "https://erashot.app/moderation.json");
 const privacyPage = readFileSync(resolve(publicDir, "privacy.html"), "utf8").replace(/\s+/g, " ");
-ok("the privacy page says what a report sends and that blocks and the agreement stay on the device",
-  /<td>Report a publication<\/td>/.test(privacyPage) && /names the edition's address and carries its collect link/.test(privacyPage)
-    && /The publishers you block and your agreement to the <a href="\/terms\/">terms<\/a>/.test(privacyPage) && /Neither is ever sent to Signshot/.test(privacyPage)
+ok("the privacy page says what a report sends and that blocks and the agreement stay on the phone",
+  /Report opens an email to us with the edition's address/.test(privacyPage)
+    && /blocks and agreement to the <a href="\/terms\/">terms<\/a> stay on your phone/.test(privacyPage)
     && /moderation list/.test(privacyPage));
-ok("the privacy page says one phone's publications can be linked across wallets, and a sealed token links the wallet to its Seeker",
-  privacyPage.includes("Photographs published from the same phone carry the same device certificate chain for a few weeks, so they can be linked to one another even across wallets, and a sealed Genesis Token links the publishing wallet to that Seeker."));
+ok("the privacy page says one phone's publications can be linked across wallets",
+  privacyPage.includes("Photographs published from the same phone can be linked to one another, even across wallets."));
 
 // --- The app's re-quote rule --------------------------------------------------------------------------
 /**

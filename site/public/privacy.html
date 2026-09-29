@@ -15,305 +15,48 @@
       >
     </header>
     <main class="document">
-      <h1>Privacy & publication</h1>
-      <p class="date">
-        Updated 29 September 2026
+      <h1>Privacy</h1>
+      <p class="date">Updated 29 September 2026</p>
+
+      <h2>What we collect</h2>
+      <p>
+        Nothing. There is no account, no advertising, no analytics and no crash
+        reporting. Your photographs, drafts, blocks and agreement to the
+        <a href="/terms/">terms</a> stay on your phone.
+      </p>
+
+      <h2>Publishing</h2>
+      <p>
+        Publishing is optional. A published photograph is public and permanent on
+        Solana and Arweave, and nobody can delete it. It includes a smaller copy
+        of the image, its title and text, the capture time, your wallet address,
+        the phone's model, Android version and boot state from its hardware
+        attestation (never a serial number or IMEI), and your Seeker Genesis
+        Token's address if your wallet holds one.
+        Photographs published from the same phone can be linked to one another,
+        even across wallets.
       </p>
       <p>
-        Signshot is a camera app that can publish a photograph with a Solana
-        wallet and create a photo NFT. Taking a photo does not publish it.
-        Publication is optional, public and intended to be permanent.
+        Collecting, buying, pricing and sending are Solana transactions. The
+        wallet addresses and amounts are public.
       </p>
+
+      <h2>Services</h2>
       <p>
-        The app has no Signshot account, advertising SDK, analytics SDK or
-        automatic crash-reporting service. It connects to your wallet, Solana
-        services and Arweave storage as described below. The website host and
-        those service providers receive normal connection information, including
-        your IP address, and may keep their own operational logs.
+        The app connects to your wallet, a Solana RPC provider, ar.io Turbo for
+        Arweave uploads, Google's attestation revocation list, and erashot.app
+        for the moderation list. Each receives your IP address. Report opens an
+        email to us with the edition's address; we receive what you send.
       </p>
-      <h2>What stays on this phone</h2>
-      <ul>
-        <li>
-          The full-size clean and styled photographs, their local capture
-          records, and any restyled versions.
-        </li>
-        <li>
-          Your selected looks, share-name preference, publication drafts and
-          transaction-recovery information.
-        </li>
-        <li>
-          Your wallet authorization cache in app storage and a separate
-          upload-signing key in secure storage. The upload key is not your
-          wallet's private key. Signshot does not receive your wallet's private
-          key or recovery phrase.
-        </li>
-        <li>
-          The publishers you block and your agreement to the
-          <a href="/terms/">terms</a>. Neither is ever sent to Signshot.
-        </li>
-      </ul>
-      <p>
-        Save photo copies a file to your gallery. Share photo gives a copy to
-        the app you choose. Neither action publishes a new blockchain record. A
-        name stamp, when enabled, changes the shared presentation copy; it does
-        not replace the photograph named in an existing record.
-      </p>
-      <p>
-        The app requests camera access and no storage permission: saving to the
-        gallery goes through Android's media store. It does not request location or
-        contacts access or browse your photo library. Android cloud backup is
-        disabled for the app. Device-to-device transfer behavior can depend on
-        the Android manufacturer.
-      </p>
-      <h2>When information leaves the phone</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Action</th>
-            <th>Information and destination</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Connect a wallet</td>
-            <td>
-              Mobile Wallet Adapter sends an authorization request to the wallet
-              app. Signshot receives the public account address and an
-              authorization token.
-            </td>
-          </tr>
-          <tr>
-            <td>Read wallet or publication state</td>
-            <td>
-              The wallet address, account addresses and transaction references
-              are sent to the configured Solana RPC provider. This includes
-              checking pending transactions. Genesis Token and .skr name
-              lookups send the wallet address to Solana mainnet, because both
-              exist only there: a build that publishes on devnet asks
-              <code>api.mainnet.solana.com</code> for them. Reads can
-              resume when the app returns to the foreground.
-            </td>
-          </tr>
-          <tr>
-            <td>Review publication costs</td>
-            <td>
-              Solana receives account reads and a transaction simulation. The
-              storage service receives the upload-key address and deterministic
-              item identifiers to check capacity, and on mainnet the publication's
-              size to quote its storage price. The photograph is not publicly
-              uploaded by this step.
-            </td>
-          </tr>
-          <tr>
-            <td>Approve publication</td>
-            <td>
-              Your wallet submits a Solana transaction. It identifies your
-              wallet, the edition, supply, image fingerprint and metadata
-              fingerprint. On mainnet the same transaction pays ar.io Turbo for
-              the storage, credited to the app's upload key. After confirmation,
-              Signshot sends the transaction's signature to Turbo's payment
-              service and uploads the smaller publication image and its metadata
-              to Arweave through ar.io Turbo.
-              If interrupted, the app retains the pending operation for
-              recovery.
-            </td>
-          </tr>
-          <tr>
-            <td>Device attestation</td>
-            <td>
-              When you publish, the phone's secure hardware creates a key for
-              that one publication and Android attests it. The public metadata
-              then permanently carries the certificate chain and a signed
-              summary: the phone's brand and model, that it booted verified
-              software with a locked bootloader, its Android version and patch
-              level, this app's package and signing certificate, the
-              photograph's fingerprints and size, and the capture time. It
-              never includes a serial number, IMEI or MEID. Publications made
-              from one phone within a few weeks can share a certificate, so
-              they can be recognised as coming from the same device. If the
-              hardware does not answer, the photograph publishes without this.
-            </td>
-          </tr>
-          <tr>
-            <td>Seeker Genesis Token</td>
-            <td>
-              When you publish, Signshot asks Solana mainnet whether your
-              wallet holds a Seeker Genesis Token. If it does, the public
-              metadata permanently carries that token's mint address. The
-              address stays the same if the token moves to another of your
-              wallets, so publications from different wallets that name it can
-              be recognised as coming from the same Seeker owner. Anyone
-              viewing the photograph in the app can ask mainnet whether the
-              publishing wallet still holds it. If your
-              wallet holds none, or mainnet does not answer, the photograph
-              publishes without this.
-            </td>
-          </tr>
-          <tr>
-            <td>Send an NFT</td>
-            <td>
-              Your wallet signs a transfer identifying the NFT, sender and
-              recipient. The transfer becomes part of Solana's public history.
-              The original publication attribution remains with the photograph.
-            </td>
-          </tr>
-          <tr>
-            <td>Set or change a price</td>
-            <td>
-              Your wallet signs a transaction that records the price against
-              the edition in a public Solana account. Only the publisher's
-              wallet can set it.
-            </td>
-          </tr>
-          <tr>
-            <td>Collect or buy a copy</td>
-            <td>
-              The wallet you choose supplies its public address and signs the
-              transaction. The public edition and claim accounts identify who
-              collected. When a copy has a price, the payment goes to the
-              publisher's address in that same transaction and is public. The
-              app stores pending-operation information locally so it can
-              recover after an interruption.
-            </td>
-          </tr>
-          <tr>
-            <td>Open the Wallet screen or a collect link</td>
-            <td>
-              The app reads Signshot's moderation list from
-              <code>erashot.app</code>. The request names no wallet and no
-              edition; the host receives normal connection information.
-            </td>
-          </tr>
-          <tr>
-            <td>Report a publication</td>
-            <td>
-              Report opens your email app with a message to
-              <a href="mailto:support@erashot.app">support@erashot.app</a>. It
-              names the edition's address and carries its collect link. Nothing
-              is sent until you send it; then we receive the message, anything
-              you add to it, and your email address.
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <h2>What publication includes</h2>
-      <p>
-        The current print format publishes a compressed image, up to 1600 pixels
-        on its long edge within the upload budget. It does not upload the
-        full-size clean or styled photograph. The public record is the name you
-        give the photograph, the text you put in the Moment field and a link to
-        that image. The Solana transaction carries the edition count, the
-        publisher address and the fingerprints of the image and the record. A
-        publication with device attestation also carries what that row above
-        lists, and one from a wallet that holds a Seeker Genesis Token carries
-        the token's mint address. Photographs published from the same phone
-        carry the same device certificate chain for a few weeks, so they can be
-        linked to one another even across wallets, and a sealed Genesis Token
-        links the publishing wallet to that Seeker. The look, its strength and
-        your edits are not published. The
-        record contains no automatically collected GPS location or device
-        serial number. Text you type can disclose a place or a date. The app
-        does not verify it as capture evidence.
-      </p>
-      <p>
-        The time recorded by the blockchain is publication time. A
-        phone-reported capture time is separate. A wallet signature binds
-        publication to the wallet; it does not independently certify the scene,
-        capture device or photographer's identity.
-      </p>
-      <p>
-        Earlier Memo records remain readable. Those records may include a tiny
-        image in the transaction and camera-result fields in their Arweave
-        metadata, such as exposure, ISO, flash state and a sensor timestamp. New
-        NFT publication does not rewrite these historical records.
-      </p>
-      <p>
-        Creating an album publishes its name and controlling wallet through a
-        separate Solana transaction. Choosing it when publishing a photograph
-        makes that album association public. Each photograph remains its own
-        edition. The app cannot move a published photograph into another album,
-        remove a member or rename an album.
-      </p>
-      <h2>Providers</h2>
-      <ul>
-        <li>
-          <strong>Solana:</strong> the configured RPC service, the wallet's own
-          transaction service and public blockchain network. The app defaults to
-          the public Solana endpoint unless a deployment configures another
-          HTTPS endpoint. Development builds may use a development provider.
-        </li>
-        <li>
-          <strong>Arweave and ar.io Turbo:</strong> uploads at
-          <code>upload.ardrive.io</code>, storage price, payment and allowance at
-          <code>payment.ardrive.io</code>, and reads through
-          <code>turbo-gateway.com</code> and <code>arweave.net</code>. The
-          uploaded files are public and may be served by other Arweave gateways.
-        </li>
-        <li>
-          <strong>Google:</strong> to check a publication's device attestation,
-          the app downloads Google's list of revoked Android attestation
-          certificates from <code>android.googleapis.com</code>. The request
-          names no photograph, wallet or device.
-        </li>
-        <li>
-          <strong>This website:</strong> static pages hosted with Cloudflare
-          Pages. They load nothing from other sites and carry no advertising
-          or analytics trackers; a collect link opened in a browser only
-          offers to open the app. The host may process IP addresses and
-          request logs for delivery and abuse prevention.
-        </li>
-      </ul>
-      <h2>Approval, permanence and recovery</h2>
-      <p>
-        Reviewing a quote does not publish the photo. Cancelling before a wallet
-        transaction is submitted leaves a local draft. Once a transaction has
-        been submitted it may still confirm even if the app is closed. After
-        confirmation, upload recovery completes the publication you approved; it
-        does not ask for another NFT-creation transaction.
-      </p>
-      <p>
-        Once uploaded, the public image and metadata cannot be withdrawn through
-        Signshot. Confirmed blockchain records also cannot be removed through
-        the app. A failed or unavailable gateway does not mean the publication
-        has been deleted. Only publish photographs and details you intend to
-        make public.
-      </p>
-      <h2>Deletion and wallet disconnection</h2>
-      <p>
-        Delete in Photos removes the local capture and associated local files
-        when no unresolved publication needs them. The app prevents deletion
-        when doing so would interrupt a pending transaction or its upload
-        recovery. Removing local files does not remove public records, public
-        images or NFTs held by wallets. Uninstalling the app removes its private
-        files and can interrupt recovery; gallery copies and public data remain.
-      </p>
-      <p>
-        Clearing Signshot's storage from your phone's app settings removes more
-        than photographs: it deletes the app's Arweave upload key and every
-        publication draft. Neither is included in an Android backup or a device
-        transfer, and a publication that is already recorded on Solana but whose
-        image upload has not finished cannot be completed after that &mdash; by
-        this app on this phone or any other. Export the publication bundle from
-        the photograph first if you need to keep it.
-      </p>
-      <p>
-        Disconnect in Settings revokes the current wallet authorization when the
-        wallet can be reached and clears the app's local authorization. You can
-        also revoke Signshot inside your wallet. Disconnecting does not remove
-        public transactions or change token ownership.
-      </p>
-      <h2>Children and contact</h2>
-      <p>
-        Signshot is not directed at children under 13. Contact
-        <a href="mailto:support@erashot.app">support@erashot.app</a> with
-        privacy questions or requests. We can address data under our control; we
-        cannot remove a public blockchain record or withdraw an Arweave upload.
-      </p>
-      <p>
-        Changes to these practices will be described here with an updated date.
-        This page describes the current implementation; service-provider
-        practices are governed by their own policies.
-      </p>
+
+      <h2>Permissions</h2>
+      <p>Camera only. No location, contacts or photo library access.</p>
+
+      <h2>Children</h2>
+      <p>Signshot is not for children under 13.</p>
+
+      <h2>Contact</h2>
+      <p><a href="mailto:support@erashot.app">support@erashot.app</a></p>
     </main>
   </body>
 </html>

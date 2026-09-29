@@ -1,14 +1,9 @@
 # site/ — erashot.app
 
-The public collect page and the static site, built and deployed from THIS repository. The page
-reads editions through the app's own reader (`publications/core/*`), so the web and the phone
-accept exactly the same documents — including the five-key `seedshot-attestation/1` document a
-Seeker publishes — and trust exactly the programs committed in `publications/deployments.ts`.
-
-Until 2026-09-17 the site was deployed by Cloudflare Pages' Git integration from the predecessor
-repository (`sixwon6/seeker-cam`, root `site`). That bundle was built from an older copy of the
-reader and refused attested editions. Nothing is deployed from that repository any more; see
-"Deploying" for the one-time switch.
+The public collect page and the static site at erashot.app. The page reads editions through the
+app's own reader (`publications/core/*`), so the web and the phone accept exactly the same
+documents, including the five-key `seedshot-attestation/1` document a Seeker publishes, and trust
+exactly the programs committed in `publications/deployments.ts`.
 
 ## Layout
 
@@ -25,7 +20,7 @@ reader and refused attested editions. Nothing is deployed from that repository a
 - `public/terms/index.html` — the terms (the EULA) at `/terms/`. Its "Version N" is `TERMS_VERSION`
   in `src/moderation/core.ts`; raise both together when people must agree again, and the app and
   the collect page ask before the next publish or collect.
-- `public/moderation.json` — the owner's moderation list at `/moderation.json`, edited by hand:
+- `public/moderation.json` — the moderation list at `/moderation.json`, edited by hand:
   `{"version":1,"hiddenEditions":[…],"hiddenCreators":[…]}`, edition and publisher addresses the
   app and the collect page show as "Hidden". Any other shape is ignored and everything shows, so
   run `npm test` (it parses the file) before deploying an edit.
@@ -33,8 +28,9 @@ reader and refused attested editions. Nothing is deployed from that repository a
   durable attempt, confirmation, device row, open-in-app, share card), `core.ts` (the adapter over
   the reader: load, receipt check, program check, `collect` vs `buy`), `mwa.ts` (Mobile Wallet
   Adapter's registration and the Trusted Types policy for its dialogs), `summary.ts` (pure
-  wording, also used by the gate), `qr.ts`. Imports go straight to `../../publications/...`; Metro never sees this
-  directory because nothing under `index.js` imports it, and `tsc --noEmit` typechecks it.
+  wording, also used by the gate), `qr.ts`. Imports go straight to `../../publications/...`;
+  Metro never sees this directory because nothing under `index.js` imports it, and `tsc --noEmit`
+  typechecks it.
 - `functions/api/solana.ts` — the read-only Solana JSON-RPC proxy the page uses **on mainnet only**
   (a Pages Function at `/api/solana`; devnet links go straight to `api.devnet.solana.com`). Its
   upstream is the Production-only `SOLANA_RPC_URL` secret (see "Cloudflare state that is not in a
@@ -56,8 +52,7 @@ reader and refused attested editions. Nothing is deployed from that repository a
   applied; `/api/*` answers 503 rather than faking a Solana service.
 - `dist/` — build output, git-ignored, rebuilt on every deploy. Never edited by hand.
 
-There is no `functions/_middleware.ts` here on purpose: the old repository's HTTP Basic preview
-gate is what made every page answer 401. Do not bring it back.
+There is deliberately no `functions/_middleware.ts`: every page is public, with no password gate.
 
 ## Commands
 
@@ -111,22 +106,18 @@ The photograph and its document are read from `https://arweave.net/raw/<id>`, th
 `https://turbo-gateway.com/raw/<id>`; the bare `arweave.net/<id>` redirects to a per-item
 subdomain the CSP does not allow. The on-chain `uri` stays `https://arweave.net/<id>`.
 
+Known limitations: the durable attempt in `localStorage` is keyed per edition and cluster, not per
+wallet, so two wallets used in one browser share one record; and the `cluster` parameter is strict
+(`devnet` or absent for mainnet), so a link carrying any other value is refused rather than
+guessed.
+
 ## Deploying
 
 Target: Cloudflare Pages project `erashot` (`erashot.pages.dev`), custom domain `erashot.app`
-(proxied apex CNAME; `.app` is HSTS-preloaded, HTTPS only). The zone's rate-limit rule and the
-`SOLANA_RPC_URL` secret stay exactly where they are; nothing about DNS changes.
-
-One-time switch away from the old repository (dashboard, project `erashot`):
-
-1. **Settings → Builds & deployments → disable automatic deployments** (or disconnect the Git
-   integration). Cloudflare accepts Wrangler direct uploads to a Git-connected project once
-   automatic builds are off; drag-and-drop is not available for such a project
-   (https://developers.cloudflare.com/pages/get-started/direct-upload/).
-2. **Settings → Environment variables → delete `SITE_PASSWORD`** (Production). The gate itself is
-   gone because `_middleware.ts` is not shipped; deleting the secret removes the temptation.
-
-Every deploy:
+(proxied apex CNAME; `.app` is HSTS-preloaded, HTTPS only). Deploys are Wrangler direct uploads;
+the project's automatic Git deployments are off, which Cloudflare requires before it accepts direct
+uploads to a Git-connected project
+(https://developers.cloudflare.com/pages/get-started/direct-upload/). Each deploy:
 
 ```sh
 npm test && npm run build:site
@@ -138,12 +129,7 @@ Run from `site/` so Wrangler picks up `site/functions/` for `/api/solana`. `--co
 skips Wrangler's interactive prompt about uncommitted changes in the git workspace (`dist/` is
 git-ignored, so the workspace is always "dirty" from its point of view).
 
-Known limitations, left as they are for now: the durable attempt in `localStorage` is keyed per
-edition and cluster, not per wallet, so two wallets used in one browser share one record; and the
-`cluster` parameter is strict (`devnet` or absent for mainnet), so a link carrying any other value
-is refused rather than guessed.
-
-Post-deploy checks (all from a shell; the last two from the Seeker in Chrome):
+Post-deploy checks:
 
 ```sh
 curl -sI "https://erashot.app/collect/?core=DtKx1JsmiUeDGXFkJMhyE1r2RyB9A1hiwAbsoYyUjQ9w&cluster=devnet" | grep -ci "content-security-policy"   # exactly 1
@@ -156,8 +142,9 @@ curl -sI https://erashot.app/ | head -1   # 200, no WWW-Authenticate
 Then open the devnet link above in desktop Chrome (photograph, price line, QR, device row "No
 device attestation…"), and on the Seeker in Chrome (the "Open in Signshot" control must hand off
 to the app; "Connect wallet to buy" → "Seed Vault / Android wallet" shows MWA's local network
-permission dialog once, then Chrome's own prompt, then opens the wallet). When a device-attested edition exists, open its link and confirm the Device row, and
-run `npm run verify:attestation -- --edition <address> --cluster devnet` beside it.
+permission dialog once, then Chrome's own prompt, then opens the wallet). For a device-attested
+edition, open its link, confirm the Device row, and run
+`npm run verify:attestation -- --edition <address> --cluster devnet` beside it.
 
 ## Cloudflare state that is not in a file
 
@@ -194,11 +181,11 @@ that residual. Rate limiting rules are available on the Free plan
 | Cached assets | off (`requests_to_origin: false`) |
 
 Free-plan constraints fix those numbers (one rule per zone, `ip.src` only, 10 s period and
-timeout). A mainnet collector now peaks at about 26 requests per 10 s: loading the page with its
+timeout). A mainnet collector peaks at about 26 requests per 10 s: loading the page with its
 Genesis Token row (3) and device row (1, the edition's `published_at`), then a quote with the
 program check (4, two of them ELF chunks) and the confirmation poll. 120 leaves room for about
-four collectors behind one NAT while capping one abusive IP at 12 rps. Raised from 60 on
-2026-09-25; the live rule still says 60 until the file is applied again.
+four collectors behind one NAT while capping one abusive IP at 12 rps. The rule applied on the
+zone still caps at 60 until this file is applied again.
 
 **Verify it is live at no provider cost** (`getProgramAccounts` is not allowlisted, so every
 request is refused with 400 before anything is forwarded):
@@ -227,6 +214,6 @@ neither is configured).
 | Rate limiting rule | applied by API: ruleset `f90462456c6749d196bd419346b02e93`, rule `0caace9a4c4f4abab833dc629dd39aff`; probe passed (100 parallel, 30 × 429) | 12 Sep 2026 |
 | `SOLANA_RPC_URL` | Production only, encrypted `secret_text`; Preview holds no variables, preview deployments disabled | 12 Sep 2026 |
 | Pages project | `erashot` (`erashot.pages.dev`); custom domain `erashot.app` via proxied apex CNAME | 12 Sep 2026 |
-| Deployment source | Wrangler direct upload from this repository's `site/`; the Git integration to `sixwon6/seeker-cam` remains attached but automatic production and preview deployments are disabled | 18 Sep 2026 |
-| Site password gate | removed: the middleware is not in this repository, the first direct upload (deployment `8e5dfc63`) replaced it, and the `SITE_PASSWORD` secret is deleted | 18 Sep 2026 | |
+| Deployment source | Wrangler direct upload from `site/`; automatic production and preview Git deployments disabled | 18 Sep 2026 |
+| Password gate | none: no middleware is shipped and no `SITE_PASSWORD` secret exists | 18 Sep 2026 |
 | Bot Fight Mode / Turnstile | not configured | — |

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#f2efe6" />
-    <title>Privacy Policy</title>
+    <title>Signshot Privacy Policy</title>
     <link rel="icon" href="/icon.png" />
     <link rel="stylesheet" href="/brand/era-shot.css" />
   </head>
@@ -18,34 +18,47 @@
     <main class="document">
       <h1>Privacy Policy</h1>
       <p class="date">Updated 29 September 2026</p>
-      <p>This policy covers the Signshot Android app and erashot.app.</p>
-
-      <h2>Information we collect</h2>
-      <p>None. Signshot has no accounts, ads, analytics or crash reporting. If you email us, we receive your address and message.</p>
+      <p>This policy covers the Signshot Android app. Signshot has no app accounts, ads, analytics SDKs or automatic crash reporting. We do not sell personal data.</p>
 
       <h2>On your phone</h2>
-      <p>Photos, drafts, blocks and your terms agreement are stored only on your phone.</p>
+      <p>Photos, edits, drafts, preferences, blocked publishers and your terms agreement are stored on your phone. Wallet connection details and a separate upload-signing key are also stored locally. Taking or editing a photo does not upload it.</p>
 
       <h2>Permissions</h2>
-      <p>Camera only.</p>
+      <p>Camera access is used for photos and QR scanning; revoke it in Android settings. Signshot also uses the internet and vibration. It does not request microphone, contacts or location access.</p>
+      <p>Tapping Paste reads your clipboard to open a collection link or address.</p>
 
-      <h2>Publishing</h2>
-      <p>Optional. A published photo is public and permanent on Solana and Arweave: the image, title, text, capture time, wallet address, phone model and, if you hold one, your Seeker Genesis Token.</p>
+      <h2>What you make public</h2>
+      <p>Publishing is optional. It sends a smaller photo, title and text to Arweave through Turbo and records the edition on Solana. Full-size capture files stay on your phone unless you export or share them.</p>
+      <p>Public records include wallet addresses, edition and album details, prices, royalties, ownership and transactions. Available proofs add capture time, image dimensions and fingerprints, device model, hardware certificates, app and device security details, and your Seeker Genesis Token address to verify the publication and eligibility.</p>
+      <p><strong>Published photos and records are public and permanent.</strong> Collecting, buying and sending also create public records. Anyone can copy them and link wallet activity; a Genesis Token can link different wallets. Signshot cannot erase these records.</p>
+      <p>Sharing sends your selected photo, print card or publication bundle to the app you choose. The optional .skr stamp adds your Seeker ID name to shared images.</p>
 
-      <h2>Third parties</h2>
-      <p>The app connects to your wallet, Solana, Arweave, Google and erashot.app. Each sees your IP address. We sell and share nothing.</p>
+      <h2>Services the app uses</h2>
+      <ul>
+        <li>Your wallet receives connection and transaction requests and returns your public address and approval results. Signshot never receives its private key or recovery phrase.</li>
+        <li>Solana RPC providers process address lookups and signed transactions for balances, holdings, names, editions and eligibility.</li>
+        <li>Turbo receives public photos, metadata, upload signatures and storage payment details. Arweave gateways serve requested photos and metadata.</li>
+        <li>Google serves the certificate revocation list used to check proofs locally. Android may also contact its key-provisioning service when creating a hardware proof.</li>
+        <li>Cloudflare serves erashot.app and the app's moderation list.</li>
+      </ul>
+      <p>Network services receive your IP address and request details. Their policies govern their handling and retention. Loading content or checking proofs can contact them even if you never publish.</p>
 
       <h2>Security</h2>
-      <p>All connections use HTTPS. Signshot never receives your wallet's private key.</p>
+      <p>Remote connections use HTTPS or encrypted WebSockets. Photos use Android app storage. Wallet authorization and upload keys are encrypted through Android Keystore. Published records are publicly readable.</p>
 
-      <h2>Deletion</h2>
-      <p>Uninstalling deletes what is on your phone. Published photos cannot be deleted.</p>
+      <h2>Retention and deletion</h2>
+      <p>Local data stays until removed in the app, cleared in Android settings or deleted by uninstalling. Disconnecting a wallet can leave its upload key while unfinished uploads or paid storage credit need it. Clearing app storage deletes the key and can prevent unfinished uploads from completing.</p>
+      <p>Delete exported photos and files separately. Other apps control copies you share with them. Blocking or hiding a publication does not erase it from Solana or Arweave.</p>
+      <h2>Reports and contact</h2>
+      <p>Report opens your email app with the edition address and link. Sending it gives support your email address, message and any attachments to review the report. Moderation may publish an edition or publisher address on the moderation list, but not your email.</p>
+      <p>For privacy questions or requests to access, correct or delete information you have sent us: <a href="mailto:support@erashot.app">support@erashot.app</a>.</p>
 
       <h2>Children</h2>
-      <p>Not for children under 13.</p>
+      <p>Signshot is not intended for children under 13. Contact us if a child has sent us personal information.</p>
 
-      <h2>Contact</h2>
-      <p><a href="mailto:support@erashot.app">support@erashot.app</a></p>
+      <h2>Changes</h2>
+      <p>Changes to this policy will appear here with an updated date.</p>
+
     </main>
     <!--email_on-->
   </body>

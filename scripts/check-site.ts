@@ -279,7 +279,9 @@ ok("the terms page names the version the app asks agreement to, at the URL it li
   termsPage.includes(`Version ${TERMS_VERSION} ·`) && TERMS_URL === "https://erashot.app/terms/" && MODERATION_URL === "https://erashot.app/moderation.json");
 const privacyPage = readFileSync(resolve(publicDir, "privacy.html"), "utf8").replace(/\s+/g, " ");
 ok("the privacy page says blocks and the agreement stay on the phone and names erashot.app",
-  /Photos, drafts, blocks and your terms agreement are stored only on your phone/.test(privacyPage) && /erashot.app. Each sees your IP/.test(privacyPage));
+  /blocked publishers and your terms agreement are stored on your phone/.test(privacyPage)
+    && /Signshot Android app/.test(privacyPage) && /erashot\.app/.test(privacyPage)
+    && /Network services receive your IP address/.test(privacyPage));
 ok("the email addresses are outside Cloudflare's email obfuscation, which the pages' CSP would leave unreadable",
   staticPages.every((page) => !page.includes("mailto:") || (page.includes("<!--email_off-->") && page.includes("<!--email_on-->"))));
 

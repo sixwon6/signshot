@@ -90,8 +90,6 @@ import {
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
 
-/** The chain this build publishes on, and therefore the deployment a fresh publication uses. */
-
 /**
  * Before a wallet signs anything `era_editions` runs: the draft's program, or the one a fresh
  * publication uses, must still be the reviewed bytes under the recorded upgrade authority
@@ -142,12 +140,7 @@ export function PrintSheet({
   const [showCost, setShowCost] = useState(false);
   const [count, setCount] = useState("10"),
     [solo, setSolo] = useState(true);
-  /**
-   * The price of a copy, as typed, in SOL. Empty is free, which is what every edition was before
-   * this field existed. Only an edition of more than one copy has anything to sell — copy 1 is the
-   * publisher's — and only a deployment with `set_offer` can hold a price at all, so the field is
-   * absent, rather than disabled, whenever either is untrue.
-   */
+  /** The price of a copy, as typed, in SOL; empty is free. Offered only where `priceable`. */
   const [priceText, setPriceText] = useState("");
   const [offers, setOffers] = useState(false);
   /**
@@ -218,9 +211,8 @@ export function PrintSheet({
         if (!live) return;
         setEdit(selected);
         setAvailability(available);
-        // Which deployment a fresh publication would use decides whether a price can be set on it
-        // at all. `configuredProgram` throws when publishing is unavailable, which is already its
-        // own screen state, so there is simply no price field then either.
+        // The deployment a fresh publication would use decides which terms can be set.
+        // `configuredProgram` throws when publishing is unavailable, already its own screen state.
         const features = (() => {
           try {
             return available.enabled ? programFeatures(configuredProgram(cluster)) : null;
@@ -317,7 +309,7 @@ export function PrintSheet({
         terms(title.trim(), solo ? 1 : Number(count));
         // The same gates `createDraft` applies, run before the wallet opens.
         const moment = normalizeDescription(caption);
-        // Zero is free, and a free edition is published exactly the way it always was.
+        // Zero or no price publishes free.
         const lamports = priced ? priceLamports : undefined;
         const owner = await session.connectAnd((wallet) =>
           session.authorizeSession(wallet),
@@ -625,11 +617,8 @@ export function PrintSheet({
   }
   const previewTitle = draft?.edition.title ?? title.trim();
 
-  /**
-   * The price field exists only where there is something to sell on a deployment that can hold a
-   * price: an edition of 1 keeps its single copy, and a program without `set_offer` has no offer
-   * account to write. Where it does not exist, nothing on the sheet mentions a price at all.
-   */
+  // A price only where there is a copy to sell (an edition of 1 keeps its single copy) and the
+  // program has `set_offer`; otherwise nothing on the sheet mentions a price.
   const priceable = !draft && !solo && offers;
   let priceError = "";
   let priceLamports = 0n;
@@ -801,8 +790,7 @@ export function PrintSheet({
                     </>
                   )}
                 </View>
-                {/* The price of a copy. Absent, never disabled, when there is nothing to sell or
-                    the deployment cannot hold an offer. */}
+                {/* The price of a copy: absent, never disabled, where it cannot apply. */}
                 {priceable && (
                   <View style={s.group}>
                     <Text style={sheetStyles.label}>{priceCopy.publishLabel}</Text>

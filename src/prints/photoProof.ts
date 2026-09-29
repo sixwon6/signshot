@@ -56,8 +56,8 @@ export function selectPhotoProof(
           ? "unavailable"
           : "unconfirmed";
     const signature = draft?.attempt?.signature;
-    // Only the backend's validated view supplies edition links. A saved address alone is
-    // not enough to reconstruct one when draft/trust validation failed.
+    // Only the validated view supplies edition links; a saved address alone cannot rebuild one
+    // when draft or trust validation failed.
     return {
       kind: "core",
       draft,

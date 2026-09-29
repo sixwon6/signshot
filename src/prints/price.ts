@@ -77,7 +77,7 @@ export function formatSol(lamports: bigint): string {
  * holding less than this, so `set_offer` refuses any price between zero and it. Read from the
  * cluster on every quote rather than kept here: rent per byte is being lowered in steps
  * (SIMD-0437, https://solana.com/upgrades/reduced-rent), and the program reads the same rate
- * from the Rent sysvar. 650,240 lamports on both clusters on 2026-09-25.
+ * from the Rent sysvar.
  */
 export async function minimumPriceLamports(endpoint: string): Promise<bigint> {
   const lamports = await request<unknown>(endpoint, "getMinimumBalanceForRentExemption", [0]);

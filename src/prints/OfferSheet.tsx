@@ -1,19 +1,12 @@
 import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 /**
- * OfferSheet — the creator's price for the remaining copies of one edition.
+ * OfferSheet: the creator's price for the remaining copies of one edition.
  *
- * Keyed by EDITION, never by photograph: the Collection tab can open this for a publication whose
- * photo is not on this phone, and the price belongs to the publication either way.
- *
- * The same two taps as PrintSheet, SendSheet and CollectSheet: "Continue" connects the wallet only
- * to learn which account is signing and shows a simulated estimate, "Set price" opens the wallet to
- * sign. Only the tap that spends carries the verb, and the estimate on screen always belongs to the
- * check that produced it — a cleared quote can never be approved.
- *
- * The price is the creator's own amount and reaches the creator. The estimate below it is the
- * network fee and rent for the offer account, which the creator pays; the two are never added
- * together here, because nobody pays both.
+ * Keyed by edition, not photograph: the Collection tab can open it for a publication whose photo is
+ * not on this phone. "Continue" simulates `set_offer` and shows the estimate; only the next tap
+ * opens the wallet, and a cleared quote can never be approved. The price reaches the creator; the
+ * estimate is the fee and offer-account rent the creator pays, so the two are never added.
  */
 import { useEffect, useRef, useState } from "react";
 import {
@@ -149,8 +142,7 @@ export function OfferSheet({
       setQuote(next);
     } catch (e) {
       clearQuote();
-      // A cost check opens the wallet only to learn which account is signing, so nothing can have
-      // been changed by it.
+      // A cost check signs nothing, so nothing can have changed.
       const timedOut = isWalletResponseTimeout(e);
       setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e, copy.invalid));
       setStatus(
@@ -195,12 +187,9 @@ export function OfferSheet({
         setSupported(after.supported);
         setCurrent(after.offer);
       }
-      // A fresh read can resolve an approval whose own answer was lost. Its verdict supersedes the
-      // error: never leave retry instructions under a price that is already set.
-      // Both halves, the way `offer.ts` verifies it itself: the price must be the approved one AND
-      // the revision must have moved past the one this quote was built against. The revision is
-      // what makes "set it free" provable — a cancelled free change and a confirmed one would
-      // otherwise both read as a price of zero.
+      // A fresh read can resolve an approval whose answer was lost, and then supersedes the error.
+      // Checked as `offer.ts` does: the approved price and a revision past the quoted one, which is
+      // what tells a confirmed change to free from a cancelled one.
       const landed =
         !expired &&
         !changed &&

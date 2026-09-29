@@ -16,7 +16,7 @@ export interface AlbumRecord {
   creator: string;
   program: string;
   createdAt: number;
-  /** Older app versions saved the lifetime without a review fingerprint. */
+  /** `quoteId` is absent on older records, which saved the lifetime alone. */
   attempt?: PublicationAttempt & { quoteId?: string };
   /** Set only after the group account was read. */
   confirmedAt?: number;

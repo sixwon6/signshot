@@ -36,11 +36,10 @@ import { createDevelopQueue, type DevelopOutcome } from "./developQueue";
 import { StageBar } from "../screens/RecipeBar";
 import { RecipeDial, StageParameters } from "../recipes/RecipeControls";
 
-/** Develop the canonical frame using the capture recipes. */
-
 /** How long a slider is left alone before the frame is developed again. */
 const DEVELOP_DEBOUNCE_MS = 180;
 
+/** Develop the canonical frame using the capture recipes. */
 export function PhotoEditor({
   record,
   initial,

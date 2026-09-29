@@ -10,11 +10,12 @@
   "scripts": {
     "devnet": "tsx publications/devnet/session.ts",
     "devnet:check": "tsx scripts/check-devnet.mjs",
+    "mainnet": "tsx publications/mainnet/cli.ts",
     "start": "expo start",
     "android": "expo run:android",
     "build:android-bundle": "expo export:embed --platform android --dev false --entry-file index.js --bundle-output .expo/ci/index.android.bundle --assets-dest .expo/ci/assets",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
-    "test": "npm run typecheck && tsx scripts/check-version.ts && tsx scripts/check-prebuild.ts && tsx scripts/check-signing.ts && tsx scripts/check-runtime-behavior.mjs && tsx scripts/check-capture-hook.mjs && tsx scripts/check-looks.mjs && tsx scripts/check-smear.mjs && tsx scripts/check-attestation.ts && tsx scripts/check-genesis.ts && tsx scripts/check-site.ts && tsx scripts/check-storage.ts",
+    "test": "npm run typecheck && tsx scripts/check-version.ts && tsx scripts/check-prebuild.ts && tsx scripts/check-signing.ts && tsx scripts/check-runtime-behavior.mjs && tsx scripts/check-capture-hook.mjs && tsx scripts/check-looks.mjs && tsx scripts/check-smear.mjs && tsx scripts/check-attestation.ts && tsx scripts/check-genesis.ts && tsx scripts/check-site.ts && tsx scripts/check-storage.ts && tsx scripts/check-mainnet-deploy.ts",
     "test:program": "pwsh -NoProfile -File programs/editions/scripts/test-program-windows.ps1",
     "test:svm": "tsx scripts/check-program-svm.ts",
     "verify:attestation": "tsx scripts/verify-attestation.ts",

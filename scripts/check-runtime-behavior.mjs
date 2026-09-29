@@ -1332,12 +1332,13 @@ if (!process.argv.includes("--worker")) {
     "the public fallback is the host https://solana.com/docs/references/clusters names");
   {
     // The README names exactly the Solana methods the app calls, read from the code: a request's
-    // method string or a Kit client call. Devnet tooling (`src/dev/`, `publications/devnet/`) is not the app.
+    // method string or a Kit client call. Devnet and deploy tooling (`src/dev/`, `publications/devnet/`,
+    // `publications/deploy/`, `publications/mainnet/`) is not the app.
     const root = new URL("../", import.meta.url);
     const known = readdirSync(new URL("node_modules/@solana/rpc-api/dist/types/", root))
       .filter((file) => /^[a-z]\w+\.d\.ts$/.test(file) && file !== "index.d.ts").map((file) => file.slice(0, -".d.ts".length));
     const app = ["src", "publications"].flatMap((dir) => readdirSync(new URL(`${dir}/`, root), { recursive: true })
-      .filter((file) => /\.tsx?$/.test(file) && !/^(dev|devnet)[\\/]/.test(file))
+      .filter((file) => /\.tsx?$/.test(file) && !/^(dev|devnet|deploy|mainnet)[\\/]/.test(file))
       .map((file) => readFileSync(new URL(`${dir}/${file.replace(/\\/g, "/")}`, root), "utf8")))
       .concat(readFileSync(new URL("App.tsx", root), "utf8")).join("\n");
     const called = known.filter((method) => app.includes(`"${method}"`) || app.includes(`.${method}(`)).sort();

@@ -34,8 +34,8 @@ function validateRecipient(input: string, owner: string): string {
 }
 
 /**
- * Everything checked before the wallet opens: the exact asset, current ownership, the Signshot
- * shape, the published `metadataId`, and a plain-wallet recipient.
+ * Everything checked before the wallet opens: the exact asset (copy `number`'s canonical print),
+ * current ownership, the Signshot shape, the published `metadataId`, and a plain-wallet recipient.
  */
 export async function inspectTransfer(
   endpoint: string,
@@ -43,10 +43,11 @@ export async function inspectTransfer(
   metadataId: string,
   input: string,
   owner: string,
+  number = 1,
 ) {
   address(owner);
   const recipient = validateRecipient(input, owner);
-  const keys = await addresses(e.program, e.creator, e.nonce, 1);
+  const keys = await addresses(e.program, e.creator, e.nonce, number);
   if (keys.edition !== e.edition || keys.collection !== e.collection)
     throw new Error("This photograph's saved edition addresses do not match its record.");
   const [assetAccount, recipientAccount] = await Promise.all([
@@ -59,7 +60,7 @@ export async function inspectTransfer(
     throw new Error("This digital print has been burned and cannot be sent.");
   if (!assetAccount || assetAccount.owner !== MPL_CORE || assetAccount.executable)
     throw new Error("The published NFT is not available on this network.");
-  const asset = verifyPrintAsset(assetAccount.bytes, e, keys.print, 1);
+  const asset = verifyPrintAsset(assetAccount.bytes, e, keys.print, number);
   if (asset.uri !== `https://arweave.net/${metadataId}`)
     throw new Error("The NFT metadata does not match this photograph.");
   if (asset.owner !== owner)

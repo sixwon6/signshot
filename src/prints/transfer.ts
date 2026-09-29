@@ -1,7 +1,9 @@
 /**
- * Sending a published print (a Metaplex Core asset) to another wallet with one `TransferV1`.
- * Uses the photograph's publication lock from `coordinator.ts`, so a send and a publish can never
- * race for one wallet. The attempt is persisted before the wallet opens. Sending is not a sale.
+ * Sending a copy (a Metaplex Core asset) to another wallet with one `TransferV1`: print #1 from its
+ * photograph's page, or any copy the connected wallet holds from the WALLET screen. Every send holds
+ * its copy's lock; the photo page's also holds the photograph's publication lock from
+ * `coordinator.ts`, so a send and a publish can never race for one wallet. The attempt is
+ * persisted before the wallet opens. Sending is not a sale.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,6 +16,7 @@ import { isSigned, type PublicationDraft } from "./creator";
 import { publicationLockKey } from "./coordinator";
 import { refreshedQuote } from "./quoteRefresh";
 import { addresses, isFrozen, readPublication, readPrintState } from "../../publications/core/protocol";
+import type { LibraryPhoto } from "../../publications/core/library";
 import { recoverTransferReceipt, reviewedFingerprint } from "../../publications/core/transferReceipt";
 import {
   inspectTransfer,
@@ -21,7 +24,7 @@ import {
   type TransferDetails,
 } from "../../publications/core/transfer";
 import { isTrustedDeployment } from "../../publications/deployments";
-import { CORE_PROTOCOL, type PublicationAttempt } from "../../publications/types";
+import { CORE_PROTOCOL, type CoreMetadata, type PublicationAttempt } from "../../publications/types";
 import { assertAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
 import { safeErrorText } from "../ui/errorText";
 import {
@@ -31,10 +34,77 @@ import {
   request,
 } from "../../publications/rpc";
 
-const lock = (r: CaptureRecord) => publicationLockKey(cluster, r.baseName);
+/**
+ * The copy a send moves. `photo` is the photograph whose page sends print #1: its draft must still
+ * match the chain, and its lock is the one publishing takes. `holder` is the wallet the WALLET
+ * screen read holding the copy; the photo page has none, so there the saved attempt names the
+ * sender.
+ */
+export interface TransferTarget {
+  edition: CoreMetadata;
+  /** The edition document's Arweave id; every copy's `uri` names it. */
+  metadataId: string;
+  number: number;
+  /** The copy's Core address. Derived when absent, and checked against the derivation when given. */
+  asset?: string;
+  photo?: { record: CaptureRecord; draft: PublicationDraft };
+  holder?: string;
+}
+
+/** Print #1, sent from its photograph's page. */
+export const photoTransfer = (record: CaptureRecord, draft: PublicationDraft): TransferTarget =>
+  ({ edition: draft.edition, metadataId: draft.metadataId, number: 1, photo: { record, draft } });
+
+const ARWEAVE_DOCUMENT = /^https:\/\/arweave\.net\/([A-Za-z0-9_-]{43})$/;
 
 /**
- * What the review screen shows and what `sendTransfer` re-checks. `asset` is print #1's Core
+ * A WALLET screen copy as a send target, or `null` unless `wallet` is the one the Collected scan
+ * found holding it. An edition under Published is not a copy.
+ */
+export function heldCopy(item: LibraryPhoto, wallet: string | undefined): TransferTarget | null {
+  const metadataId = ARWEAVE_DOCUMENT.exec(item.photo.publication.state.uri)?.[1];
+  if (!wallet || item.owner !== wallet || item.number === undefined || !metadataId) return null;
+  return { edition: item.photo.edition, metadataId, number: item.number, asset: item.id, holder: wallet };
+}
+
+/** A target with its asset derived, and where its attempt and its lock live. */
+interface Copy extends TransferTarget {
+  asset: string;
+  key: string;
+  lock: string;
+}
+
+const photoLock = (r: CaptureRecord) => publicationLockKey(cluster, r.baseName);
+/** Print #1's attempt, where the photo page has always kept it. */
+const editionKey = (e: CoreMetadata) => `es.core-transfer.v1:${e.cluster}:${e.edition}`;
+
+/**
+ * The durable key is per ASSET, except print #1's, which stays per EDITION so the photo page and
+ * the WALLET screen share one record of it. The in-process lock is per asset on both screens.
+ */
+async function resolve(t: TransferTarget): Promise<Copy> {
+  const asset = (await addresses(t.edition.program, t.edition.creator, t.edition.nonce, t.number)).print;
+  if (t.asset !== undefined && t.asset !== asset)
+    throw new Error("This copy's address does not match its edition.");
+  return {
+    ...t,
+    asset,
+    key: t.number === 1 ? editionKey(t.edition) : `es.core-copy-transfer.v1:${t.edition.cluster}:${asset}`,
+    lock: `transfer:${cluster}:${asset}`,
+  };
+}
+
+/** The photograph's lock first, as publishing takes it, then the copy's. */
+function holding<T>(c: Copy, work: () => Promise<T>): Promise<T> {
+  return c.photo
+    ? exclusive(photoLock(c.photo.record), () => exclusive(c.lock, work))
+    : exclusive(c.lock, work);
+}
+const busy = (c: Copy) =>
+  operationInProgress(c.lock) || Boolean(c.photo && operationInProgress(photoLock(c.photo.record)));
+
+/**
+ * What the review screen shows and what `sendTransfer` re-checks. `asset` is the copy's Core
  * address; `collection` is needed by `TransferV1`. Core has no destination account to create.
  */
 export interface TransferQuote extends TransferDetails {
@@ -44,7 +114,7 @@ export interface TransferQuote extends TransferDetails {
   prepared: Awaited<ReturnType<typeof prepareTransaction>>;
 }
 
-/** The durable attempt, under `es.core-transfer.v1:${cluster}:${edition}`. */
+/** The durable attempt, under `Copy.key`. */
 interface TransferAttempt extends PublicationAttempt {
   version: 1;
   protocol: typeof CORE_PROTOCOL;
@@ -71,21 +141,17 @@ export interface TransferState {
 }
 const MAX_PREVIOUS_MESSAGES = 64;
 
-/** The durable key is per EDITION; the in-process lock is per PHOTOGRAPH. Both are needed. */
-const key = (d: PublicationDraft) =>
-  `es.core-transfer.v1:${d.edition.cluster}:${d.edition.edition}`;
-export const isTransferWorking = (r: CaptureRecord) => operationInProgress(lock(r));
+export const isTransferWorking = (r: CaptureRecord) => operationInProgress(photoLock(r));
 
-async function read(d: PublicationDraft): Promise<TransferAttempt | null> {
-  const raw = await AsyncStorage.getItem(key(d));
+async function read(c: Copy): Promise<TransferAttempt | null> {
+  const raw = await AsyncStorage.getItem(c.key);
   if (!raw) return null;
   const attempt = JSON.parse(raw) as TransferAttempt;
   assertAttempt(attempt);
   address(attempt.owner);
   address(attempt.recipient);
-  const expectedAsset = (await addresses(d.edition.program, d.edition.creator, d.edition.nonce)).print;
   if (attempt.version !== 1 || attempt.protocol !== CORE_PROTOCOL ||
-    attempt.asset !== expectedAsset || attempt.owner === attempt.recipient ||
+    attempt.asset !== c.asset || attempt.owner === attempt.recipient ||
     !/^[a-f0-9]{64}$/.test(attempt.quoteId) ||
     (attempt.confirmedAt !== undefined && (!Number.isSafeInteger(attempt.confirmedAt) || attempt.confirmedAt <= 0)) ||
     (attempt.previousMessages !== undefined && (!Array.isArray(attempt.previousMessages) ||
@@ -95,13 +161,13 @@ async function read(d: PublicationDraft): Promise<TransferAttempt | null> {
     throw new Error("The saved transfer does not match this photograph. Do not send again until it can be checked.");
   return attempt;
 }
-async function write(d: PublicationDraft, attempt: TransferAttempt) {
-  await AsyncStorage.setItem(key(d), JSON.stringify(attempt));
+async function write(c: Copy, attempt: TransferAttempt) {
+  await AsyncStorage.setItem(c.key, JSON.stringify(attempt));
 }
 
-/** Forget this edition's transfer attempt. Called from the photo deletion path only. */
+/** Forget this edition's print #1 transfer attempt. Called from the photo deletion path only. */
 export async function forgetTransferAttempt(d: PublicationDraft) {
-  await AsyncStorage.removeItem(key(d));
+  await AsyncStorage.removeItem(editionKey(d.edition));
 }
 
 const sameAttempt = (left: TransferAttempt | null, right: TransferAttempt) =>
@@ -114,15 +180,16 @@ const sameAttempt = (left: TransferAttempt | null, right: TransferAttempt) =>
  * Current on-chain state, read as `inspectTransfer` reads it. `delivered` means the asset is now
  * owned by this attempt's recipient; it says nothing about which transaction moved it.
  */
-async function eligibility(d: PublicationDraft, attempt: TransferAttempt): Promise<{
+async function eligibility(c: Copy, attempt: TransferAttempt): Promise<{
   eligibility: TransferEligibility; reason?: string; delivered?: boolean;
 }> {
   try {
-    // Neither check requires print #1 to be live; asset availability is checked afterwards.
-    if (!await isSigned(d)) throw new Error("The photo's publication could not be verified.");
-    const publication = await readPublication(RPC_ENDPOINT, d.edition.program, d.edition.edition);
-    if (!publication) throw new Error("The photo's publication could not be verified.");
-    const current = await readPrintState(RPC_ENDPOINT, publication);
+    // Neither check requires the copy to be live; asset availability is checked afterwards.
+    if (c.photo && !await isSigned(c.photo.draft)) throw new Error("The photo's publication could not be verified.");
+    const publication = await readPublication(RPC_ENDPOINT, c.edition.program, c.edition.edition);
+    if (!publication || publication.state.uri !== `https://arweave.net/${c.metadataId}`)
+      throw new Error("The photo's publication could not be verified.");
+    const current = await readPrintState(RPC_ENDPOINT, publication, c.number);
     if (current.status === "unavailable") return { eligibility: "unavailable", reason: current.reason };
     if (current.status === "burned") return { eligibility: "burned", reason: "This copy has been burned." };
     if (current.asset.owner !== attempt.owner)
@@ -136,24 +203,22 @@ async function eligibility(d: PublicationDraft, attempt: TransferAttempt): Promi
   }
 }
 
-export async function getTransferState(
-  r: CaptureRecord,
-  d: PublicationDraft,
-): Promise<TransferState> {
+export async function getTransferState(t: TransferTarget): Promise<TransferState> {
   let attempt: TransferAttempt | null = null;
   try {
-    attempt = await read(d);
+    const c = await resolve(t);
+    attempt = await read(c);
     if (!attempt) return { status: "none", attempt, eligibility: "review" };
-    if (d.edition.cluster !== cluster || !isTrustedDeployment(cluster, d.edition.program))
+    if (c.edition.cluster !== cluster || !isTrustedDeployment(cluster, c.edition.program))
       throw new Error("This photo's edition names a publication program this build has not reviewed.");
     const receipt = await recoverTransferReceipt(RPC_ENDPOINT, attempt);
     let result: TransferState;
     if (receipt.status === "confirmed") {
-      const { delivered: _delivered, ...outcome } = await eligibility(d, attempt);
+      const { delivered: _delivered, ...outcome } = await eligibility(c, attempt);
       result = { status: "sent", attempt: { ...attempt, signature: receipt.signature,
         confirmedAt: attempt.confirmedAt ?? Date.now() }, ...outcome };
     } else {
-      const { delivered, ...outcome } = await eligibility(d, attempt);
+      const { delivered, ...outcome } = await eligibility(c, attempt);
       if (delivered) {
         // The recipient holds the print, so it arrived even without a matched receipt.
         // `confirmedAt` stays unset so a later matched receipt can still record itself.
@@ -175,23 +240,28 @@ export async function getTransferState(
       }
     }
     // Anything written while checking is newer than this answer.
-    const latestAttempt = await read(d);
+    const latestAttempt = await read(c);
     if (!sameAttempt(latestAttempt, attempt))
       return { status: "unavailable", attempt: latestAttempt, eligibility: "unavailable",
         reason: "The transfer changed while its status was being checked. Check again before another action." };
+    // Another wallet's settled send is that wallet's history; the holder starts clean. One that
+    // may still land keeps everyone waiting.
+    if (c.holder && attempt.owner !== c.holder &&
+      (result.status === "sent" || result.status === "unresolved" || attempt.confirmedAt))
+      return { status: "none", attempt: null, eligibility: "review" };
     if (result.status === "sent") {
       // Skipped while the lock is held, so a status read never queues behind or overwrites live work.
-      if (!operationInProgress(lock(r))) {
+      if (!busy(c)) {
         const checkedAttempt = attempt;
-        await exclusive(lock(r), async () => {
-          const latest = await read(d);
+        await holding(c, async () => {
+          const latest = await read(c);
           if (!sameAttempt(latest, checkedAttempt)) {
             result = { status: "unavailable", attempt: latest, eligibility: "unavailable",
               reason: "The transfer changed while its status was being checked. Check again before another action." };
           } else {
             result.attempt = { ...latest!, signature: result.attempt!.signature,
               confirmedAt: latest!.confirmedAt ?? result.attempt!.confirmedAt };
-            await write(d, result.attempt!);
+            await write(c, result.attempt!);
           }
         });
       }
@@ -214,29 +284,30 @@ function wasReviewed(attempt: TransferAttempt | null, quoteId: string) {
 }
 
 export async function prepareTransfer(
-  r: CaptureRecord,
-  d: PublicationDraft,
+  t: TransferTarget,
   recipient: string,
   owner: string,
 ): Promise<TransferQuote> {
   // The estimate and receipt must be read from the chain the wallet will broadcast to.
   await assertEndpointCluster();
   // Checked against the trusted list, not the currently configured deployment.
-  if (!isTrustedDeployment(cluster, d.edition.program))
+  if (t.edition.cluster !== cluster || !isTrustedDeployment(cluster, t.edition.program))
     throw new Error("This photo's edition names a publication program this build has not reviewed.");
-  if (operationInProgress(lock(r)))
+  const c = await resolve(t);
+  if (busy(c))
     throw new Error("This photo already has an operation in progress. Wait for it to finish.");
-  if (!await isSigned(d)) throw new Error("Publish the photograph before sending its digital print.");
-  const state = await getTransferState(r, d);
+  if (c.photo && !await isSigned(c.photo.draft)) throw new Error("Publish the photograph before sending its digital print.");
+  if (c.holder && owner !== c.holder) throw new Error("Use the wallet that holds this copy.");
+  const state = await getTransferState(t);
   assertNewReview(state);
-  const details = await inspectTransfer(RPC_ENDPOINT, d.edition, d.metadataId, recipient, owner);
+  const details = await inspectTransfer(RPC_ENDPOINT, c.edition, c.metadataId, recipient, owner, c.number);
   const prepared = await prepareTransaction(RPC_ENDPOINT, owner, transferInstructions(details), [],
     OPERATION_FLOOR_LAMPORTS.transfer);
   const messageBytes = new Uint8Array(prepared.transaction.messageBytes);
   const id = reviewedFingerprint(messageBytes);
   if (wasReviewed(state.attempt, id))
     throw new Error("This estimate repeats an earlier transfer message. Wait for a new estimate and review again.");
-  return { ...details, prepared, edition: d.edition.edition, metadataId: d.metadataId, id };
+  return { ...details, prepared, edition: c.edition.edition, metadataId: c.metadataId, id };
 }
 
 const EXPIRED = "The estimate expired. Review the transfer again.";
@@ -264,17 +335,20 @@ async function refreshed(
 }
 
 export async function sendTransfer(
-  r: CaptureRecord, d: PublicationDraft, session: WalletSession, quote: TransferQuote,
+  t: TransferTarget, session: WalletSession, quote: TransferQuote,
   onProgress?: (stage: "wallet" | "confirming") => void,
 ): Promise<string> {
-  return exclusive(lock(r), async () => {
+  const c = await resolve(t);
+  return holding(c, async () => {
     const reviewedBytes = new Uint8Array(quote.prepared.transaction.messageBytes);
-    if (quote.edition !== d.edition.edition || quote.metadataId !== d.metadataId ||
-      quote.id !== reviewedFingerprint(reviewedBytes))
+    if (quote.edition !== c.edition.edition || quote.metadataId !== c.metadataId ||
+      quote.asset !== c.asset || quote.id !== reviewedFingerprint(reviewedBytes))
       throw new Error("The transfer review changed. Check the recipient again.");
-    if (!isTrustedDeployment(cluster, d.edition.program) || !await isSigned(d))
+    if (c.edition.cluster !== cluster || !isTrustedDeployment(cluster, c.edition.program) ||
+      (c.photo && !await isSigned(c.photo.draft)))
       throw new Error("This publication cannot be confirmed on the selected network.");
-    const state = await getTransferState(r, d);
+    if (c.holder && quote.owner !== c.holder) throw new Error("Use the wallet that holds this copy.");
+    const state = await getTransferState(t);
     if (wasReviewed(state.attempt, quote.id))
       throw new Error("This transfer has already been submitted. Check its status.");
     assertNewReview(state);
@@ -288,7 +362,7 @@ export async function sendTransfer(
     if (previousMessages.length > MAX_PREVIOUS_MESSAGES)
       throw new Error("Earlier transfer messages are still live. Wait before reviewing another transfer.");
     // Re-read ownership and the asset right before the wallet opens.
-    const live = await inspectTransfer(RPC_ENDPOINT, d.edition, d.metadataId, quote.recipient, quote.owner);
+    const live = await inspectTransfer(RPC_ENDPOINT, c.edition, c.metadataId, quote.recipient, quote.owner, c.number);
     if (live.owner !== quote.owner || live.recipient !== quote.recipient ||
       live.asset !== quote.asset || live.collection !== quote.collection)
       throw new Error("NFT ownership changed. Refresh the transfer review.");
@@ -300,17 +374,17 @@ export async function sendTransfer(
       // Refreshed on every approval: the wallet's sheet can outlast a blockhash.
       const { prepared, quoteId } = await refreshed(quote, previousMessages);
       // Read under the lock: a declined approval puts exactly this back, live messages included.
-      const previous = await read(d);
+      const previous = await read(c);
       attempt = { version: 1, protocol: CORE_PROTOCOL, owner: quote.owner, recipient: quote.recipient,
         asset: quote.asset, quoteId,
         lastValidBlockHeight: String(prepared.lastValidBlockHeight), previousMessages };
-      await write(d, attempt);
+      await write(c, attempt);
       const signatures = await forgetIfRefused(wallet.signAndSendTransactions({ transactions: [prepared.transaction],
         minContextSlot: Number(prepared.minContextSlot), skipPreflight: false }),
-        () => (previous ? write(d, previous) : AsyncStorage.removeItem(key(d))));
+        () => (previous ? write(c, previous) : AsyncStorage.removeItem(c.key)));
       if (signatures.length !== 1 || signatures[0].length !== 64) throw new Error("No wallet receipt. Check the transfer before retrying.");
       attempt.signature = getBase58Decoder().decode(signatures[0]);
-      await write(d, attempt);
+      await write(c, attempt);
     });
     if (!attempt?.signature) throw new Error("No wallet receipt. Check the transfer before retrying.");
     onProgress?.("confirming");
@@ -324,7 +398,7 @@ export async function sendTransfer(
       throw new Error("The transfer receipt could not be matched to this review. Check its status before another action.");
     attempt.signature = receipt.signature;
     attempt.confirmedAt = Date.now();
-    await write(d, attempt);
+    await write(c, attempt);
     return attempt.signature;
   });
 }

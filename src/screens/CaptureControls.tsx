@@ -1,9 +1,8 @@
 /**
  * The camera's readout cells, the histogram DISP draws on the picture, and the control vocabulary
- * `CaptureAdjust.tsx` shares. The cells keep one order in every mode: AUTO shows brightness alone
- * beside its looks; P and M show all five controls and the look as a sixth. A control the camera
- * lacks is absent; one the mode forbids is dimmed. Presentational: state lives in
- * `useCaptureControls`.
+ * `CaptureAdjust.tsx` shares. The cells keep one order: P and M show all five controls and the
+ * look as a sixth; AUTO has no cells. A control the camera lacks is absent; one the mode forbids
+ * is dimmed. Presentational: state lives in `useCaptureControls`.
  */
 import { StyleSheet, Text, View } from "react-native";
 import {
@@ -245,40 +244,6 @@ export function ReadoutCells({
   );
 }
 
-/** AUTO's one cell, pinned beside its looks. */
-export function BrightCell({
-  caps,
-  settings,
-  meter,
-  live,
-  disabled = false,
-  onPress,
-}: {
-  caps: CaptureCapabilities;
-  settings: CaptureSettings;
-  meter: MeterReading | null;
-  live: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  const cell = readings(settings, caps, meter, "auto").find((one) => one.key === "ev");
-  if (!cell) return null;
-  return (
-    <Cell
-      tag={cell.tag}
-      value={cell.value}
-      live={live}
-      held={cell.held}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityLabel={copy.openOf(NAME.ev, cell.spoken)}
-      style={s.lightCell}
-      testID="capture-readout-ev"
-      valueTestID="capture-cell-ev"
-    />
-  );
-}
-
 /** Clipping as a percentage of the pixels the meter sampled: `0.0`, `3.2`. */
 const clippedPercent = (fraction: number): string =>
   (Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0)) * 100).toFixed(1);
@@ -329,7 +294,6 @@ const s = StyleSheet.create({
   cell: { flexGrow: 1, flexBasis: 0 },
   /** A name, not a number: the look's cell is half as wide again. */
   lookCell: { flexGrow: 1.5, flexBasis: 0 },
-  lightCell: { width: 64 },
   histogram: {
     position: "absolute",
     top: space.sm,

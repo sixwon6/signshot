@@ -375,11 +375,14 @@ if (!process.argv.includes("--worker")) {
 
     const onAuto = await mount();
     assert.deepEqual([onAuto.view.mode, onAuto.view.remembered, onAuto.view.meter], ["auto", "manual", null]);
+    // AUTO has no cell to show a brightness, so one left on it does not outlive the app.
+    assert.equal(onAuto.view.settings.ev, 0, "a brightness left on AUTO is not brought back");
+    assert.equal(native.requests.at(-1).ev, 0, "and the camera is opened without it");
     assert.equal(await onAuto.press((now) => now.chooseMode("manual")), true, "what AUTO set aside is still there to come back");
     assert.deepEqual([...exposure(onAuto.view.settings), onAuto.view.settings.whiteBalance], [320, 8_000_000, 0, "daylight"]);
     assert.equal(onAuto.view.remembered, null);
     await onAuto.press((now) => now.chooseMode("program"));
-    assert.equal(onAuto.view.settings.ev, 3);
+    assert.equal(onAuto.view.settings.ev, 0, "and P comes back under the brightness AUTO has now: none");
     await onAuto.unmount();
   }
 
@@ -592,5 +595,5 @@ if (!process.argv.includes("--worker")) {
 
   mock.timers.reset();
   assert.deepEqual(complaints, [], "every update must land inside act()");
-  console.log("capture hook checks ok — restore and its guards (nothing written after a failed one), mode dial through the hook, brightness carried across M, AUTO's parked settings, both across a restart, auto(), revision guard, view-not-ready retry for the cold start, a moved control and auto(), meter reset on restart, DISP");
+  console.log("capture hook checks ok — restore and its guards (nothing written after a failed one), mode dial through the hook, brightness carried across M, AUTO's parked settings, both across a restart (a brightness left on AUTO is not), auto(), revision guard, view-not-ready retry for the cold start, a moved control and auto(), meter reset on restart, DISP");
 }

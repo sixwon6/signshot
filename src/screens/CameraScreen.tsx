@@ -1,9 +1,9 @@
 /**
  * The camera, and the app's home screen: one layout under an AUTO · P · M dial. In every mode the
  * bottom row chooses, the row above it adjusts and the shutter shoots, all in the bottom sheet.
- * AUTO's row is the looks (brightness beside them) under the look's strength; P and M show the
- * readout cells (the look among them) under the live cell's dial. State lives in `useRecipes`
- * (the look) and `useCaptureControls` (the camera and its dial).
+ * AUTO's row is the looks under the look's strength, and brightness is a drag on the picture; P
+ * and M show the readout cells (the look among them) under the live cell's dial. State lives in
+ * `useRecipes` (the look) and `useCaptureControls` (the camera and its dial).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -36,7 +36,6 @@ import { RecipeOptions, RecipeSheet, Track, type SheetMode } from "./RecipeSheet
 import { StagePanel } from "./RecipeBar";
 import {
   Histogram,
-  BrightCell,
   ReadoutCells,
   controlsOf,
   firstLive,
@@ -98,7 +97,7 @@ export function CameraScreen() {
   const [confirming, setConfirming] = useState(false);
   /**
    * The cell the photographer made live, or null for the mode's own: brightness in P, the shutter
-   * in M, nothing in AUTO (its adjust row is the look's strength until BRIGHT is tapped).
+   * in M. AUTO has no cells, and its adjust row is the look's strength.
    */
   const [chosenCell, setChosenCell] = useState<LiveKey | null>(null);
   /** With the look live: its row of looks, or, after a second tap on the one in force, its strength. */
@@ -185,16 +184,14 @@ export function CameraScreen() {
    * itself (a ruler moved in P) a live BRIGHT is forbidden, and the shutter is live in its place.
    */
   const liveCell: LiveKey | null =
-    capture.caps === null
+    capture.caps === null || !readout
       ? null
-      : !readout
-        ? chosenCell === "ev" && controlsOf(capture.caps, capture.mode).includes("ev") ? "ev" : null
-        : chosenCell === "look" ||
-            (chosenCell !== null &&
-              controlsOf(capture.caps, capture.mode).includes(chosenCell) &&
-              !forbiddenIn(chosenCell, capture.mode))
-          ? chosenCell
-          : firstLive(capture.caps, capture.mode);
+      : chosenCell === "look" ||
+          (chosenCell !== null &&
+            controlsOf(capture.caps, capture.mode).includes(chosenCell) &&
+            !forbiddenIn(chosenCell, capture.mode))
+        ? chosenCell
+        : firstLive(capture.caps, capture.mode);
   /** Only a dial that turned changes anything here: each mode arrives on its own live cell. */
   const chooseMode = (next: CaptureMode) => {
     if (!capture.chooseMode(next)) return;
@@ -348,10 +345,12 @@ export function CameraScreen() {
       tap: (x, y) => {
         if (!picture) return;
         setOpenStage(null);
-        // AUTO's adjust row goes back to the look's strength; P and M always have a dial up.
-        if (!readout) setChosenCell(null);
-        // A held lens cannot follow a tap; the tap hands focus back to the camera first.
-        if (capture.settings.focus !== "auto") capture.change({ ...capture.settings, focus: "auto" });
+        // A held lens cannot follow a tap; the tap hands focus back to the camera first. In AUTO
+        // it meters afresh, brightness included: with no cell to show one, a held value must not
+        // outlive the tap.
+        const ev = readout ? capture.settings.ev : 0;
+        if (capture.settings.focus !== "auto" || ev !== capture.settings.ev)
+          capture.change({ ...capture.settings, focus: "auto", ev });
         setFocusRing({ x, y, at: Date.now() });
         void SeekerCamera.focusAt(x / picture.width, y / picture.height).catch(() => {});
       },
@@ -675,7 +674,7 @@ export function CameraScreen() {
             )
           )}
 
-          {/* CHOOSE: AUTO chooses a look, with brightness pinned beside them; P and M choose a cell. */}
+          {/* CHOOSE: AUTO chooses a look; P and M choose a cell. */}
           {readout && capture.caps !== null ? (
             <View style={s.chooseCells}>
             <ReadoutCells
@@ -694,24 +693,7 @@ export function CameraScreen() {
             />
             </View>
           ) : (
-            <View style={s.chooseRow}>
-              <View style={s.grow}>{lookRow({ left: space.gutter, right: 0 })}</View>
-              {/* Brightness is set on the picture. Its key is here only while it is off zero, or
-                  open: a held value is never hidden, and at rest the row is the looks alone. */}
-              {capture.caps !== null && (capture.settings.ev !== 0 || liveCell === "ev") && (
-                <>
-                  <View style={s.divider} />
-                  <BrightCell
-                    caps={capture.caps}
-                    settings={capture.settings}
-                    meter={capture.meter}
-                    live={liveCell === "ev"}
-                    disabled={busy}
-                    onPress={() => setChosenCell(liveCell === "ev" ? null : "ev")}
-                  />
-                </>
-              )}
-            </View>
+            <View style={s.chooseRow}>{lookRow()}</View>
           )}
 
           {/* SHOOT: the shutter, and the two doors out of the camera set as words on its axis. */}
@@ -856,9 +838,9 @@ const s = StyleSheet.create({
   adjustRow: { height: ADJUST_HEIGHT, flexDirection: "row", alignItems: "center", gap: space.sm },
   /** A scrolling row in the adjust position: a column, so it takes the width and can bleed past it. */
   adjustSlot: { height: ADJUST_HEIGHT, justifyContent: "center" },
-  chooseRow: { height: 44, marginTop: space.sm, flexDirection: "row", alignItems: "center" },
+  /** The look row in the choose position: a column, so it takes the width and can bleed past it. */
+  chooseRow: { height: 44, marginTop: space.sm, justifyContent: "center" },
   chooseCells: { height: 44, marginTop: space.sm },
-  divider: { width: 1, height: 28, marginHorizontal: space.sm, backgroundColor: colors.line },
   muted: { color: colors.muted },
   strengthDisabled: { opacity: 0.35 },
   strengthCell: { width: 64, alignItems: "flex-start", justifyContent: "center" },

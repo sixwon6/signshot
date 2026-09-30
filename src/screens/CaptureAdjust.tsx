@@ -1,9 +1,8 @@
 /**
- * The adjust row: the live control's dial, directly above the readout cells. AUTO's brightness is
- * the strength slider's shape, two stops either way of a centred zero. In P and M each control is
- * a detented ruler: ISO in third stops, shutter in full stops, brightness in the device's own
- * steps, Kelvin by the hundred, focus in 2 % positions. The key at the row's end hands the control
- * back to the camera. The live cell below shows the value, so the row does not repeat it.
+ * The adjust row: the live control's dial, directly above the readout cells. Each control is a
+ * detented ruler: ISO in third stops, shutter in full stops, brightness in the device's own steps,
+ * Kelvin by the hundred, focus in 2 % positions. The key at the row's end hands the control back
+ * to the camera. The live cell below shows the value, so the row does not repeat it.
  * Presentational: state lives in `useCaptureControls`, and every value is what native applied.
  */
 import React, { useEffect, useRef, useState } from "react";
@@ -18,7 +17,6 @@ import {
 import {
   AUTO_LABEL,
   UNAVAILABLE,
-  autoEvSpan,
   clampFocus,
   formatEv,
   formatFocus,
@@ -35,7 +33,6 @@ import { typeScale as type } from "../ui/type";
 import { Chip, CHROME_FONT_SCALE } from "../ui/primitives";
 import { captureControls as copy } from "../ui/copy";
 import { LIGHT_LABEL, NAME, isoSteps, shutterSteps, type ControlKey } from "./CaptureControls";
-import { Track } from "./RecipeSheet";
 
 // ---------------------------------------------------------------------------------------------
 // The ruler
@@ -171,19 +168,6 @@ const nearestIndex = (ladder: readonly number[], want: number): number => {
   return best;
 };
 
-/** The whole stops inside AUTO's brightness span: the points on its rail, and the figure over each. */
-function wholeStops(caps: CaptureCapabilities, span: { min: number; max: number }): { steps: number; label: string }[] {
-  const range = caps.ev === UNAVAILABLE ? null : caps.ev;
-  if (!range || range.step <= 0) return [];
-  const out: { steps: number; label: string }[] = [];
-  for (let stop = -2; stop <= 2; stop++) {
-    const steps = Math.round(stop / range.step);
-    if (steps < span.min || steps > span.max) continue;
-    out.push({ steps, label: stop === 0 ? "0" : `${stop > 0 ? "+" : "-"}${Math.abs(stop)}` });
-  }
-  return out;
-}
-
 /** A ruler, and the key at its end that gives the control back to the camera. */
 function Dial({ ruler, handBack }: { ruler: React.ReactNode; handBack: React.ReactNode }) {
   return (
@@ -211,8 +195,6 @@ export function CaptureAdjust({
   const heldKelvin = typeof settings.whiteBalance === "object" ? settings.whiteBalance.kelvin : null;
   /** Colour has two faces in one row: the lights people stand in, and the Kelvin ruler. */
   const [kelvinUp, setKelvinUp] = useState(heldKelvin !== null);
-  /** The brightness track's measured width, which `Track` reads a touch against. */
-  const widths = useRef<Record<string, number>>({});
 
   /** "The camera's choice" is on: ink, because the accent is the photographer's. */
   const handBack = (on: boolean, onPress: () => void, testID: string, label: string = copy.auto) => (
@@ -264,54 +246,6 @@ export function CaptureAdjust({
     case "ev": {
       const ev = caps.ev === UNAVAILABLE ? null : caps.ev;
       if (ev === null) return null;
-      if (mode === "auto") {
-        const span = autoEvSpan(caps);
-        if (span === null) return null;
-        const width = span.max - span.min;
-        // A value held from outside the span (P's ruler goes further) rests the thumb at the end.
-        const fractionOf = (steps: number) => (Math.max(span.min, Math.min(span.max, steps)) - span.min) / width;
-        const stops = wholeStops(caps, span);
-        const to = (steps: number) => {
-          const next = Math.max(span.min, Math.min(span.max, steps));
-          if (next !== settings.ev) set({ ev: next });
-        };
-        return (
-          <View style={s.row}>
-            <View style={s.scale}>
-              {/* The figures hang from the track's own box, so their places are the marks' places. */}
-              <View>
-                <Track
-                  testID="capture-track-ev"
-                  widths={widths}
-                  widthKey="ev"
-                  height={ADJUST_HEIGHT}
-                  fraction={fractionOf(settings.ev)}
-                  origin={fractionOf(0)}
-                  marks={stops.map((stop) => fractionOf(stop.steps))}
-                  disabled={busy}
-                  accessibilityLabel={copy.readingOf(NAME.ev, formatEv(settings.ev, caps))}
-                  accessibilityValue={{ min: span.min, max: span.max, now: settings.ev }}
-                  onAt={(fraction) => to(span.min + Math.round(fraction * width))}
-                  onStep={(direction) => to(settings.ev + direction)}
-                />
-                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                  {stops.map((stop) => (
-                    <Text
-                      key={stop.steps}
-                      maxFontSizeMultiplier={CHROME_FONT_SCALE}
-                      style={[type.imprint, s.scaleLabel, { left: `${fractionOf(stop.steps) * 100}%` }]}
-                      numberOfLines={1}
-                    >
-                      {stop.label}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-            </View>
-            {handBack(settings.ev === 0, () => set({ ev: 0 }), "capture-ev-zero", copy.zero)}
-          </View>
-        );
-      }
       const count = ev.max - ev.min + 1;
       const perStop = Math.max(1, Math.round(1 / ev.step));
       return (
@@ -419,18 +353,6 @@ export function CaptureAdjust({
 const s = StyleSheet.create({
   row: { height: ADJUST_HEIGHT, flexDirection: "row", alignItems: "center", gap: space.sm },
   grow: { flex: 1 },
-  /** The thumb is 18 wide and centred on the value, so the rail starts half a thumb in. */
-  scale: { flex: 1, paddingHorizontal: 9 },
-  /** A figure centred over its mark, in the ruler's tracking, clear of the thumb beneath it. */
-  scaleLabel: {
-    position: "absolute",
-    top: 0,
-    width: 28,
-    marginLeft: -14,
-    color: colors.muted,
-    letterSpacing: 0.4,
-    textAlign: "center",
-  },
   /** A scrolling row runs out to the screen's edges rather than ending at a wall inside them. */
   bleed: { marginHorizontal: -space.gutter, flexGrow: 0 },
   bleedContent: { paddingHorizontal: space.gutter },

@@ -141,9 +141,12 @@ export function useCaptureControls({
         if (!alive) return;
         // AE lock has no key (M holds the metered exposure instead), so a stored one is released
         // rather than left in force with nothing on screen to release it.
-        const held = { ...clampSettings(stored.settings, device), aeLock: false };
+        const unlocked = { ...clampSettings(stored.settings, device), aeLock: false };
         // A held value the stored chrome would hide puts the readout up, and keeps it up.
-        const kept = chromeHolding(storedChrome, held);
+        const kept = chromeHolding(storedChrome, unlocked);
+        // AUTO has no cell to show a held brightness, so one stored under it is not brought back
+        // either: the camera opens on its own metering, as a phone camera does.
+        const held = kept.readout ? unlocked : { ...unlocked, ev: 0 };
         const remembered = rememberedFor(
           held,
           kept.readout,

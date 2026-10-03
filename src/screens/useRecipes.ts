@@ -211,6 +211,11 @@ export function useRecipes({
     setMine(all.filter((one) => !one.builtIn));
   }, []);
 
+  // Develop saves recipes too: the chips are re-read when the camera comes back on screen.
+  useEffect(() => {
+    if (live) void refresh().catch(() => {});
+  }, [live, refresh]);
+
   /** Runs a write, reports its message on failure, and says whether it went through. */
   const attempt = useCallback(async (work: () => Promise<void>): Promise<boolean> => {
     setError("");

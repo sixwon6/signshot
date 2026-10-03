@@ -366,7 +366,7 @@ export async function arweaveBytes(
   throw last;
 }
 /** Bytes that reached us but were not the published bytes. Never a retryable failure. */
-class IntegrityError extends Error {}
+export class IntegrityError extends Error {}
 /**
  * The one message a collector or publisher can act on: add SOL and try again. Exported so a caller
  * that refuses BEFORE simulating — a purchase the wallet plainly cannot cover — says the same

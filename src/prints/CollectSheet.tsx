@@ -249,6 +249,8 @@ export function CollectSheet({
       setCollected(receipt.number);
       setStatus("");
       onCollected?.();
+      // The count issued so far now includes this copy.
+      void reload();
     } catch (e) {
       clearQuote();
       // Seed Vault broadcasts first and answers only when its success screen is closed, so a

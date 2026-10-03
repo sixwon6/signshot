@@ -24,6 +24,7 @@ import {
   prepareTransaction,
   confirmTransaction,
   arweaveBytes,
+  IntegrityError,
   OPERATION_FLOOR_LAMPORTS,
   type PublicationOperation,
 } from "../../publications/rpc";
@@ -743,16 +744,28 @@ export async function payStorage(
     await uploadConfirmed(r, d);
   });
 }
+/** A gateway serves an accepted upload some seconds later, so the read-back is tried again. */
+const READ_BACK_MS = 30_000, READ_BACK_WAIT_MS = 3_000;
 async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
   await Promise.all([
     uploadDataItem(img.bytes, img.id),
     uploadDataItem(meta.bytes, meta.id),
   ]);
-  await Promise.all([
-    arweaveBytes(img.id, d.edition.imageHash),
-    arweaveBytes(meta.id, hash(utf8(d.metadata))),
-  ]);
+  const giveUp = Date.now() + READ_BACK_MS;
+  for (;;) {
+    try {
+      await Promise.all([
+        arweaveBytes(img.id, d.edition.imageHash),
+        arweaveBytes(meta.id, hash(utf8(d.metadata))),
+      ]);
+      return;
+    } catch (error) {
+      // Wrong bytes stay wrong; anything else is the gateway not serving the item yet.
+      if (error instanceof IntegrityError || Date.now() >= giveUp) throw error;
+      await new Promise((resolve) => setTimeout(resolve, READ_BACK_WAIT_MS));
+    }
+  }
 }
 
 /**

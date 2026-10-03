@@ -71,8 +71,9 @@ link, file list or trait the app would not have written.
 ## Storage
 
 The image and the document are ANS-104 data items signed on the phone by a per-wallet upload key
-(`src/arweave/`) and posted to ar.io Turbo's HTTP API once the publication confirms. Their ids are
-in the approved `uri`, so an upload can resume in any later session.
+(`src/arweave/`) and posted to ar.io Turbo's HTTP API once the publication confirms, then read back from a gateway
+against their hashes, for up to 30 seconds while the gateway catches up. Their ids are in the
+approved `uri`, so an upload can resume in any later session.
 
 - **Mainnet pays.** Turbo's free tier is a lifetime budget per wallet and per /24 subnet, so the
   publication transaction carries the storage payment, its own row in the review: a SOL transfer
@@ -315,9 +316,8 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
   (Continue renews it). Terms and Agree before the first publish and collect on a fresh install;
   an edition in `moderation.json` reads Hidden.
 
-- **Mainnet:** the Squads multisig and its test proposal (`programs/editions/MAINNET.md` steps
-  2–4), then the rest of `MAINNET.md` with `prepare-mainnet-windows.ps1` and the real
-  address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
+- **Mainnet:** `programs/editions/MAINNET.md` from step 6, with `prepare-mainnet-windows.ps1` and
+  the real address, then `npm run test:svm` against that ELF before it is deployed; the address, digest,
   length and upgrade authority in `publications/deployments.ts`; `EXPO_PUBLIC_SOLANA_RPC_URL` at a
   key-free HTTPS URL, a keyless proxy or a provider's key-free frontend URL, since the APK carries it
   in plain text (`release:check` refuses a public endpoint, a query string, credentials and another

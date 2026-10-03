@@ -163,25 +163,53 @@ export function ReviewScreen() {
     [connectAnd, authorizeSession],
   );
   const detail = photos.find((p) => p.record.baseName === openBaseName);
+  /**
+   * A capture the camera just handed over. The list stays out of sight until its photograph
+   * opens, for three seconds at most, so the shutter leads to the photograph and nothing else.
+   */
+  const target = route.params?.photo;
+  const awaited = useRef(target);
+  awaited.current = target;
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    setWaited(false);
+    if (!target) return;
+    const timer = setTimeout(() => setWaited(true), 3000);
+    return () => clearTimeout(timer);
+  }, [target]);
+  /** That photograph opens without the fade, and the list stays unseen under it. */
+  const [instant, setInstant] = useState(false);
+  const arriving = (!!target && !waited && !detail) || (instant && !!detail);
+  /** The ratio of a camera version, known once its picture has loaded. */
+  const [measured, setMeasured] = useState<{ uri: string; aspect: number } | null>(null);
 
   const load = useCallback(async (record?: CaptureRecord) => {
     const id = ++request.current;
     try {
       const records = record ? [record] : await SeekerCamera.listCaptures();
+      const readLocal = async (record: CaptureRecord): Promise<PhotoEntry> => {
+        const [publication, selection] = await Promise.all([
+          getSavedPublicationState(record),
+          readPhotoEdit(record)
+            .then((edit) => ({
+              edit,
+              error: undefined as string | undefined,
+            }))
+            .catch((e) => ({ edit: undefined, error: safeErrorText(e) })),
+        ]);
+        return { record, publication, ...selection };
+      };
+      // The capture the camera handed over is read first, so its photograph opens at once.
+      const first = record ? undefined : records.find((r) => r.baseName === awaited.current);
+      if (first) {
+        const entry = await readLocal(first);
+        if (id !== request.current) return;
+        setPhotos((previous) =>
+          previous.some((p) => p.record.baseName === first.baseName) ? previous : [entry, ...previous]);
+      }
       await loadPhotosInStages<CaptureRecord, PhotoEntry>({
         records,
-        readLocal: async (record) => {
-          const [publication, selection] = await Promise.all([
-            getSavedPublicationState(record),
-            readPhotoEdit(record)
-              .then((edit) => ({
-                edit,
-                error: undefined as string | undefined,
-              }))
-              .catch((e) => ({ edit: undefined, error: safeErrorText(e) })),
-          ]);
-          return { record, publication, ...selection };
-        },
+        readLocal,
         showLocal: (next) => {
           setPhotos(previous => record
             ? previous.map(entry => entry.record.baseName === record.baseName ? next[0] : entry)
@@ -235,6 +263,7 @@ export function ReviewScreen() {
     const target = route.params?.photo;
     if (target && photos.some((p) => p.record.baseName === target)) {
       setOpenBaseName(target);
+      setInstant(true);
       setSheet(null);
       setFeedback("");
       navigation.setParams({ photo: undefined });
@@ -257,6 +286,7 @@ export function ReviewScreen() {
   }
   function open(entry: PhotoEntry) {
     setOpenBaseName(entry.record.baseName);
+    setInstant(false);
     setSheet(null);
     setFeedback("");
     // Opening a photograph is the status check. There is no button for it.
@@ -265,11 +295,13 @@ export function ReviewScreen() {
   function close() {
     if (!busy) {
       setOpenBaseName(null);
+      setInstant(false);
       setSheet(null);
     }
   }
   function closeSheet() {
     setSheet(null);
+    setFeedback("");
     if (detail) void load(detail.record);
   }
   async function save(entry: PhotoEntry) {
@@ -518,7 +550,7 @@ export function ReviewScreen() {
   /** Null for a photograph nothing has been done to: the readout then ends at its size. */
   const detailStatus = detail ? photoStatus(detail.publication) : null;
   /**
-   * The print takes the photograph's ratio (draft, else saved edit, else square). The picture is
+   * The print takes the photograph's ratio (draft, else saved edit, else the loaded picture). The picture is
    * capped in height and the paper narrows, so a portrait photo makes a portrait print.
    */
   const detailPixels = d
@@ -526,10 +558,13 @@ export function ReviewScreen() {
     : detail?.edit
       ? { width: detail.edit.width, height: detail.edit.height }
       : null;
+  const detailUri = record ? selectedPhotoUri(record, detail?.edit, d) : "";
   const detailAspect =
     detailPixels && detailPixels.width > 0 && detailPixels.height > 0
       ? detailPixels.width / detailPixels.height
-      : 1;
+      : measured?.uri === detailUri
+        ? measured.aspect
+        : 3 / 4;
   /**
    * The price, only for the photograph it was read for: `offer` outlives one render of another
    * photograph otherwise, and a price shown under the wrong picture is worse than none.
@@ -549,6 +584,7 @@ export function ReviewScreen() {
   return (
     <Screen>
       {focused && <StatusBar style="light" />}
+      <View style={[s.flex, arriving && s.unseen]} pointerEvents={arriving ? "none" : "auto"}>
       <BackButton
         label={actions.camera}
         accessibilityLabel={actions.backToCamera}
@@ -644,7 +680,8 @@ export function ReviewScreen() {
           </View>
         }
       />
-      <Modal visible={!!detail} animationType="fade" onRequestClose={close}>
+      </View>
+      <Modal visible={!!detail} animationType={instant ? "none" : "fade"} onRequestClose={close}>
         {detail && record && (
           <Screen>
             <BackButton
@@ -663,9 +700,13 @@ export function ReviewScreen() {
                 }}
               >
                 <Image
-                  source={{ uri: selectedPhotoUri(record, detail.edit, d) }}
+                  source={{ uri: detailUri }}
                   style={s.detailPhoto}
                   resizeMode="contain"
+                  onLoad={({ nativeEvent: { source } }) => {
+                    if (source.width > 0 && source.height > 0)
+                      setMeasured({ uri: detailUri, aspect: source.width / source.height });
+                  }}
                   accessibilityLabel={d?.edition.title ?? titleOf(detail)}
                 />
               </PhotoFrame>
@@ -786,6 +827,11 @@ export function ReviewScreen() {
                   />
                 )}
               </View>
+              {!!feedback && (
+                <Text style={s.feedback} accessibilityLiveRegion="polite">
+                  {feedback}
+                </Text>
+              )}
               {canDevelop(detail.publication) &&
                 !detail.error &&
                 detail.edit && (
@@ -830,11 +876,6 @@ export function ReviewScreen() {
                   onPress={() => deletePhoto(detail)}
                 />
               </View>
-              {!!feedback && (
-                <Text style={s.feedback} accessibilityLiveRegion="polite">
-                  {feedback}
-                </Text>
-              )}
             </ScrollView>
             {sheet === "publish" && (
               <PrintSheet
@@ -942,6 +983,7 @@ const s = StyleSheet.create({
   body: { ...typeScale.body, color: colors.muted },
   actionRow: { flexDirection: "row", gap: space.sm },
   flex: { flex: 1 },
+  unseen: { opacity: 0 },
   danger: {
     marginTop: space.sm,
     paddingTop: space.lg,

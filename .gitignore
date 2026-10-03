@@ -49,3 +49,12 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.*
+
+# Demo and deck renders stay local; the script, captions and notes are text.
+output/
+submission/**/*.mp4
+submission/**/*.mp3
+submission/**/*.pptx
+submission/**/*.pdf
+submission/**/*.jpg
+submission/**/*.png

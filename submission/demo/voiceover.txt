@@ -2,7 +2,7 @@ This is Signshot, a creative camera for the Solana Seeker. A clean, simple camer
 
 It’s a point-and-shoot, with ISO, shutter, colour and focus controls when I want them. The camera comes with a few looks. I’ll pick Disposable. Tap to focus, drag up to brighten, and shoot. What I see in the viewfinder is what I get.
 
-The photo opens right away. In Develop I can change the look, or how strong it is, after the shot. Save puts a copy in my gallery. The original stays on the phone, and none of this needs a wallet.
+The photo opens right away. It’s kept in Signshot, and Save puts a copy in my phone’s gallery. None of this needs a wallet.
 
 This one I want to publish. I’ll call it After dinner.
 

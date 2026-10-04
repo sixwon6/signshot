@@ -35,6 +35,10 @@ phone itself (SEEKER on a Seeker, nothing added), Digicam, Disposable and Camcor
 the look in force opens its strength, then its stages for editing. DISP cycles a plain picture, a
 grid of thirds and the histogram. Capture sizes are the device's 4:3 YUV sizes.
 
+The shutter opens the new photograph with Publish this moment, Save and Share. Develop, which
+puts another look or strength on a photograph already taken, is offered when it is opened from
+Photos, not on the one the shutter just made.
+
 ## The edition lifecycle
 
 - **Publish.** One wallet approval creates the edition, its Metaplex Core collection and copy 1

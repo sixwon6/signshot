@@ -170,21 +170,33 @@ export function ReviewScreen() {
   const target = route.params?.photo;
   const awaited = useRef(target);
   awaited.current = target;
-  const [waited, setWaited] = useState(false);
+  /** The capture whose three seconds are up. Kept by name, so the next capture starts unseen. */
+  const [waitedFor, setWaitedFor] = useState<string>();
   useEffect(() => {
-    setWaited(false);
     if (!target) return;
-    const timer = setTimeout(() => setWaited(true), 3000);
+    const timer = setTimeout(() => setWaitedFor(target), 3000);
     return () => clearTimeout(timer);
   }, [target]);
-  /** That photograph opens without the fade, and the list stays unseen under it. */
-  const [instant, setInstant] = useState(false);
-  const arriving = (!!target && !waited && !detail) || (instant && !!detail);
+  /**
+   * The photograph the shutter just made, while it is the one open: it opens without the fade
+   * (which would show the list through it), the list stays unseen under it, and Develop is not
+   * offered, since its look was chosen a moment ago. Opened from Photos it is like any other.
+   */
+  const [takenBaseName, setTakenBaseName] = useState<string | null>(null);
+  const justTaken = !!detail && openBaseName === takenBaseName;
+  const arriving = (!!target && waitedFor !== target && !detail) || justTaken;
   /** The ratio of a camera version, known once its picture has loaded. */
   const [measured, setMeasured] = useState<{ uri: string; aspect: number } | null>(null);
 
-  const load = useCallback(async (record?: CaptureRecord) => {
+  /**
+   * True from the start of a full read until its list lands. A re-read of one photograph asked
+   * for meanwhile reads them all: alone it would cancel the list and leave the grid short.
+   */
+  const listing = useRef(false);
+  const load = useCallback(async (only?: CaptureRecord) => {
+    const record = listing.current ? undefined : only;
     const id = ++request.current;
+    if (!record) listing.current = true;
     try {
       const records = record ? [record] : await SeekerCamera.listCaptures();
       const readLocal = async (record: CaptureRecord): Promise<PhotoEntry> => {
@@ -206,11 +218,15 @@ export function ReviewScreen() {
         if (id !== request.current) return;
         setPhotos((previous) =>
           previous.some((p) => p.record.baseName === first.baseName) ? previous : [entry, ...previous]);
+      } else if (!record && awaited.current && id === request.current) {
+        // Not among the captures: there is nothing to open, now or on a later read.
+        navigation.setParams({ photo: undefined });
       }
       await loadPhotosInStages<CaptureRecord, PhotoEntry>({
         records,
         readLocal,
         showLocal: (next) => {
+          if (!record) listing.current = false;
           setPhotos(previous => record
             ? previous.map(entry => entry.record.baseName === record.baseName ? next[0] : entry)
             : next);
@@ -224,11 +240,18 @@ export function ReviewScreen() {
         isCurrent: () => id === request.current,
       });
     } catch (e) {
-      if (id === request.current) setError(safeErrorText(e));
+      if (id === request.current) {
+        setError(safeErrorText(e));
+        if (!record) {
+          listing.current = false;
+          // The captures could not be read: the hand-over ends here, and the error shows.
+          if (awaited.current) navigation.setParams({ photo: undefined });
+        }
+      }
     } finally {
       if (id === request.current) setLoading(false);
     }
-  }, []);
+  }, [navigation]);
   useFocusEffect(
     useCallback(() => {
       if (!active) return;
@@ -263,7 +286,7 @@ export function ReviewScreen() {
     const target = route.params?.photo;
     if (target && photos.some((p) => p.record.baseName === target)) {
       setOpenBaseName(target);
-      setInstant(true);
+      setTakenBaseName(target);
       setSheet(null);
       setFeedback("");
       navigation.setParams({ photo: undefined });
@@ -286,7 +309,7 @@ export function ReviewScreen() {
   }
   function open(entry: PhotoEntry) {
     setOpenBaseName(entry.record.baseName);
-    setInstant(false);
+    setTakenBaseName(null);
     setSheet(null);
     setFeedback("");
     // Opening a photograph is the status check. There is no button for it.
@@ -295,7 +318,7 @@ export function ReviewScreen() {
   function close() {
     if (!busy) {
       setOpenBaseName(null);
-      setInstant(false);
+      setTakenBaseName(null);
       setSheet(null);
     }
   }
@@ -681,7 +704,7 @@ export function ReviewScreen() {
         }
       />
       </View>
-      <Modal visible={!!detail} animationType={instant ? "none" : "fade"} onRequestClose={close}>
+      <Modal visible={!!detail} animationType={justTaken ? "none" : "fade"} onRequestClose={close}>
         {detail && record && (
           <Screen>
             <BackButton
@@ -815,7 +838,7 @@ export function ReviewScreen() {
                     style={s.flex}
                   />
                 )}
-                {canDevelop(detail.publication) && !detail.error && (
+                {canDevelop(detail.publication) && !detail.error && !justTaken && (
                   <Pill
                     label={developCopy.develop}
                     variant="secondary"

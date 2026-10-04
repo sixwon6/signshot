@@ -11,11 +11,10 @@
  *
  * The `litesvm` npm package ships no Windows binary, so LiteSVM runs as `programs/svm` (the Rust
  * crate, built with `build-native-windows.ps1` on the pinned toolchain) and this script drives it
- * line by line. Every `era_editions` instruction comes from the app's client
- * (`publications/core/protocol.ts`, `core/album.ts`), is compiled and signed with @solana/kit and
- * runs with signature checks on; the results are read back through the client's own readers over
- * a JSON-RPC stub that answers from the SVM. Token-2022 and the associated-token program are the
- * builds LiteSVM carries; Metaplex Core is mainnet's.
+ * line by line. Every `era_editions` instruction comes from `publications/core/editionsProgram.ts`,
+ * is compiled and signed with @solana/kit and runs with signature checks on; Core accounts are
+ * decoded here. Token-2022 and the associated-token program are the builds LiteSVM carries;
+ * Metaplex Core is mainnet's.
  */
 
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -26,6 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
+  AccountRole,
   address,
   appendTransactionMessageInstructions,
   blockhash,
@@ -63,31 +63,19 @@ import {
   getTransferCheckedInstruction,
 } from "@solana-program/token-2022";
 import {
-  GENESIS_ATTRIBUTE,
+  EDITIONS_ERROR_CODES as E,
+  EDITION_ACCOUNT_BYTES,
   MPL_CORE,
   SYSTEM_PROGRAM,
-  addresses,
-  albumAddress,
-  buyInstruction,
-  claimReceiptAddress,
-  collectInstruction,
-  collectedCopy,
-  collectionRoyalty,
-  decodeAsset,
-  decodeCollection,
-  decodeGroup,
-  instruction,
-  readOfferAccount,
-  readPrintState,
-  readPublication,
-  sealedGenesisMint,
-  setOfferInstruction,
+  claimInstruction,
+  claimantOf,
+  decodeEdition,
+  printAddress,
+  publicationAddresses,
+  publishInstruction,
+  setPriceInstruction,
   type GenesisAccounts,
-  type SealedTerms,
-} from "../publications/core/protocol";
-import { createAlbumInstruction } from "../publications/core/album";
-import { transferInstructions } from "../publications/core/transfer";
-import { publicationTime } from "../publications/core/attestationCheck";
+} from "../publications/core/editionsProgram";
 import { SGT_GROUP_ADDRESS, isSeekerGenesisMint } from "../publications/core/genesisToken";
 import {
   assertMemberDecodes,
@@ -96,7 +84,6 @@ import {
   groupInstructions,
   memberInstructions,
 } from "../publications/devnet/genesisFixture";
-import type { CoreMetadata } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -115,10 +102,6 @@ function named(kind: "plain" | "devnet"): { elf: string; id: Address } | null {
   if (!id) throw new Error(`--${kind} needs --${kind}-id: the address that ELF's declare_id! names.`);
   if (!existsSync(elf)) throw new Error(`No ELF at ${elf}`);
   return { elf: resolve(elf), id: address(id) };
-}
-/** Exactly the builds named on the command line or in the environment. */
-function builds() {
-  return { plain: named("plain"), devnet: named("devnet") };
 }
 
 // --- The LiteSVM host -----------------------------------------------------------------------------
@@ -200,7 +183,6 @@ let clockTime = 0n;
 /**
  * Sets the Clock sysvar's `unix_timestamp`, which LiteSVM starts at 0: the last of its five
  * 8-byte fields (slot, epoch_start_timestamp, epoch, leader_schedule_epoch, unix_timestamp).
- * Written as an account, it is what the program's `Clock::get()` reads next.
  */
 async function setClock(unixTimestamp: bigint) {
   const clock = await read(CLOCK);
@@ -209,15 +191,6 @@ async function setClock(unixTimestamp: bigint) {
   new DataView(bytes.buffer).setBigInt64(32, unixTimestamp, true);
   await write(CLOCK, { lamports: clock.lamports, owner: clock.owner, bytes });
   clockTime = unixTimestamp;
-}
-const PUBLISHED_AT = 173; // lib.rs `published_at_is_eight_bytes_right_after_bump`
-
-/** The edition's `published_at` straight from its bytes, and its length, beside what the client reads. */
-async function recorded(edition: string) {
-  const bytes = (await read(edition))?.bytes ?? new Uint8Array(0);
-  const raw = bytes.length >= PUBLISHED_AT + 8
-    ? new DataView(bytes.buffer, bytes.byteOffset).getBigInt64(PUBLISHED_AT, true) : null;
-  return { length: bytes.length, raw, seekerOnly: bytes[PUBLISHED_AT + 8] };
 }
 
 async function wallet(): Promise<KeyPairSigner> {
@@ -251,8 +224,7 @@ async function send(payer: KeyPairSigner, instructions: Instruction[], budget = 
   return host.call<Outcome>("send", { tx: hexOf(new Uint8Array(Buffer.from(getBase64EncodedWireTransaction(signed), "base64"))) });
 }
 
-// --- The client's readers, answered from the SVM ----------------------------------------------------
-
+// The genesis fixture reads accounts and rent over JSON-RPC; this answers it from the SVM.
 const SVM_RPC = "http://litesvm.invalid";
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -357,11 +329,140 @@ async function mainnet(): Promise<Mainnet> {
   return record;
 }
 
+// --- Metaplex Core accounts, decoded here --------------------------------------------------------
+
+/** A bounds-checked little-endian cursor. */
+function cursor(bytes: Uint8Array, start = 0) {
+  let at = start;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const need = (n: number) => { if (at + n > bytes.length) throw new Error("Truncated Core account"); const was = at; at += n; return was; };
+  const c = {
+    u8: () => bytes[need(1)],
+    u16: () => view.getUint16(need(2), true),
+    u32: () => view.getUint32(need(4), true),
+    u64: () => view.getBigUint64(need(8), true),
+    key: () => { const was = need(32); return keyOf(bytes.subarray(was, was + 32)); },
+    text: () => { const n = c.u32(); const was = need(n); return new TextDecoder().decode(bytes.subarray(was, was + n)); },
+    get at() { return at; },
+  };
+  return c;
+}
+
+const AUTHORITY = ["None", "Owner", "UpdateAuthority", "Address"] as const;
+type Plugin =
+  | { type: "MasterEdition"; authority: string; maxSupply: number | null }
+  | { type: "ImmutableMetadata"; authority: string }
+  | { type: "Attributes"; authority: string; attributes: { key: string; value: string }[] }
+  | { type: "Royalties"; authority: string; basisPoints: number; creators: { address: Address; percentage: number }[]; ruleSet: number }
+  | { type: "Edition"; authority: string; number: number }
+  | { type: "Other"; authority: string; id: number };
+
+/** `PluginHeaderV1` at `base`, then `PluginRegistryV1` and the plugins it points at. */
+function plugins(bytes: Uint8Array, base: number): Plugin[] {
+  if (bytes.length === base) return [];
+  const header = cursor(bytes, base);
+  if (header.u8() !== 3) throw new Error("No plugin header");
+  const registry = cursor(bytes, Number(header.u64()));
+  if (registry.u8() !== 4) throw new Error("No plugin registry");
+  const count = registry.u32();
+  const out: Plugin[] = [];
+  for (let i = 0; i < count; i += 1) {
+    registry.u8(); // plugin type
+    const tag = registry.u8();
+    if (tag === 3) registry.key();
+    const authority = AUTHORITY[tag];
+    const p = cursor(bytes, Number(registry.u64()));
+    const id = p.u8();
+    if (id === 10) {
+      const maxSupply = p.u8() ? p.u32() : null;
+      out.push({ type: "MasterEdition", authority, maxSupply });
+    } else if (id === 12) out.push({ type: "ImmutableMetadata", authority });
+    else if (id === 6) {
+      const n = p.u32();
+      const attributes = Array.from({ length: n }, () => ({ key: p.text(), value: p.text() }));
+      out.push({ type: "Attributes", authority, attributes });
+    } else if (id === 0) {
+      const basisPoints = p.u16();
+      const n = p.u32();
+      const creators = Array.from({ length: n }, () => ({ address: p.key(), percentage: p.u8() }));
+      out.push({ type: "Royalties", authority, basisPoints, creators, ruleSet: p.u8() });
+    } else if (id === 9) out.push({ type: "Edition", authority, number: p.u32() });
+    else out.push({ type: "Other", authority, id });
+  }
+  return out;
+}
+
+/** Core `CollectionV1` (key 5). */
+function decodeCollection(bytes: Uint8Array) {
+  const c = cursor(bytes);
+  if (c.u8() !== 5) throw new Error("Not a Core collection");
+  const updateAuthority = c.key();
+  const name = c.text();
+  const uri = c.text();
+  const numMinted = c.u32();
+  const currentSize = c.u32();
+  return { updateAuthority, name, uri, numMinted, currentSize, plugins: plugins(bytes, c.at) };
+}
+
+/** Core `AssetV1` (key 1). */
+function decodeAsset(bytes: Uint8Array) {
+  const c = cursor(bytes);
+  if (c.u8() !== 1) throw new Error("Not a Core asset");
+  const owner = c.key();
+  const kind = c.u8();
+  const updateAuthority = kind === 0 ? null : c.key();
+  const name = c.text();
+  const uri = c.text();
+  if (c.u8()) c.u64(); // seq
+  return { owner, updateKind: kind, updateAuthority, name, uri, plugins: plugins(bytes, c.at) };
+}
+
+const pluginOf = <T extends Plugin["type"]>(list: Plugin[], type: T) =>
+  list.find((p): p is Extract<Plugin, { type: T }> => p.type === type);
+
+// Core instructions the suite sends by hand, in the `mpl-core` crate builders' account order.
+// An absent optional account is Core's own id.
+const coreTransfer = (asset: string, collection: string, owner: Address, to: Address): Instruction => ({
+  programAddress: MPL_CORE,
+  accounts: [
+    { address: address(asset), role: AccountRole.WRITABLE },
+    { address: address(collection), role: AccountRole.READONLY },
+    { address: owner, role: AccountRole.WRITABLE_SIGNER },
+    { address: owner, role: AccountRole.READONLY_SIGNER },
+    { address: to, role: AccountRole.READONLY },
+    { address: SYSTEM_PROGRAM, role: AccountRole.READONLY },
+    { address: MPL_CORE, role: AccountRole.READONLY },
+  ],
+  data: new Uint8Array([14, 0]), // TransferV1, compression_proof None
+});
+const coreBurn = (asset: string, collection: string, owner: Address): Instruction => ({
+  programAddress: MPL_CORE,
+  accounts: [
+    { address: address(asset), role: AccountRole.WRITABLE },
+    { address: address(collection), role: AccountRole.WRITABLE },
+    { address: owner, role: AccountRole.WRITABLE_SIGNER },
+    { address: owner, role: AccountRole.READONLY_SIGNER },
+    { address: SYSTEM_PROGRAM, role: AccountRole.READONLY },
+    { address: MPL_CORE, role: AccountRole.READONLY },
+  ],
+  data: new Uint8Array([12, 0]), // BurnV1, compression_proof None
+});
+/** Core's permissionless fee sweep, `Collect` (19), with the two recipients its builder defaults to. */
+const coreCollect = (asset: string): Instruction => ({
+  programAddress: MPL_CORE,
+  accounts: [
+    { address: address("8AT6o8Qk5T9QnZvPThMrF9bcCQLTGkyGvVZZzHgCw11v"), role: AccountRole.WRITABLE },
+    { address: address("MmHsqX4LxTfifxoH8BVRLUKrwDn1LPCac6YcCZTHhwt"), role: AccountRole.WRITABLE },
+    { address: address(asset), role: AccountRole.WRITABLE },
+  ],
+  data: new Uint8Array([19]),
+});
+
 // --- Checks ---------------------------------------------------------------------------------------
 
 let failures = 0;
 // Where Anchor says it threw, so a refusal line names the check that refused.
-const thrownAt = (o: Outcome) => o.logs.map((l) => /AnchorError thrown in (\S+:\d+)/.exec(l)?.[1]).find(Boolean);
+const thrownAt = (o: Outcome) => o.logs.map((l) => /AnchorError (?:thrown in|caused by account: )(\S+(?::\d+)?)/.exec(l)?.[1]).find(Boolean);
 const seen = (o: Outcome) => o.ok ? `ok, ${o.units} CU`
   : o.custom ? `error ${o.custom.code}${thrownAt(o) ? ` at ${thrownAt(o)}` : ""}` : o.err ?? "failed";
 function ok(name: string, condition: boolean, outcome?: Outcome) {
@@ -378,13 +479,17 @@ const settles = async (label: string, o: Promise<Outcome>) => {
   return outcome.ok;
 };
 
-// Anchor 1.1.2 (`anchor-lang-error`), and `EditionError` in programs/editions/src/lib.rs.
-const DECLARED_PROGRAM_ID_MISMATCH = 4100;
-const E = {
-  InvalidTerms: 6000, SoldOut: 6001, StaleNumber: 6002, NotForSale: 6005, OfferChanged: 6006,
-  PaymentRequired: 6007, InvalidGenesisToken: 6008, PriceTooLow: 6009, InvalidRoyalty: 6010,
-  GenesisTokenRequired: 6011, AlreadyCollected: 6012,
+// Anchor 1.1.2 (`anchor-lang-error`).
+const A = {
+  ConstraintHasOne: 2001, ConstraintSeeds: 2006, ConstraintOwner: 2004, ConstraintAddress: 2012,
+  AccountNotEnoughKeys: 3005, AccountOwnedByWrongProgram: 3007, AccountNotSigner: 3010,
+  DeclaredProgramIdMismatch: 4100,
 } as const;
+/** The System program's `AccountAlreadyInUse`, what Anchor's `init` answers for an existing account. */
+const ACCOUNT_ALREADY_IN_USE = 0;
+
+/** Measured once per build and printed at the end. */
+const measured: Record<string, number | bigint | string> = {};
 
 // --- Editions --------------------------------------------------------------------------------------
 
@@ -392,56 +497,90 @@ const arweave = () => `https://arweave.net/${randomBytes(32).toString("base64url
 const hex32 = () => randomBytes(32).toString("hex");
 let made = 0;
 
-interface Draft { e: CoreMetadata; uri: string; metadataHash: string; creator: KeyPairSigner; sealed: SealedTerms }
+interface Draft {
+  program: Address;
+  creator: KeyPairSigner;
+  nonce: string;
+  title: string;
+  uri: string;
+  metadataHash: string;
+  imageHash: string;
+  supply: number;
+  royaltyBps: number;
+  seekerOnly: boolean;
+  price: bigint;
+  genesis?: GenesisAccounts;
+  collection: Address;
+  edition: Address;
+  /** Copy 1's address. */
+  print: Address;
+}
 
-/** An open edition at the default royalty unless `sealed` says otherwise. */
-const OPEN: SealedTerms = { royaltyBps: 500, seekerOnly: false };
+type Terms = Partial<Pick<Draft, "royaltyBps" | "seekerOnly" | "price" | "genesis" | "title" | "uri" | "supply">>;
 
-async function draft(program: Address, creator: KeyPairSigner, supply: number, genesisMint?: string,
-  sealed: SealedTerms = OPEN): Promise<Draft> {
-  const nonce = hex32();
-  const keys = await addresses(program, creator.address, nonce);
+async function draft(program: Address, creator: KeyPairSigner, supply: number, terms: Terms = {}): Promise<Draft> {
   made += 1;
+  const nonce = hex32();
+  const seekerOnly = terms.seekerOnly ?? false;
+  const k = await publicationAddresses(program, creator.address, nonce,
+    claimantOf(creator.address, seekerOnly, terms.genesis?.mint));
   return {
-    creator, uri: arweave(), metadataHash: hex32(), sealed,
-    e: {
-      cluster: "mainnet-beta", program, edition: keys.edition, collection: keys.collection,
-      // Two digits, so every title is the same length and every copy's Core asset the same size.
-      creator: creator.address, nonce, title: `Moment ${String(made).padStart(2, "0")}`, supply,
-      image: arweave(), imageHash: hex32(), width: 3000, height: 4000, description: "",
-      ...(genesisMint ? { genesisMint } : {}),
-    },
+    program, creator, nonce, supply, seekerOnly,
+    // Two digits, so every title is the same length and every copy's Core asset the same size.
+    title: `Moment ${String(made % 100).padStart(2, "0")}`,
+    uri: arweave(), metadataHash: hex32(), imageHash: hex32(), royaltyBps: 500, price: 0n,
+    ...terms,
+    ...k,
   };
 }
 
-function publish(d: Draft, options: { album?: string; genesis?: GenesisAccounts; edit?: (ix: Instruction) => Instruction } = {}) {
-  return instruction(d.e, d.e.creator, 1, d.uri, d.metadataHash, options.album, options.genesis, d.sealed)
-    .then((ix) => send(d.creator, [options.edit ? options.edit(ix) : ix]));
-}
-
-/**
- * `publish`'s instruction data with the title and the trailing `royalty_bps` / `seeker_only`
- * replaced: what the client's own gates (`terms`, `checkSealedTerms`, and Seeker-only without the
- * creator's Genesis Token) refuse to build.
- */
-const rewrite = (from: string, to: { title?: string; royaltyBps?: number; seekerOnly?: boolean }) => (ix: Instruction): Instruction => {
-  const data = new Uint8Array(ix.data!);
-  const head = data.subarray(0, 40);
-  const oldTitle = new TextEncoder().encode(from).length;
-  const tail = new Uint8Array(data.subarray(44 + oldTitle));
-  if (to.royaltyBps !== undefined) new DataView(tail.buffer).setUint16(tail.length - 3, to.royaltyBps, true);
-  if (to.seekerOnly !== undefined) tail[tail.length - 1] = to.seekerOnly ? 1 : 0;
-  const title = new TextEncoder().encode(to.title ?? from);
-  const length = new Uint8Array(4);
-  new DataView(length.buffer).setUint32(0, title.length, true);
-  return { ...ix, data: new Uint8Array([...head, ...length, ...title, ...tail]) };
-};
-
-/** Anchor's absent optional account: the program's own id in that place. */
-const absent = (place: number) => (ix: Instruction): Instruction => ({
-  ...ix,
-  accounts: ix.accounts?.map((meta, i) => (i === ix.accounts!.length + place ? { ...meta, address: ix.programAddress } : meta)),
+const publishIx = (d: Draft) => publishInstruction({
+  program: d.program, creator: d.creator.address, nonce: d.nonce, title: d.title, uri: d.uri,
+  metadataHash: d.metadataHash, imageHash: d.imageHash, supply: d.supply, royaltyBps: d.royaltyBps,
+  seekerOnly: d.seekerOnly, price: d.price, genesis: d.genesis,
 });
+const publish = async (d: Draft, edit?: (ix: Instruction) => Instruction) =>
+  send(d.creator, [edit ? edit(await publishIx(d)) : await publishIx(d)]);
+
+const claimIx = (d: Draft, collector: Address, expectedPrice = 0n, genesis?: GenesisAccounts) => claimInstruction({
+  program: d.program, collector, creator: d.creator.address, collection: d.collection, expectedPrice, genesis,
+});
+const claim = async (d: Draft, collector: KeyPairSigner, expectedPrice = 0n, genesis?: GenesisAccounts,
+  edit?: (ix: Instruction) => Instruction) => {
+  const ix = await claimIx(d, collector.address, expectedPrice, genesis);
+  return send(collector, [edit ? edit(ix) : ix]);
+};
+const setPrice = (d: Draft, price: bigint, signer = d.creator) =>
+  send(signer, [setPriceInstruction({ program: d.program, creator: signer.address, edition: d.edition, price })]);
+
+/** The account at `place` (negative counts from the end) replaced by `to`. */
+const swap = (place: number, to: Address) => (ix: Instruction): Instruction => ({
+  ...ix,
+  accounts: ix.accounts?.map((meta, i) =>
+    (i === (place < 0 ? ix.accounts!.length + place : place) ? { ...meta, address: to } : meta)),
+});
+/** Anchor's absent optional account: the program's own id in that place. */
+const absent = (place: number) => (ix: Instruction): Instruction => swap(place, ix.programAddress)(ix);
+
+const editionOf = async (d: Draft) => {
+  const found = await read(d.edition);
+  return found && found.owner === d.program ? { length: found.bytes.length, ...decodeEdition(found.bytes) } : null;
+};
+const copyAt = async (key: string) => {
+  const found = await read(key);
+  return found && found.owner === MPL_CORE && found.bytes[0] === 1 ? decodeAsset(found.bytes) : null;
+};
+const printOf = (d: Draft, claimant: string) => printAddress(d.program, d.edition, claimant);
+
+/** A conforming copy: owner, `Collection(collection)`, name `{title} #n`, the collection's uri, Edition n and ImmutableMetadata, both None. */
+async function isCopy(d: Draft, key: string, owner: Address, n: number) {
+  const a = await copyAt(key);
+  const edition = a && pluginOf(a.plugins, "Edition");
+  return Boolean(a && a.owner === owner && a.updateKind === 2 && a.updateAuthority === d.collection &&
+    a.name === `${d.title} #${n}` && a.uri === d.uri && a.plugins.length === 2 &&
+    edition?.number === n && edition.authority === "None" &&
+    pluginOf(a.plugins, "ImmutableMetadata")?.authority === "None");
+}
 
 // --- Genesis Token accounts -----------------------------------------------------------------------
 
@@ -475,7 +614,6 @@ const TOKEN_GROUP = 21;
  */
 async function member(at: KeyPairSigner | Address, group: Address, pointer: Address, authority: KeyPairSigner, holder: KeyPairSigner) {
   const mint = typeof at === "string" ? at : at.address;
-  // The fixed-size extensions' length, with rent for the final one (as `memberInstructions` does).
   const fixed = [
     extension("MetadataPointer", { authority: some(authority.address), metadataAddress: some(pointer) }),
     extension("GroupMemberPointer", { authority: some(authority.address), memberAddress: some(mint) }),
@@ -540,6 +678,16 @@ const holdRealSgt = (chain: Mainnet, owner: string) =>
 const fixtureContext = (payer: KeyPairSigner) =>
   ({ endpoint: SVM_RPC, payer }) as unknown as Parameters<typeof groupInstructions>[0];
 
+const STRAY = 777_777n;
+/** Stray lamports at an address nobody holds a key to, as a transfer to it leaves them. */
+const prefund = (key: string) => write(key, { lamports: STRAY, owner: SYSTEM_PROGRAM, bytes: new Uint8Array(0) });
+/** What `send` took from `payer`. */
+async function spent(payer: KeyPairSigner, outcome: Promise<Outcome>) {
+  const before = await balance(payer.address);
+  const result = await outcome;
+  return { outcome: result, cost: before - (await balance(payer.address)) };
+}
+
 // --- Scenarios ----------------------------------------------------------------------------------------
 
 async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
@@ -553,59 +701,58 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
   console.log("\n1. publish");
   const creator = await wallet();
   const first = await draft(program, creator, 5);
-  const published = await publish(first);
-  ok("publish without Genesis Token accounts", published.ok, published);
-  const verified = await readPublication(SVM_RPC, program, first.e.edition);
-  ok("the client's reader accepts the edition, the collection and the creator's receipt for copy 1",
-    verified !== null && verified.state.minted === 1 && verified.creatorReceipt.number === 1 && verified.sealedGenesis === null);
-  const collection = decodeCollection((await read(first.e.collection))!.bytes);
-  const attributes = collection.plugins.find((p) => p.type === "Attributes");
-  ok("collection: MasterEdition(5), ImmutableMetadata, Attributes and Royalties, every authority None; update authority the edition PDA",
-    collection.plugins.length === 4 && collection.plugins.every((p) => p.authority.kind === "None") &&
-    collection.plugins.some((p) => p.type === "ImmutableMetadata") &&
-    collection.plugins.some((p) => p.type === "MasterEdition" && p.maxSupply === 5) &&
-    collection.plugins.some((p) => p.type === "Royalties") &&
-    collection.updateAuthority === first.e.edition);
-  ok("attributes locked: exactly the five, no seeker_genesis_token",
-    attributes?.type === "Attributes" && attributes.attributes.length === 5 &&
-    !attributes.attributes.some((a) => a.key === GENESIS_ATTRIBUTE));
-  const copy1 = verified ? await readPrintState(SVM_RPC, verified, 1) : null;
-  ok("copy 1 is live, owned by the creator, Edition #1 and ImmutableMetadata locked",
-    copy1?.status === "live" && copy1.asset.owner === creator.address);
-  const stamped = await recorded(first.e.edition);
-  ok(`published_at is the Clock's unix_timestamp at publish (${clockTime}): 310-byte Edition, i64 at byte 173, seeker_only 0 at 181`,
-    stamped.length === 310 && stamped.raw === clockTime && verified?.state.publishedAt === Number(clockTime) &&
-    stamped.seekerOnly === 0 && verified.seekerOnly === false);
-  // The SVM answers no signature history, so this is the Edition read alone.
-  ok("publicationTime reads it from the Edition, with no signature history to walk",
-    (await publicationTime(SVM_RPC, program, first.e.edition).catch(() => null))?.getTime() === Number(clockTime) * 1000);
+  const published = await spent(creator, publish(first));
+  ok("publish without Genesis Token accounts", published.outcome.ok, published.outcome);
+  const edition = await editionOf(first);
+  ok(`Edition: ${EDITION_ACCOUNT_BYTES} bytes, the creator, supply 5, minted 1, price 0, open, published_at the Clock's ${clockTime}`,
+    edition !== null && edition.length === EDITION_ACCOUNT_BYTES && edition.creator === creator.address &&
+    edition.supply === 5 && edition.minted === 1 && edition.price === 0n && !edition.seekerOnly &&
+    edition.publishedAt === Number(clockTime));
+  const collectionAccount = (await read(first.collection))!;
+  const collection = decodeCollection(collectionAccount.bytes);
+  const attributes = pluginOf(collection.plugins, "Attributes");
+  ok("collection: name the title, uri, update authority the Edition PDA; MasterEdition(5), ImmutableMetadata, Attributes, Royalties, every authority None",
+    collection.name === first.title && collection.uri === first.uri && collection.updateAuthority === first.edition &&
+    collection.numMinted === 1 && collection.plugins.length === 4 && collection.plugins.every((p) => p.authority === "None") &&
+    pluginOf(collection.plugins, "MasterEdition")?.maxSupply === 5 && Boolean(pluginOf(collection.plugins, "ImmutableMetadata")));
+  ok("attributes: exactly image_sha256 then metadata_sha256",
+    attributes?.attributes.length === 2 &&
+    attributes.attributes[0].key === "image_sha256" && attributes.attributes[0].value === first.imageHash &&
+    attributes.attributes[1].key === "metadata_sha256" && attributes.attributes[1].value === first.metadataHash);
+  ok("copy 1 at ['print', edition, creator]: the creator's, Edition #1 and ImmutableMetadata, both None",
+    first.print === await printOf(first, creator.address) && await isCopy(first, first.print, creator.address, 1));
+  const printAccount = (await read(first.print))!;
+  measured.publishUnits = published.outcome.units;
+  measured.publishCost = published.cost;
+  measured.collectionBytes = collectionAccount.bytes.length;
+  measured.assetBytes = printAccount.bytes.length;
+  measured.assetLamports = printAccount.lamports;
+  const again = await publish(first);
+  ok("the same nonce again -> the Edition exists (System AccountAlreadyInUse); nothing changes",
+    refused(again, ACCOUNT_ALREADY_IN_USE) && (await editionOf(first))?.minted === 1, again);
 
   // 2. The real Seeker Genesis Token, held by the creator.
   console.log("\n2. publish with the real Seeker Genesis Token");
   await holdRealSgt(chain, creator.address);
   const mintBefore = hexOf((await read(SGT_MINT))!.bytes);
-  const sealed = await draft(program, creator, 3, SGT_MINT);
-  const sealedOutcome = await publish(sealed, { genesis: { mint: SGT_MINT, token: chain.sgtToken.address } });
+  const real = { mint: SGT_MINT, token: address(chain.sgtToken.address) };
+  const sealed = await draft(program, creator, 3, { genesis: real });
+  const sealedOutcome = await publish(sealed);
   ok(`publish with ${SGT_MINT} and the creator's token account`, sealedOutcome.ok, sealedOutcome);
-  const sealedRead = await readPublication(SVM_RPC, program, sealed.e.edition);
-  const sealedCollection = decodeCollection((await read(sealed.e.collection))!.bytes);
-  const sealedAttributes = sealedCollection.plugins.find((p) => p.type === "Attributes");
-  ok("seeker_genesis_token=<mint> is the sixth attribute, authority None",
-    sealedAttributes?.type === "Attributes" && sealedAttributes.authority.kind === "None" &&
-    sealedAttributes.attributes.length === 6 &&
-    sealedAttributes.attributes[5].key === GENESIS_ATTRIBUTE && sealedAttributes.attributes[5].value === SGT_MINT);
-  ok("protocol.ts reads it as sealed (readPublication, sealedGenesisMint)",
-    sealedRead?.sealedGenesis === SGT_MINT && sealedGenesisMint(sealedCollection) === SGT_MINT);
+  const sealedAttributes = pluginOf(decodeCollection((await read(sealed.collection))!.bytes).plugins, "Attributes");
+  ok("seeker_genesis_token=<mint> is the third attribute, authority None; copy 1 still the creator wallet's on an open edition",
+    sealedAttributes?.authority === "None" && sealedAttributes.attributes.length === 3 &&
+    sealedAttributes.attributes[2].key === "seeker_genesis_token" && sealedAttributes.attributes[2].value === SGT_MINT &&
+    await isCopy(sealed, await printOf(sealed, creator.address), creator.address, 1));
   ok("the SGT mint is untouched", hexOf((await read(SGT_MINT))!.bytes) === mintBefore);
 
   // 3. Everything that is not the creator holding a Seeker Genesis Token.
   console.log("\n3. InvalidGenesisToken");
   const refusal = async (name: string, genesis: GenesisAccounts, edit?: (ix: Instruction) => Instruction) => {
-    const d = await draft(program, creator, 2, genesis.mint);
-    const outcome = await publish(d, { genesis, edit });
-    ok(`${name} -> InvalidGenesisToken`, refused(outcome, E.InvalidGenesisToken) && (await read(d.e.edition)) === null, outcome);
+    const d = await draft(program, creator, 2, { genesis });
+    const outcome = await publish(d, edit);
+    ok(`${name} -> InvalidGenesisToken`, refused(outcome, E.InvalidGenesisToken) && (await read(d.edition)) === null, outcome);
   };
-  const real = { mint: SGT_MINT, token: chain.sgtToken.address };
 
   await write(chain.sgtToken.address, { lamports: BigInt(chain.sgtToken.lamports), owner: T22, bytes: bytesOf(chain.sgtToken.data) });
   await refusal("the real token account, still owned by its holder", real);
@@ -618,6 +765,12 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
 
   await refusal("the mint without the token account", real, absent(-1));
   await refusal("the token account without the mint", real, absent(-2));
+  {
+    const d = await draft(program, creator, 2);
+    const ix = await publishIx(d);
+    const short = await send(creator, [{ ...ix, accounts: ix.accounts!.slice(0, -2) }]);
+    ok("publish without the two trailing accounts at all -> AccountNotEnoughKeys", refused(short, A.AccountNotEnoughKeys), short);
+  }
 
   {
     // A multisig laid out as a Seeker Genesis Token mint naming itself and GT22.
@@ -637,8 +790,6 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
     ok("Token-2022 wrote the 355-byte multisig exactly as laid out; one byte longer the client's decoder would call it an SGT",
       hexOf(onChain) === hexOf(image) &&
       !isSeekerGenesisMint(onChain, account.address) && isSeekerGenesisMint(new Uint8Array([...onChain, 0]), account.address));
-    // Token-2022 opens no account for a multisig, so the holding is the real account's bytes
-    // with the mint and owner written in.
     const holding = await generateKeyPairSigner();
     await write(holding.address, { lamports: BigInt(chain.sgtToken.lamports), owner: T22, bytes: tokenBytes(chain.sgtToken, account.address, creator.address) });
     await refusal("a Token-2022 multisig laid out as an SGT mint", { mint: account.address, token: holding.address });
@@ -650,10 +801,11 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
     // writes the mint there after the account is allocated empty.
     const chosen = keyOf(new Uint8Array([1, 11, 1, ...randomBytes(29)]));
     const sgt = await member(chosen, GT22, GT22, groupAuthority, creator);
-    const control = await draft(program, creator, 2, sgt.mint);
-    const controlOutcome = await publish(control, { genesis: { mint: sgt.mint, token: sgt.token } });
+    const control = await draft(program, creator, 2, { genesis: { mint: sgt.mint, token: sgt.token } });
+    const controlOutcome = await publish(control);
+    const controlAttributes = controlOutcome.ok ? pluginOf(decodeCollection((await read(control.collection))!.bytes).plugins, "Attributes") : undefined;
     ok("control: a GT22 member Token-2022 wrote at that address, held by the creator, is sealed",
-      sgt.made && controlOutcome.ok && (await readPublication(SVM_RPC, program, control.e.edition))?.sealedGenesis === sgt.mint, controlOutcome);
+      sgt.made && controlOutcome.ok && controlAttributes?.attributes[2]?.value === sgt.mint, controlOutcome);
     const image = new Uint8Array(MULTISIG_BYTES);
     image.set(keyBytes(sgt.mint), 0);
     image.set(keyBytes(creator.address), 32);
@@ -685,89 +837,199 @@ async function plainBuild(plain: { elf: string; id: Address }, chain: Mainnet) {
     await refusal("the real SGT mint's bytes under another address", { mint: elsewhere.address, token: holding.address });
   }
 
-  // 4. Prices.
-  console.log("\n4. set_offer and buy");
+  // 4. The terms publish checks: length bounds, the royalty, the price floor.
+  console.log("\n4. publish terms");
+  const terms = async (name: string, t: Terms, code: number) => {
+    const d = await draft(program, creator, t.supply ?? 3, t);
+    const outcome = await publish(d);
+    ok(`${name} -> ${code}; nothing created`, refused(outcome, code) && (await read(d.edition)) === null &&
+      (await read(d.collection)) === null, outcome);
+  };
+  await terms("supply 0", { supply: 0 }, E.InvalidTerms);
+  await terms("supply 1001", { supply: 1001 }, E.InvalidTerms);
+  await terms("an empty title", { title: "" }, E.InvalidTerms);
+  await terms("a 25-byte title", { title: "x".repeat(25) }, E.InvalidTerms);
+  await terms("an empty uri", { uri: "" }, E.InvalidTerms);
+  await terms("a 97-byte uri", { uri: "u".repeat(97) }, E.InvalidTerms);
+  await terms("royalty 1001 bps", { royaltyBps: 1001 }, E.InvalidRoyalty);
+  await terms(`a price of ${floor - 1n}, one under the floor`, { price: floor - 1n }, E.PriceTooLow);
+  await terms("a price of 1 lamport", { price: 1n }, E.PriceTooLow);
+  await terms("Seeker-only without a Genesis Token", { seekerOnly: true }, E.GenesisTokenRequired);
+  const controls: [string, Terms][] = [
+    ["supply 1000", { supply: 1000 }], ["a 24-byte title", { title: "x".repeat(24) }],
+    ["a 96-byte uri", { uri: "u".repeat(96) }], ["a title with U+200B", { title: "Moment​x" }],
+    [`a price of ${floor}`, { price: floor }],
+  ];
+  for (const [label, t] of controls) {
+    const d = await draft(program, creator, t.supply ?? 1, t);
+    const outcome = await publish(d);
+    ok(`control: ${label} publishes (length bounds only)`, outcome.ok &&
+      (await editionOf(d))?.price === (t.price ?? 0n), outcome);
+  }
+  {
+    const d = await draft(program, creator, 3);
+    const other = await printOf(d, (await generateKeyPairSigner()).address);
+    const misplaced = await publish(d, swap(3, other));
+    ok("copy 1 at another claimant's print address -> ConstraintSeeds", refused(misplaced, A.ConstraintSeeds), misplaced);
+    const prefunded = await draft(program, creator, 5);
+    await prefund(prefunded.collection);
+    await prefund(prefunded.print);
+    const p = await spent(creator, publish(prefunded));
+    ok(`collection and copy 1 pre-funded with ${STRAY} each: publish succeeds, costs ${2n * STRAY} less, both hold what an unfunded one does`,
+      p.outcome.ok && p.cost === published.cost - 2n * STRAY &&
+      (await read(prefunded.collection))?.lamports === collectionAccount.lamports &&
+      (await read(prefunded.print))?.lamports === printAccount.lamports, p.outcome);
+  }
+
+  // 5. set_price.
+  console.log("\n5. set_price");
   const seller = await wallet();
   const priced = await draft(program, seller, 5);
-  await settles("a priced edition", publish(priced));
-  const offer = () => readOfferAccount(SVM_RPC, program, priced.e.edition);
-  const free0 = await send(seller, [await setOfferInstruction(priced.e, 0n)]);
-  const at0 = await offer();
-  ok("set_offer(0)", free0.ok && at0?.priceLamports === 0n && at0.revision === 1, free0);
-  const atFloor = await send(seller, [await setOfferInstruction(priced.e, floor)]);
-  const floored = await offer();
-  ok(`set_offer(${floor}), the rent-exempt minimum of an empty account`, atFloor.ok && floored?.priceLamports === floor && floored.revision === 2, atFloor);
-  const below = await send(seller, [await setOfferInstruction(priced.e, floor - 1n)]);
-  const after = await offer();
-  ok(`set_offer(${floor - 1n}) -> PriceTooLow; the offer is unchanged`,
-    refused(below, E.PriceTooLow) && after?.priceLamports === floor && after.revision === 2, below);
-  const sink = await generateKeyPairSigner();
-  // Everything but the fee: one signature at 5,000 lamports, no compute budget.
-  const drain = await send(seller, [getTransferSolInstruction({ source: seller, destination: sink.address, amount: (await balance(seller.address)) - 5_000n })], false);
-  ok("the creator's wallet is drained to 0 lamports", drain.ok && (await read(seller.address)) === null, drain);
-  const buyer = await wallet();
-  const bought = await send(buyer, [await buyInstruction(priced.e, buyer.address, 2, floor, 2)]);
-  ok(`buy at ${floor} into the empty wallet; the creator ends with exactly the price`, bought.ok && (await balance(seller.address)) === floor, bought);
-  const receipt = await collectedCopy(SVM_RPC, priced.e, buyer.address);
-  const pricedRead = await readPublication(SVM_RPC, program, priced.e.edition);
-  const copy2 = pricedRead ? await readPrintState(SVM_RPC, pricedRead, 2) : null;
-  ok("the buyer holds copy 2 and its receipt", receipt?.number === 2 && copy2?.status === "live" && copy2.asset.owner === buyer.address);
+  await settles("an edition to price", publish(priced));
+  const atFloor = await setPrice(priced, floor);
+  ok(`set_price(${floor}), the rent-exempt minimum of an empty account`, atFloor.ok && (await editionOf(priced))?.price === floor, atFloor);
+  measured.setPriceUnits = atFloor.units;
+  const below = await setPrice(priced, floor - 1n);
+  ok(`set_price(${floor - 1n}) -> PriceTooLow; the price is unchanged`, refused(below, E.PriceTooLow) && (await editionOf(priced))?.price === floor, below);
+  const stranger = await wallet();
+  const theirs = await setPrice(priced, 0n, stranger);
+  ok("set_price signed by anyone else -> ConstraintHasOne", refused(theirs, A.ConstraintHasOne) && (await editionOf(priced))?.price === floor, theirs);
+  const unsigned = await send(stranger, [{ ...setPriceInstruction({ program, creator: seller.address, edition: priced.edition, price: 0n }),
+    accounts: [{ address: seller.address, role: AccountRole.READONLY }, { address: priced.edition, role: AccountRole.WRITABLE }] }]);
+  ok("set_price naming the creator without their signature -> AccountNotSigner", refused(unsigned, A.AccountNotSigner), unsigned);
+  const removed = await setPrice(priced, 0n);
+  const restored = await setPrice(priced, floor);
+  ok("set_price(0) removes the price and a later one sets it again; nothing else in the Edition moves",
+    removed.ok && restored.ok && (await editionOf(priced))?.minted === 1 && (await editionOf(priced))?.supply === 5);
 
-  // 5. Claims.
-  console.log("\n5. collect and buy rules");
+  // 6. Claims.
+  console.log("\n6. claim");
   const giver = await wallet();
-  const free = await draft(program, giver, 3);
+  const free = await draft(program, giver, 4);
   await settles("a free edition", publish(free));
   const freePublishedAt = clockTime;
   // An hour on, for every claim below: none of them may move the edition's publication time.
   await setClock(freePublishedAt + 3_600n);
   const collector = await wallet();
-  const collected = await send(collector, [await collectInstruction(free.e, collector.address, 2)]);
-  ok("collect copy 2 of a free edition", collected.ok && (await collectedCopy(SVM_RPC, free.e, collector.address))?.number === 2, collected);
-  const again = await send(collector, [await collectInstruction(free.e, collector.address, 3)]);
-  ok("the same wallet cannot collect a second copy (its receipt already exists) -> AlreadyCollected",
-    refused(again, E.AlreadyCollected), again);
-  const late = await wallet();
-  const staleRevision = await send(late, [await buyInstruction(priced.e, late.address, 3, floor, 1)]);
-  ok("buy with a stale revision -> OfferChanged", refused(staleRevision, E.OfferChanged), staleRevision);
-  const stalePrice = await send(late, [await buyInstruction(priced.e, late.address, 3, floor + 1n, 2)]);
-  ok("buy at a price other than the offer's -> OfferChanged", refused(stalePrice, E.OfferChanged), stalePrice);
-  const staleNumber = await send(late, [await buyInstruction(priced.e, late.address, 2, floor, 2)]);
-  ok("buy a copy number already issued -> StaleNumber", refused(staleNumber, E.StaleNumber), staleNumber);
-  const unpaid = await send(late, [await collectInstruction(priced.e, late.address, 3)]);
-  ok("collect on a priced edition -> PaymentRequired", refused(unpaid, E.PaymentRequired), unpaid);
-  const noOffer = await send(late, [await buyInstruction(free.e, late.address, 3, 1_000_000n, 1)]);
-  ok("buy on an edition with no offer -> NotForSale", refused(noOffer, E.NotForSale), noOffer);
-  await settles("set_offer(0) on the free edition", send(giver, [await setOfferInstruction(free.e, 0n)]));
-  const zero = await send(late, [await buyInstruction(free.e, late.address, 3, 1_000_000n, 1)]);
-  ok("buy on an edition offered at 0 -> NotForSale", refused(zero, E.NotForSale), zero);
-  const last = await send(late, [await collectInstruction(free.e, late.address, 3)]);
-  ok("collect the last copy of an edition offered at 0", last.ok, last);
-  const nobody = await wallet();
-  const soldOut = await send(nobody, [await collectInstruction(free.e, nobody.address, 3)]);
-  ok("collect after the last copy -> SoldOut", refused(soldOut, E.SoldOut), soldOut);
-  ok("three claims and a set_offer an hour later leave published_at as publish wrote it",
-    (await recorded(free.e.edition)).raw === freePublishedAt &&
-    (await readPublication(SVM_RPC, program, free.e.edition))?.state.minted === 3);
+  const collected = await spent(collector, claim(free, collector));
+  const collectorPrint = await printOf(free, collector.address);
+  ok("claim copy 2 of a free edition: at ['print', edition, collector], named from the collection, minted 2",
+    collected.outcome.ok && await isCopy(free, collectorPrint, collector.address, 2) && (await editionOf(free))?.minted === 2 &&
+    decodeCollection((await read(free.collection))!.bytes).numMinted === 2, collected.outcome);
+  measured.claimUnits = collected.outcome.units;
+  measured.claimCost = collected.cost;
+  const twice = await claim(free, collector);
+  ok("the same wallet again -> AlreadyCollected (its print exists)", refused(twice, E.AlreadyCollected), twice);
+  const own = await claim(free, giver);
+  ok("(iv) the creator claiming their own edition -> AlreadyCollected", refused(own, E.AlreadyCollected), own);
 
-  // 6. Albums.
-  console.log("\n6. albums");
-  const albumNonce = hex32();
-  const created = await send(giver, [await createAlbumInstruction({ program, creator: giver.address, nonce: albumNonce, name: "Summer" })]);
-  const album = await albumAddress(program, giver.address, albumNonce);
-  const group = decodeGroup((await read(album))?.bytes ?? new Uint8Array([0]));
-  ok("create_album makes a Core group the creator controls", created.ok && group.updateAuthority === giver.address && group.name === "Summer", created);
-  const inAlbum = await draft(program, giver, 4);
-  const albumOutcome = await publish(inAlbum, { album });
-  ok("publish_in_album", albumOutcome.ok, albumOutcome);
-  const albumRead = await readPublication(SVM_RPC, program, inAlbum.e.edition);
-  const albumCollection = decodeCollection((await read(inAlbum.e.collection))!.bytes);
-  ok("the group lists the collection, and the collection is sealed like any other (ImmutableMetadata None)",
-    albumRead?.album?.group === album && albumRead.album.collections.includes(address(inAlbum.e.collection)) &&
-    albumCollection.updateAuthority === inAlbum.e.edition &&
-    albumCollection.plugins.some((p) => p.type === "ImmutableMetadata" && p.authority.kind === "None"));
-  ok("publish_in_album records the Clock's unix_timestamp at its own publish",
-    albumRead?.state.publishedAt === Number(clockTime) && clockTime === freePublishedAt + 3_600n);
+  // (ii) A pre-funded print address.
+  const grace = await wallet();
+  await prefund(await printOf(free, grace.address));
+  const graceClaim = await spent(grace, claim(free, grace));
+  ok(`(ii) the claimant's print address pre-funded with ${STRAY}: the claim succeeds, costs ${STRAY} less, and the copy holds what copy 2 does`,
+    graceClaim.outcome.ok && graceClaim.cost === collected.cost - STRAY &&
+    (await read(await printOf(free, grace.address)))?.lamports === (await read(collectorPrint))?.lamports &&
+    await isCopy(free, await printOf(free, grace.address), grace.address, 3), graceClaim.outcome);
+  // Nobody can sign for a print address, so only this program and Core can put an account there;
+  // written directly to show `clear_pda` refuses one it does not own rather than taking it.
+  const ivan = await wallet();
+  await write(await printOf(free, ivan.address), { lamports: await rent(0), owner: T22, bytes: new Uint8Array(0) });
+  const squatted = await claim(free, ivan);
+  ok("a print address owned by another program, empty -> ExistingAsset, never taken", refused(squatted, E.ExistingAsset), squatted);
+
+  // Account slots.
+  const judy = await wallet();
+  const other = await draft(program, giver, 3);
+  await settles("a second edition", publish(other));
+  const wrongEdition = await claim(free, judy, 0n, undefined, swap(1, other.edition));
+  ok("another edition beside this collection -> ConstraintSeeds", refused(wrongEdition, A.ConstraintSeeds), wrongEdition);
+  const wrongPrint = await claim(free, judy, 0n, undefined, swap(3, await printOf(free, giver.address)));
+  ok("another claimant's print address -> ConstraintSeeds", refused(wrongPrint, A.ConstraintSeeds), wrongPrint);
+  const wrongPayee = await claim(free, judy, 0n, undefined, swap(4, judy.address));
+  ok("a payee other than the edition's creator -> ConstraintAddress", refused(wrongPayee, A.ConstraintAddress), wrongPayee);
+  const wrongCore = await claim(free, judy, 0n, undefined, swap(5, SYSTEM_PROGRAM));
+  ok("anything but Metaplex Core in its slot -> ConstraintAddress", refused(wrongCore, A.ConstraintAddress), wrongCore);
+  const noGenesisSlots = await claimIx(free, judy.address);
+  const short = await send(judy, [{ ...noGenesisSlots, accounts: noGenesisSlots.accounts!.slice(0, -2) }]);
+  ok("claim without the two trailing accounts at all -> AccountNotEnoughKeys", refused(short, A.AccountNotEnoughKeys), short);
+
+  // (v) Supply.
+  const last = await claim(free, judy);
+  ok("claim the last copy (4 of 4)", last.ok && (await editionOf(free))?.minted === 4, last);
+  const nobody = await wallet();
+  const soldOut = await claim(free, nobody);
+  ok("(v) a claim after the last copy -> SoldOut", refused(soldOut, E.SoldOut) && (await read(await printOf(free, nobody.address))) === null, soldOut);
+  ok("four claims an hour later leave published_at as publish wrote it", (await editionOf(free))?.publishedAt === Number(freePublishedAt));
+
+  // Paid claims, (iii) a stale price.
+  console.log("\n7. paid claim");
+  const sink = await generateKeyPairSigner();
+  // Everything but the fee: one signature at 5,000 lamports, no compute budget.
+  const drain = await send(seller, [getTransferSolInstruction({ source: seller, destination: sink.address, amount: (await balance(seller.address)) - 5_000n })], false);
+  ok("the creator's wallet is drained to 0 lamports", drain.ok && (await read(seller.address)) === null, drain);
+  const buyer = await wallet();
+  const bought = await spent(buyer, claim(priced, buyer, floor));
+  ok(`claim at ${floor} into the empty wallet: the creator ends with exactly the price, the buyer pays the price plus a free claim's cost`,
+    bought.outcome.ok && (await balance(seller.address)) === floor && bought.cost === collected.cost + floor &&
+    await isCopy(priced, await printOf(priced, buyer.address), buyer.address, 2), bought.outcome);
+  measured.paidClaimUnits = bought.outcome.units;
+  const late = await wallet();
+  const stale0 = await claim(priced, late, 0n);
+  ok("a claim expecting free on a priced edition -> PriceChanged", refused(stale0, E.PriceChanged), stale0);
+  // The creator signs again below, so their wallet is funded again first.
+  await host.call("airdrop", { address: hexOf(keyBytes(seller.address)), lamports: "1000000000" });
+  await settles("set_price to twice the floor", setPrice(priced, 2n * floor));
+  const paidBefore = await balance(seller.address);
+  const stale = await claim(priced, late, floor);
+  ok("(iii) a claim at the price before set_price -> PriceChanged; the creator is paid nothing, no copy",
+    refused(stale, E.PriceChanged) && (await balance(seller.address)) === paidBefore &&
+    (await read(await printOf(priced, late.address))) === null, stale);
+  const over = await claim(priced, late, 3n * floor);
+  ok("a claim at more than the price -> PriceChanged", refused(over, E.PriceChanged), over);
+  const current = await claim(priced, late, 2n * floor);
+  ok("a claim at the current price", current.ok && (await balance(seller.address)) === paidBefore + 2n * floor, current);
+  await settles("set_price(0)", setPrice(priced, 0n));
+  const staleFree = await claim(priced, await wallet(), 2n * floor);
+  ok("a claim at the old price after the price is removed -> PriceChanged", refused(staleFree, E.PriceChanged), staleFree);
+  const poor = await generateKeyPairSigner();
+  await host.call("airdrop", { address: hexOf(keyBytes(poor.address)), lamports: "3000000" });
+  await settles("set_price(1 SOL)", setPrice(priced, 1_000_000_000n));
+  const sellerBefore = await balance(seller.address);
+  const unpaid = await claim(priced, poor, 1_000_000_000n);
+  ok("a collector who cannot pay the price -> the System program's ResultWithNegativeLamports (1); no copy, no payment",
+    refused(unpaid, 1) && (await read(await printOf(priced, poor.address))) === null &&
+    (await balance(seller.address)) === sellerBefore, unpaid);
+
+  // (i) Burn and claim again.
+  console.log("\n8. burn, then claim again");
+  const burnt = await draft(program, giver, 6);
+  await settles("an edition to burn from", publish(burnt));
+  const kim = await wallet();
+  await settles("kim's copy", claim(burnt, kim));
+  const kimPrint = await printOf(burnt, kim.address);
+  const burn = await send(kim, [coreBurn(kimPrint, burnt.collection, kim.address)]);
+  const tomb = await read(kimPrint);
+  ok("Core BurnV1 leaves a one-byte Uninitialized tombstone, Core-owned, at the print address",
+    burn.ok && tomb?.owner === MPL_CORE && tomb.bytes.length === 1 && tomb.bytes[0] === 0, burn);
+  const reclaim = await claim(burnt, kim);
+  ok("(i) the same claimant again after the burn -> AlreadyCollected (the tombstone refuses it)",
+    refused(reclaim, E.AlreadyCollected) && (await editionOf(burnt))?.minted === 2, reclaim);
+  const sweep = await send(kim, [coreCollect(kimPrint)]);
+  const swept = await read(kimPrint);
+  ok(`Core's permissionless Collect sweeps the fee: the tombstone is System-owned, one zero byte, rent(1) = ${await rent(1)}`,
+    sweep.ok && swept?.owner === SYSTEM_PROGRAM && swept.bytes.length === 1 && swept.bytes[0] === 0 && swept.lamports === await rent(1), sweep);
+  const reclaimSwept = await claim(burnt, kim);
+  ok("(i) the same claimant again after the sweep -> AlreadyCollected (one byte of data still refuses it)",
+    refused(reclaimSwept, E.AlreadyCollected) && (await editionOf(burnt))?.minted === 2, reclaimSwept);
+  const lee = await wallet();
+  await settles("lee's copy", claim(burnt, lee));
+  const away = await send(lee, [coreTransfer(await printOf(burnt, lee.address), burnt.collection, lee.address, kim.address)]);
+  const leeAgain = await claim(burnt, lee);
+  ok("a claimant who sent their copy away -> AlreadyCollected (the print still lives at their address)",
+    away.ok && refused(leeAgain, E.AlreadyCollected), away.ok ? leeAgain : away);
+  const control = await claim(burnt, await wallet());
+  ok("control: another wallet still claims (copy 4)", control.ok && (await editionOf(burnt))?.minted === 4, control);
 
   // Members of Solana Mobile's group, written by Token-2022 under the rewritten group authority.
   await royaltiesAndSeekers(program, "plain build", {
@@ -798,223 +1060,124 @@ async function moveSgt(sgt: GenesisAccounts, from: KeyPairSigner, to: KeyPairSig
   return { mint, token: destination };
 }
 
-const STRAY = 777_777n;
-/** Stray lamports at an address nobody holds a key to, as a transfer to it leaves them. */
-const prefund = (key: string) => write(key, { lamports: STRAY, owner: SYSTEM_PROGRAM, bytes: new Uint8Array(0) });
-/** What `send` took from `payer`. */
-async function spent(payer: KeyPairSigner, outcome: Promise<Outcome>) {
-  const before = await balance(payer.address);
-  const result = await outcome;
-  return { outcome: result, cost: before - (await balance(payer.address)) };
-}
-
 async function royaltiesAndSeekers(program: Address, build: string, sgts: Minter) {
   const floor = await rent(0);
-  const receiptRent = await rent(106);
 
   console.log(`\n${build}: royalty`);
   const creator = await wallet();
   for (const bps of [500, 0, 1000]) {
-    const d = await draft(program, creator, 3, undefined, { royaltyBps: bps, seekerOnly: false });
+    const d = await draft(program, creator, 3, { royaltyBps: bps });
     const outcome = await publish(d);
-    const bytes = (await read(d.e.collection))?.bytes;
-    const plugin = bytes && decodeCollection(bytes).plugins.find((p) => p.type === "Royalties");
-    const verified = await readPublication(SVM_RPC, program, d.e.edition);
-    ok(`publish at ${bps} bps: Royalties { ${bps}, [creator 100%], RuleSet::None }, authority None; the reader reads it`,
-      outcome.ok && plugin?.type === "Royalties" && plugin.authority.kind === "None" && plugin.basisPoints === bps &&
-      plugin.creators.length === 1 && plugin.creators[0].address === creator.address &&
-      plugin.creators[0].percentage === 100 && plugin.ruleSet === "None" && plugin.programs.length === 0 &&
-      verified?.royalty?.basisPoints === bps && verified.royalty.creator === creator.address &&
-      collectionRoyalty(verified.collection)?.basisPoints === bps, outcome);
-    if (bps === 500) console.log(`      publish ${outcome.units} CU; collection ${bytes?.length} bytes`);
+    const plugin = outcome.ok ? pluginOf(decodeCollection((await read(d.collection))!.bytes).plugins, "Royalties") : undefined;
+    ok(`publish at ${bps} bps: Royalties { ${bps}, [creator 100%], RuleSet::None }, authority None`,
+      outcome.ok && plugin?.authority === "None" && plugin.basisPoints === bps && plugin.creators.length === 1 &&
+      plugin.creators[0].address === creator.address && plugin.creators[0].percentage === 100 && plugin.ruleSet === 0, outcome);
   }
-  const over = await draft(program, creator, 3);
-  const overOutcome = await publish(over, { edit: rewrite(over.e.title, { royaltyBps: 1001 }) });
-  ok("publish at 1001 bps -> InvalidRoyalty; nothing created",
-    refused(overOutcome, E.InvalidRoyalty) && (await read(over.e.edition)) === null, overOutcome);
-
   const sent = await draft(program, creator, 3);
   await settles("an edition to send from", publish(sent));
   const holder = await wallet();
-  await settles("copy 2", send(holder, [await collectInstruction(sent.e, holder.address, 2)]));
-  const [one, two] = [await addresses(program, creator.address, sent.e.nonce, 1), await addresses(program, creator.address, sent.e.nonce, 2)];
+  await settles("copy 2", claim(sent, holder));
   const recipient = await generateKeyPairSigner();
-  const moved1 = await send(creator, transferInstructions({ owner: creator.address, recipient: recipient.address, asset: one.print, collection: address(sent.e.collection) }));
-  const moved2 = await send(holder, transferInstructions({ owner: holder.address, recipient: recipient.address, asset: two.print, collection: address(sent.e.collection) }));
-  const ownerOf = async (key: string) => decodeAsset((await read(key))!.bytes).owner;
-  ok("Core TransferV1 sends copy 1 and a collected copy 2 out of a collection carrying the royalty (RuleSet::None)",
-    moved1.ok && moved2.ok && (await ownerOf(one.print)) === recipient.address && (await ownerOf(two.print)) === recipient.address,
+  const two = await printOf(sent, holder.address);
+  const moved1 = await send(creator, [coreTransfer(sent.print, sent.collection, creator.address, recipient.address)]);
+  const moved2 = await send(holder, [coreTransfer(two, sent.collection, holder.address, recipient.address)]);
+  ok("Core TransferV1 sends copy 1 and a claimed copy 2 out of a collection carrying the royalty (RuleSet::None)",
+    moved1.ok && moved2.ok && (await copyAt(sent.print))?.owner === recipient.address && (await copyAt(two))?.owner === recipient.address,
     moved1.ok ? moved2 : moved1);
 
-  const albumNonce = hex32();
-  await settles("an album", send(creator, [await createAlbumInstruction({ program, creator: creator.address, nonce: albumNonce, name: "Royal" })]));
-  const album = await albumAddress(program, creator.address, albumNonce);
-  const albumUnsealed = await draft(program, creator, 2, undefined, { royaltyBps: 250, seekerOnly: false });
-  const albumUnsealedOutcome = await publish(albumUnsealed, { album, edit: rewrite(albumUnsealed.e.title, { seekerOnly: true }) });
-  ok("publish_in_album Seeker-only without a Genesis Token -> GenesisTokenRequired; nothing created",
-    refused(albumUnsealedOutcome, E.GenesisTokenRequired) && (await read(albumUnsealed.e.edition)) === null &&
-    (await read(albumUnsealed.e.collection)) === null, albumUnsealedOutcome);
-  const creatorSgt = await sgts.mint(creator);
-  const inAlbum = await draft(program, creator, 2, creatorSgt.mint, { royaltyBps: 250, seekerOnly: true });
-  const albumOutcome = await publish(inAlbum, { album, genesis: creatorSgt });
-  const albumRead = await readPublication(SVM_RPC, program, inAlbum.e.edition);
-  ok("publish_in_album: the royalty survives AddCollectionsToGroupV1, UpdateCollectionV1 and AddCollectionPluginV1; Seeker-only recorded, sealed with the creator's Genesis Token",
-    albumOutcome.ok && albumRead?.royalty?.basisPoints === 250 && albumRead.seekerOnly && albumRead.album?.group === album &&
-    albumRead.sealedGenesis === creatorSgt.mint &&
-    albumRead.creatorReceiptAddress === await claimReceiptAddress(program, inAlbum.e.edition, creatorSgt.mint), albumOutcome);
-
-  console.log(`\n${build}: Seeker-only claims`);
+  console.log(`\n${build}: Seeker-only`);
   const host = await wallet();
-  const unsealed = await draft(program, host, 8);
-  const unsealedOutcome = await publish(unsealed, { edit: rewrite(unsealed.e.title, { seekerOnly: true }) });
-  ok("publish Seeker-only without a Genesis Token -> GenesisTokenRequired; nothing created",
-    refused(unsealedOutcome, E.GenesisTokenRequired) && (await read(unsealed.e.edition)) === null &&
-    (await read(unsealed.e.collection)) === null, unsealedOutcome);
   const hostSgt = await sgts.mint(host);
-  const seeker = await draft(program, host, 8, hostSgt.mint, { royaltyBps: 500, seekerOnly: true });
-  const seekerOutcome = await publish(seeker, { genesis: hostSgt });
-  const seekerRead = await readPublication(SVM_RPC, program, seeker.e.edition);
-  ok("publish Seeker-only with the creator's Genesis Token: seeker_only 1 at byte 181; the token sealed and the creator's receipt keyed on it",
-    seekerOutcome.ok && (await recorded(seeker.e.edition)).seekerOnly === 1 && seekerRead?.seekerOnly === true &&
-    seekerRead.sealedGenesis === hostSgt.mint &&
-    seekerRead.creatorReceiptAddress === await claimReceiptAddress(program, seeker.e.edition, hostSgt.mint), seekerOutcome);
+  const seeker = await draft(program, host, 9, { seekerOnly: true, genesis: hostSgt });
+  const seekerOutcome = await publish(seeker);
+  ok("publish Seeker-only with the creator's Genesis Token: seeker_only set, the token sealed, copy 1 at ['print', edition, mint]",
+    seekerOutcome.ok && (await editionOf(seeker))?.seekerOnly === true &&
+    pluginOf(decodeCollection((await read(seeker.collection))!.bytes).plugins, "Attributes")?.attributes[2]?.value === hostSgt.mint &&
+    seeker.print === await printOf(seeker, hostSgt.mint) && await isCopy(seeker, seeker.print, host.address, 1) &&
+    (await read(await printOf(seeker, host.address))) === null, seekerOutcome);
+  if (build === "plain build") measured.seekerPublishUnits = seekerOutcome.units;
+  const wrongPrint = await draft(program, host, 3, { seekerOnly: true, genesis: hostSgt });
+  const wrongPrintOutcome = await publish(wrongPrint, swap(3, await printOf(wrongPrint, host.address)));
+  ok("Seeker-only copy 1 at the creator wallet's print address -> ConstraintSeeds", refused(wrongPrintOutcome, A.ConstraintSeeds), wrongPrintOutcome);
+
   const [alice, bob, carol, dave, henry] = [await wallet(), await wallet(), await wallet(), await wallet(), await wallet()];
   const [aliceSgt, bobSgt, daveSgt, henrySgt] = [await sgts.mint(alice), await sgts.mint(bob), await sgts.mint(dave), await sgts.mint(henry)];
   ok("Token-2022 minted four Genesis Tokens of this build's group", aliceSgt.made && bobSgt.made && daveSgt.made && henrySgt.made);
-  const none = await send(alice, [await collectInstruction(seeker.e, alice.address, 2)]);
-  ok("collect without Genesis Token accounts -> GenesisTokenRequired", refused(none, E.GenesisTokenRequired), none);
-  const half = await send(alice, [absent(-1)(await collectInstruction(seeker.e, alice.address, 2, aliceSgt))]);
-  ok("collect with the mint but not the token account -> GenesisTokenRequired", refused(half, E.GenesisTokenRequired), half);
-  const borrowed = await send(alice, [await collectInstruction(seeker.e, alice.address, 2, bobSgt)]);
-  ok("collect with another wallet's Genesis Token -> InvalidGenesisToken", refused(borrowed, E.InvalidGenesisToken), borrowed);
-  const tokenReceipt = await claimReceiptAddress(program, seeker.e.edition, aliceSgt.mint);
-  const first = await send(alice, [await collectInstruction(seeker.e, alice.address, 2, aliceSgt)]);
-  const firstReceipt = await collectedCopy(SVM_RPC, seeker.e, alice.address, aliceSgt.mint);
-  ok("collect with the collector's own Genesis Token: the receipt is ['claim', edition, mint], none at the wallet's",
-    first.ok && firstReceipt?.number === 2 && firstReceipt.collector === alice.address &&
-    (await read(tokenReceipt))?.owner === program &&
-    (await read(await claimReceiptAddress(program, seeker.e.edition, alice.address))) === null, first);
-  const twice = await send(alice, [await collectInstruction(seeker.e, alice.address, 3, aliceSgt)]);
-  ok("the same Genesis Token again -> AlreadyCollected", refused(twice, E.AlreadyCollected), twice);
+  const none = await claim(seeker, carol);
+  ok("(vi) a wallet without a Genesis Token -> GenesisTokenRequired", refused(none, E.GenesisTokenRequired), none);
+  const half = await claim(seeker, alice, 0n, aliceSgt, absent(-1));
+  ok("the mint but not the token account -> GenesisTokenRequired", refused(half, E.GenesisTokenRequired), half);
+  const borrowed = await claim(seeker, alice, 0n, bobSgt);
+  ok("another wallet's Genesis Token -> InvalidGenesisToken", refused(borrowed, E.InvalidGenesisToken), borrowed);
+  const first = await spent(alice, claim(seeker, alice, 0n, aliceSgt));
+  ok("a claim with the collector's own Genesis Token: the copy at ['print', edition, mint], none at the wallet's",
+    first.outcome.ok && await isCopy(seeker, await printOf(seeker, aliceSgt.mint), alice.address, 2) &&
+    (await read(await printOf(seeker, alice.address))) === null, first.outcome);
+  if (build === "plain build") measured.seekerClaimUnits = first.outcome.units;
+  const again = await claim(seeker, alice, 0n, aliceSgt);
+  ok("the same Genesis Token again -> AlreadyCollected", refused(again, E.AlreadyCollected), again);
   const carried = await moveSgt(aliceSgt, alice, carol, sgts.authority);
-  const moved = await send(carol, [await collectInstruction(seeker.e, carol.address, 3, carried)]);
-  ok("the same Genesis Token from another wallet after it moved -> AlreadyCollected; the token's receipt still reads",
-    refused(moved, E.AlreadyCollected) && (await collectedCopy(SVM_RPC, seeker.e, carol.address, carried.mint))?.number === 2, moved);
-  const bobCollect = await spent(bob, send(bob, [await collectInstruction(seeker.e, bob.address, 3, bobSgt)]));
-  ok("another Genesis Token is another claim", bobCollect.outcome.ok, bobCollect.outcome);
+  const moved = await claim(seeker, carol, 0n, carried);
+  ok("(vi) the same Genesis Token moved to a second wallet -> AlreadyCollected; copy 2 still alice's",
+    refused(moved, E.AlreadyCollected) && (await copyAt(await printOf(seeker, aliceSgt.mint)))?.owner === alice.address, moved);
+  const bobClaim = await spent(bob, claim(seeker, bob, 0n, bobSgt));
+  ok("another Genesis Token is another claim", bobClaim.outcome.ok, bobClaim.outcome);
 
-  await settles("a price on the Seeker-only edition", send(host, [await setOfferInstruction(seeker.e, floor)]));
-  const unpaid = await send(dave, [await collectInstruction(seeker.e, dave.address, 4, daveSgt)]);
-  ok("collect on the priced Seeker-only edition -> PaymentRequired", refused(unpaid, E.PaymentRequired), unpaid);
-  const buyNone = await send(dave, [await buyInstruction(seeker.e, dave.address, 4, floor, 1)]);
-  ok("buy without Genesis Token accounts -> GenesisTokenRequired", refused(buyNone, E.GenesisTokenRequired), buyNone);
+  await settles("a price on the Seeker-only edition", setPrice(seeker, floor));
+  const unpaid = await claim(seeker, dave, 0n, daveSgt);
+  ok("a free claim on the priced Seeker-only edition -> PriceChanged", refused(unpaid, E.PriceChanged), unpaid);
   const hostBefore = await balance(host.address);
-  const bought = await send(dave, [await buyInstruction(seeker.e, dave.address, 4, floor, 1, daveSgt)]);
-  ok("buy with the buyer's own Genesis Token; the creator is paid the price",
+  const bought = await claim(seeker, dave, floor, daveSgt);
+  ok("a paid claim with the collector's own Genesis Token; the creator is paid the price",
     bought.ok && (await balance(host.address)) - hostBefore === floor &&
-    (await collectedCopy(SVM_RPC, seeker.e, dave.address, daveSgt.mint))?.number === 4, bought);
-  const buyAgain = await send(bob, [await buyInstruction(seeker.e, bob.address, 5, floor, 1, bobSgt)]);
-  ok("buy with a Genesis Token that already collected -> AlreadyCollected", refused(buyAgain, E.AlreadyCollected), buyAgain);
-  await settles("the Seeker-only edition free again", send(host, [await setOfferInstruction(seeker.e, 0n)]));
-  // Stray lamports at the token's receipt address before the claim: returned, never kept.
-  const henryReceipt = await claimReceiptAddress(program, seeker.e.edition, henrySgt.mint);
-  await prefund(henryReceipt);
-  const henryCollect = await spent(henry, send(henry, [await collectInstruction(seeker.e, henry.address, 5, henrySgt)]));
-  ok(`a pre-funded token receipt: the claim succeeds, costs ${STRAY} less than bob's, and the receipt holds exactly its rent`,
-    henryCollect.outcome.ok && henryCollect.cost === bobCollect.cost - STRAY &&
-    (await read(henryReceipt))?.lamports === receiptRent, henryCollect.outcome);
+    await isCopy(seeker, await printOf(seeker, daveSgt.mint), dave.address, 4), bought);
+  const buyAgain = await claim(seeker, bob, floor, bobSgt);
+  ok("a paid claim with a Genesis Token that already claimed -> AlreadyCollected", refused(buyAgain, E.AlreadyCollected), buyAgain);
+  await settles("the Seeker-only edition free again", setPrice(seeker, 0n));
+  const henryPrint = await printOf(seeker, henrySgt.mint);
+  await prefund(henryPrint);
+  const henryClaim = await spent(henry, claim(seeker, henry, 0n, henrySgt));
+  ok(`a pre-funded token print address: the claim succeeds and costs ${STRAY} less than bob's`,
+    henryClaim.outcome.ok && henryClaim.cost === bobClaim.cost - STRAY, henryClaim.outcome);
 
   const open = await draft(program, host, 5);
   await settles("an open edition", publish(open));
-  const offered = await send(bob, [await collectInstruction(open.e, bob.address, 2, bobSgt)]);
+  const offered = await claim(open, bob, 0n, bobSgt);
   ok("Genesis Token accounts on an edition that is not Seeker-only -> InvalidGenesisToken", refused(offered, E.InvalidGenesisToken), offered);
   const frank = await wallet();
-  const grace = await wallet();
-  const frankCollect = await spent(frank, send(frank, [await collectInstruction(open.e, frank.address, 2)]));
-  ok("an open edition still collects per wallet", frankCollect.outcome.ok &&
-    (await collectedCopy(SVM_RPC, open.e, frank.address))?.number === 2, frankCollect.outcome);
-  const graceReceipt = await claimReceiptAddress(program, open.e.edition, grace.address);
-  await prefund(graceReceipt);
-  const graceCollect = await spent(grace, send(grace, [await collectInstruction(open.e, grace.address, 3)]));
-  ok(`a pre-funded wallet receipt: the claim succeeds, costs ${STRAY} less, and the receipt holds exactly its rent`,
-    graceCollect.outcome.ok && graceCollect.cost === frankCollect.cost - STRAY &&
-    (await read(graceReceipt))?.lamports === receiptRent, graceCollect.outcome);
-  // Nobody can sign for a claim address, so only this program can put an account there; written
-  // here directly to show `clear_pda` still refuses one it does not own rather than taking it.
-  const ivan = await wallet();
-  await write(await claimReceiptAddress(program, open.e.edition, ivan.address), {
-    lamports: receiptRent, owner: T22, bytes: new Uint8Array(0) });
-  const squatted = await send(ivan, [await collectInstruction(open.e, ivan.address, 4)]);
-  ok("a claim address owned by another program -> ExistingAsset, never taken", refused(squatted, 6003), squatted);
+  const frankClaim = await claim(open, frank);
+  ok("an open edition still counts wallets", frankClaim.ok && await isCopy(open, await printOf(open, frank.address), frank.address, 2), frankClaim);
 
   console.log(`\n${build}: the publisher's claim`);
-  const maker = await wallet();
-  const makerSgt = await sgts.mint(maker);
-  const sealed = await draft(program, maker, 4, makerSgt.mint, { royaltyBps: 500, seekerOnly: true });
-  const makerReceipt = await claimReceiptAddress(program, sealed.e.edition, makerSgt.mint);
-  await prefund(makerReceipt);
-  const sealedOutcome = await publish(sealed, { genesis: makerSgt });
-  const sealedRead = await readPublication(SVM_RPC, program, sealed.e.edition);
-  ok("Seeker-only, sealed with the creator's Genesis Token: copy 1's receipt is the token's (pre-funded, returned)",
-    sealedOutcome.ok && sealedRead?.sealedGenesis === makerSgt.mint && sealedRead.creatorReceiptAddress === makerReceipt &&
-    (await read(makerReceipt))?.lamports === receiptRent &&
-    (await read(await claimReceiptAddress(program, sealed.e.edition, maker.address))) === null, sealedOutcome);
-  // The client refuses a creator's claim itself, so these are built for another wallet and signed by the creator.
-  const byCreator = (creator: KeyPairSigner) => (ix: Instruction): Instruction => ({
-    ...ix, accounts: ix.accounts!.map((a, i) => (i === 0 ? { ...a, address: creator.address } : a)) });
-  const own = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2, makerSgt))]);
-  ok("the creator collecting it again with the token it was sealed with -> AlreadyCollected", refused(own, E.AlreadyCollected), own);
-  const makerWallet = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2))]);
-  ok("the creator collecting it with their wallet alone -> AlreadyCollected", refused(makerWallet, E.AlreadyCollected), makerWallet);
-  const makerSecond = await sgts.mint(maker);
-  const second = await send(maker, [byCreator(maker)(await collectInstruction(sealed.e, carol.address, 2, makerSecond))]);
-  ok("the creator collecting it with a second Genesis Token they hold -> AlreadyCollected", refused(second, E.AlreadyCollected), second);
-  // A second token of the creator's meets no receipt; only the creator rule stops it, on `buy` too.
-  const hostBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSgt))]);
+  const tries = [
+    await claim(seeker, host, 0n, hostSgt),
+    await claim(seeker, host),
+    await claim(open, host),
+  ];
+  ok("(iv) the creator claiming with the token copy 1 is sealed with, with their wallet alone, or on an open edition -> AlreadyCollected",
+    tries.every((o) => refused(o, E.AlreadyCollected)), tries.find((o) => !refused(o, E.AlreadyCollected)));
   const hostSecond = await sgts.mint(host);
-  const secondCollect = await send(host, [byCreator(host)(await collectInstruction(seeker.e, carol.address, 6, hostSecond))]);
-  const secondBuy = await send(host, [byCreator(host)(await buyInstruction(seeker.e, carol.address, 6, floor, 1, hostSecond))]);
-  const hostTries = [hostBuy, secondCollect, secondBuy];
-  ok("the creator buying it with the token it was sealed with, or collecting or buying it with a second one -> AlreadyCollected",
-    hostSecond.made && hostTries.every((o) => refused(o, E.AlreadyCollected)) &&
-    (await read(await claimReceiptAddress(program, seeker.e.edition, hostSecond.mint))) === null,
-    hostTries.find((o) => !refused(o, E.AlreadyCollected)));
-  // The creator's sealed token in another wallet of theirs: copy 1's receipt is the token's.
+  const second = await claim(seeker, host, 0n, hostSecond);
+  ok("the creator claiming with a second Genesis Token they hold -> AlreadyCollected (the creator rule)",
+    hostSecond.made && refused(second, E.AlreadyCollected) && (await read(await printOf(seeker, hostSecond.mint))) === null, second);
   const hostOther = await wallet();
   const carriedHost = await moveSgt(hostSgt, host, hostOther, sgts.authority);
-  const otherTries = [
-    await send(hostOther, [await collectInstruction(seeker.e, hostOther.address, 6, carriedHost)]),
-    await send(hostOther, [await buyInstruction(seeker.e, hostOther.address, 6, floor, 1, carriedHost)]),
-  ];
-  ok("the creator's sealed token moved to another wallet, collecting or buying from there -> AlreadyCollected; copy 1 still the token's",
-    otherTries.every((o) => refused(o, E.AlreadyCollected)) &&
-    (await collectedCopy(SVM_RPC, seeker.e, hostOther.address, carriedHost.mint))?.number === 1 &&
-    (await readPublication(SVM_RPC, program, seeker.e.edition))?.state.minted === 5,
-    otherTries.find((o) => !refused(o, E.AlreadyCollected)));
-  const openOwn = await send(host, [byCreator(host)(await collectInstruction(open.e, carol.address, 4))]);
-  ok("the creator of an open edition collecting it -> AlreadyCollected", refused(openOwn, E.AlreadyCollected), openOwn);
-  const openSealed = await draft(program, maker, 2, makerSgt.mint);
-  const openSealedOutcome = await publish(openSealed, { genesis: makerSgt });
-  ok("an open edition sealed with the same token keeps the creator's receipt on their wallet",
-    openSealedOutcome.ok && (await readPublication(SVM_RPC, program, openSealed.e.edition))?.creatorReceiptAddress ===
-      await claimReceiptAddress(program, openSealed.e.edition, maker.address), openSealedOutcome);
-
-  console.log(`\n${build}: titles`);
-  for (const c of ["­", "​", "‮", "⁦", "﻿"]) {
-    const d = await draft(program, creator, 1);
-    const outcome = await publish(d, { edit: rewrite(d.e.title, { title: `Moment${c}x` }) });
-    ok(`a title with U+${c.codePointAt(0)!.toString(16).padStart(4, "0").toUpperCase()} -> InvalidTerms`,
-      refused(outcome, E.InvalidTerms) && (await read(d.e.edition)) === null, outcome);
-  }
-  const accented = await draft(program, creator, 1);
-  const accentedOutcome = await publish(accented, { edit: rewrite(accented.e.title, { title: "Moment é" }) });
-  ok("control: a title with an accent publishes", accentedOutcome.ok, accentedOutcome);
+  const fromOther = await claim(seeker, hostOther, 0n, carriedHost);
+  ok("the creator's sealed token moved to another wallet -> AlreadyCollected; copy 1 is still the token's",
+    refused(fromOther, E.AlreadyCollected) && (await copyAt(seeker.print))?.owner === host.address, fromOther);
+  const maker = await wallet();
+  const makerSgt = await sgts.mint(maker);
+  const prefunded = await draft(program, maker, 4, { seekerOnly: true, genesis: makerSgt });
+  await prefund(prefunded.print);
+  const prefundedOutcome = await publish(prefunded);
+  ok("Seeker-only with copy 1's token print address pre-funded: publish succeeds",
+    prefundedOutcome.ok && await isCopy(prefunded, prefunded.print, maker.address, 1), prefundedOutcome);
 }
 
 async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet) {
   const program = devnet.id;
   await fresh(devnet.elf, program, chain);
-  console.log(`\n7. ${devnet.elf}\n  at ${program}`);
+  console.log(`\n9. ${devnet.elf}\n  at ${program}`);
   const creator = await wallet();
   const context = fixtureContext(creator);
   const keys = await devnetGenesisKeys();
@@ -1024,14 +1187,14 @@ async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet)
   let decodes = true;
   try { await assertMemberDecodes(context, standIn.address); } catch { decodes = false; }
   ok("genesisFixture.ts builds the stand-in, and the client decodes it only against the stand-in addresses", made && decodes);
-  const sealed = await draft(program, creator, 2, standIn.address);
-  const outcome = await publish(sealed, { genesis: { mint: standIn.address, token: await genesisTokenAccount(creator.address, standIn.address) } });
-  const sealedRead = await readPublication(SVM_RPC, program, sealed.e.edition);
+  const sealed = await draft(program, creator, 2, { genesis: { mint: standIn.address, token: await genesisTokenAccount(creator.address, standIn.address) } });
+  const outcome = await publish(sealed);
   ok("publish with the stand-in SGT is sealed, and records published_at", outcome.ok &&
-    sealedRead?.sealedGenesis === standIn.address && sealedRead.state.publishedAt === Number(clockTime), outcome);
+    pluginOf(decodeCollection((await read(sealed.collection))!.bytes).plugins, "Attributes")?.attributes[2]?.value === standIn.address &&
+    (await editionOf(sealed))?.publishedAt === Number(clockTime), outcome);
   await holdRealSgt(chain, creator.address);
-  const realOnDevnet = await draft(program, creator, 2, SGT_MINT);
-  const refusal = await publish(realOnDevnet, { genesis: { mint: SGT_MINT, token: chain.sgtToken.address } });
+  const realOnDevnet = await draft(program, creator, 2, { genesis: { mint: SGT_MINT, token: chain.sgtToken.address } });
+  const refusal = await publish(realOnDevnet);
   ok("the real SGT, held by the creator -> InvalidGenesisToken on the devnet build", refused(refusal, E.InvalidGenesisToken), refusal);
 
   // Stand-ins of the fixture's group, as the devnet session's `stand-in` command mints them.
@@ -1041,20 +1204,33 @@ async function devnetBuild(devnet: { elf: string; id: Address }, chain: Mainnet)
   });
 }
 
-async function elsewhere(plain: { elf: string; id: Address }, chain: Mainnet) {
-  console.log(`\n8. ${plain.elf} at other addresses`);
-  // Every build answers DeclaredProgramIdMismatch away from its declare_id!, a devnet one included.
-  const placeholder = address("Ds4LT9zQ3a9V9ZxqKgwYQxskh1DgeYPhoCYz5iHjAizE"); // lib.rs declare_id!
-  for (const at of [placeholder, (await generateKeyPairSigner()).address]) {
-    await fresh(plain.elf, at, chain);
-    const creator = await wallet();
-    const outcome = await publish(await draft(at, creator, 1));
-    ok(`loaded at ${at}: every call -> DeclaredProgramIdMismatch`, refused(outcome, DECLARED_PROGRAM_ID_MISMATCH), outcome);
-  }
+const PLACEHOLDER = address("Ds4LT9zQ3a9V9ZxqKgwYQxskh1DgeYPhoCYz5iHjAizE"); // lib.rs declare_id!
+
+async function elsewhere(build: { elf: string; id: Address }, chain: Mainnet) {
+  console.log(`\n10. ${build.elf} at another address`);
+  // A build answers DeclaredProgramIdMismatch away from its declare_id!. Its own address is the
+  // one every section above ran it at; for a placeholder-address build that is the placeholder,
+  // which therefore cannot be a refusal case here.
+  const at = (await generateKeyPairSigner()).address;
+  await fresh(build.elf, at, chain);
+  const outcome = await publish(await draft(at, await wallet(), 1));
+  ok(`loaded at ${at}: every call -> DeclaredProgramIdMismatch`, refused(outcome, A.DeclaredProgramIdMismatch), outcome);
+  if (build.id === PLACEHOLDER)
+    console.log(`NOTE  ${build.elf} is the placeholder-address build: it runs at ${PLACEHOLDER} (sections above), so no refusal is expected there.`);
+}
+
+function report() {
+  const m = measured;
+  if (m.publishUnits === undefined) return;
+  console.log("\nMeasured on the plain build (compute units include the 150-unit SetComputeUnitLimit):");
+  console.log(`  publish ${m.publishUnits} CU (Seeker-only ${m.seekerPublishUnits}); claim ${m.claimUnits} CU free, ${m.paidClaimUnits} paid (Seeker-only ${m.seekerClaimUnits}); set_price ${m.setPriceUnits} CU`);
+  console.log(`  publish costs the creator ${m.publishCost} lamports; a free claim costs the collector ${m.claimCost}`);
+  console.log(`  collection ${m.collectionBytes} bytes; a copy ${m.assetBytes} bytes holding ${m.assetLamports} lamports (rent + Core's create fee); Edition ${EDITION_ACCOUNT_BYTES} bytes`);
 }
 
 async function main(): Promise<boolean> {
-  const { plain, devnet } = builds();
+  const plain = named("plain");
+  const devnet = named("devnet");
   if (!plain && !devnet) {
     console.log("SKIP  no ELF: pass --plain <elf> --plain-id <address> (or SVM_PLAIN_ELF / SVM_PLAIN_ID).");
     return false;
@@ -1063,10 +1239,11 @@ async function main(): Promise<boolean> {
   host = new Host(hostExecutable());
   try {
     if (plain) await plainBuild(plain, chain);
-    else console.log("\nSKIP  1-6. no plain ELF: pass --plain <elf> --plain-id <address>.");
+    else console.log("\nSKIP  1-8. no plain ELF: pass --plain <elf> --plain-id <address>.");
     if (devnet) await devnetBuild(devnet, chain);
-    else console.log("\nSKIP  7. no devnet-genesis ELF: pass --devnet <elf> --devnet-id <address>.");
+    else console.log("\nSKIP  9. no devnet-genesis ELF: pass --devnet <elf> --devnet-id <address>.");
     await elsewhere((plain ?? devnet)!, chain);
+    report();
   } finally {
     host.close();
   }

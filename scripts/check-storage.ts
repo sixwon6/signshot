@@ -394,7 +394,7 @@ async function creditTests() {
   ok("creator.ts resumes a recorded path without re-posting, and records a new one before uploading",
     /^async function settleStorage\([^)]*\) \{\n  if \(d\.storageFunding\) return;/.test(settle) &&
     /d\.storageFunding = funding;\n  await save\(r, d\);\n\}$/.test(settle) &&
-    upload.indexOf("await settleStorage(r, d)") < upload.indexOf("await publish(d)"));
+    upload.indexOf("await settleStorage(r, d)") < upload.indexOf("await publish(d, readBackMs)"));
   ok("creator.ts looks a lost receipt up at the creator's claim receipt (the sealed token's on a Seeker-only edition), then the edition",
     /const receipt = await claimReceiptAddress\(d\.edition\.program, d\.edition\.edition,\s*publisherClaimant\(d\.edition\.creator, d\.seekerOnly, /.test(settle) &&
     /findStoragePayment\(RPC_ENDPOINT, \{ receipt, edition: d\.edition\.edition \}, quoteId,\s*\{ payer: d\.edition\.creator, destination: signer\.ownerBase58 \}\)/.test(settle));

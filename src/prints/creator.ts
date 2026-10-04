@@ -744,27 +744,31 @@ export async function payStorage(
     await uploadConfirmed(r, d);
   });
 }
-/** A gateway serves an accepted upload some seconds later, so the read-back is tried again. */
+/**
+ * A gateway serves an accepted upload some seconds later, so the read-back is tried again for
+ * `readBackMs`. The wait belongs to an upload the person just asked for; the resume that runs
+ * when a photograph is opened passes 0, because the photograph cannot be left while it runs.
+ */
 const READ_BACK_MS = 30_000, READ_BACK_WAIT_MS = 3_000;
-async function publish(d: CoreDraft) {
+async function publish(d: CoreDraft, readBackMs: number) {
   const { img, meta } = await publicationItems(d);
   await Promise.all([
     uploadDataItem(img.bytes, img.id),
     uploadDataItem(meta.bytes, meta.id),
   ]);
-  const giveUp = Date.now() + READ_BACK_MS;
+  const giveUp = Date.now() + readBackMs;
   for (;;) {
-    try {
-      await Promise.all([
-        arweaveBytes(img.id, d.edition.imageHash),
-        arweaveBytes(meta.id, hash(utf8(d.metadata))),
-      ]);
-      return;
-    } catch (error) {
-      // Wrong bytes stay wrong; anything else is the gateway not serving the item yet.
-      if (error instanceof IntegrityError || Date.now() >= giveUp) throw error;
-      await new Promise((resolve) => setTimeout(resolve, READ_BACK_WAIT_MS));
-    }
+    const read = await Promise.allSettled([
+      arweaveBytes(img.id, d.edition.imageHash),
+      arweaveBytes(meta.id, hash(utf8(d.metadata))),
+    ]);
+    const failed = read.flatMap((one) => (one.status === "rejected" ? [one.reason] : []));
+    if (failed.length === 0) return;
+    // Wrong bytes stay wrong, and are reported ahead of an item that is only not served yet.
+    const wrong = failed.find((reason) => reason instanceof IntegrityError);
+    if (wrong) throw wrong;
+    if (Date.now() >= giveUp) throw failed[0];
+    await new Promise((resolve) => setTimeout(resolve, READ_BACK_WAIT_MS));
   }
 }
 
@@ -967,7 +971,7 @@ async function genesisAccounts(e: CoreMetadata): Promise<GenesisAccounts | undef
 
 type PublicationQuote = Awaited<ReturnType<typeof prepareSetup>>;
 type PublishProgress = "wallet" | "confirming" | "uploading";
-async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
+async function uploadConfirmed(r: CaptureRecord, d: CoreDraft, readBackMs = READ_BACK_MS) {
   if (d.storage === "available") return;
   d.storage = "pending";
   delete d.storageError;
@@ -975,7 +979,7 @@ async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
   try {
     if (paidStorage(cluster)) await settleStorage(r, d);
     else await checkStorage(d);
-    await publish(d);
+    await publish(d, readBackMs);
   } catch (error) {
     d.storageError = storageProblem(error, paidStorage(cluster), d.storageFunding);
     // The free tier refused as well: the next check asks the payment service again first.
@@ -992,7 +996,7 @@ export async function retryPublicationStorage(r: CaptureRecord, d: CoreDraft) {
     if (!await isSigned(d)) throw new Error("Confirm the wallet record before publishing its image.");
     d.confirmedAt ??= Date.now();
     await save(r, d);
-    await uploadConfirmed(r, d);
+    await uploadConfirmed(r, d, 0);
   });
 }
 /**

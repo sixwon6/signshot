@@ -12,8 +12,7 @@ import { mock } from "node:test";
  *   2. what each look IS: reference colours pushed through the real LUT and `levels` stage at the
  *      default strength and at full, held to the numbers that define that camera, and to one
  *      strength law shared by all of them;
- *   3. what was retired: still resolvable by id, exactly as it shipped;
- *   4. the store's carry-forward of what was saved against a retired starter.
+ *   3. the store: a starter's id is never a saved recipe's, and what it no longer knows is dropped.
  *
  * The renderer here is the centre of the frame with no noise: the LUT sampled trilinearly the way
  * `ShaderGen.kt` samples it, mixed by `intensity.lutMix`, then the pointwise stages in manifest
@@ -51,7 +50,6 @@ if (!process.argv.includes("--worker")) {
     { defaultExport: AsyncStorage });
 
   const { STARTERS, DEFAULT_RECIPE_ID, DEFAULT_STRENGTH, starterById } = await import("../src/recipes/starters.ts");
-  const { RETIRED_NAMES, RETIRED_SUCCESSOR, isRetired, retiredById } = await import("../src/recipes/retired.ts");
   const { validateRecipe, sameLook, setParam } = await import("../src/recipes/model.ts");
   const store = await import("../src/recipes/store.ts");
 
@@ -73,7 +71,6 @@ if (!process.argv.includes("--worker")) {
     assert.equal(recipe.builtIn, true);
     assert.equal(recipe.id, recipe.manifest.profileId);
     assert.equal(recipe.manifest.profileVersion, 1, `${recipe.id} is a new id at version 1`);
-    assert.equal(isRetired(recipe.id), false, `${recipe.id} must not reuse a retired id`);
     assert.ok(!/\s/.test(recipe.name), `${recipe.name}: one word, so a chip never breaks it`);
     assert.equal(starterById(recipe.id), recipe);
   }
@@ -323,139 +320,29 @@ if (!process.argv.includes("--worker")) {
   assert.ok(dis.meanChroma > cam.meanChroma && dis.meanChroma > 1.1, "the print is the saturated one");
 
   // =====================================================================================
-  // 3. What was retired
-  // =====================================================================================
-  const SHIPPED = {
-    "rec.soft-digital": { name: "Soft digital", successor: "rec.digicam",
-      manifest: "a62ab348846e11b113c3ac2ba3ee5375b03dbea49134ee48b2015ad2597ddccd",
-      lut: "752e2d4c77db793e72cd605ce3efbd1c1d1ad69d8bbc24cbe38a1edff7e8f43e" },
-    "rec.warm-film": { name: "Warm film", successor: "rec.disposable",
-      manifest: "89a149e8b1af51aac698d9dc94e945c57fb7a9d18777964874ed022be1e94316",
-      lut: "6336e00fc5921ea3b3b70aaaa108b8b4346fcb51e4631716805dc122d7da4120" },
-    "rec.video-tape": { name: "Video tape", successor: "rec.camcorder",
-      manifest: "e57ac85ef7e6eb3af5db6407195a6fafcfd31fe1bf0f7c30cd226d9d1a6f6b42",
-      lut: "7c35b05e44526b505e7b29bc9513a0dbbc41c707cc7f92850ab673c5f6591e9a" },
-  };
-  assert.deepEqual(Object.keys(RETIRED_SUCCESSOR).sort(), Object.keys(SHIPPED).sort());
-  assert.deepEqual(Object.keys(RETIRED_NAMES).sort(), Object.keys(SHIPPED).sort());
-  for (const [id, was] of Object.entries(SHIPPED)) {
-    const recipe = retiredById(id);
-    assert.ok(recipe, `${id} still resolves`);
-    validateRecipe(recipe);
-    assert.equal(recipe.id, id);
-    assert.equal(recipe.name, was.name);
-    assert.equal(RETIRED_NAMES[id], was.name, "a photograph taken with it keeps its name");
-    assert.equal(recipe.builtIn, false, "retired: Develop shows it as any recipe that is off the row");
-    // sha-256 of JSON.stringify(manifest) and of the base64 LUT, as the starters shipped at 99f7d34.
-    assert.equal(sha256(JSON.stringify(recipe.manifest)), was.manifest, `${id}: the manifest is exactly as it shipped`);
-    assert.equal(sha256(recipe.lut), was.lut, `${id}: the LUT is exactly as it shipped`);
-    assert.equal(RETIRED_SUCCESSOR[id], was.successor);
-    assert.ok(starterById(was.successor), `${id}'s successor ships`);
-    assert.equal(starterById(id), null, `${id} is not a starter`);
-  }
-  assert.equal(retiredById("rec.digicam"), null);
-  assert.equal(retiredById("constructor"), null, "an inherited property is not a retired id");
-  assert.equal(isRetired("toString"), false);
-  assert.equal(retiredById(null), null);
-
-  // =====================================================================================
-  // 4. The store carries forward what was saved against a retired starter
+  // 3. The store: a starter's id is never a saved recipe's, and what it no longer knows is dropped
   // =====================================================================================
   const KEY = "recipes.v1";
-  const stored = () => JSON.parse(storage.items.get(KEY) ?? "null");
   const seed = (state) => { storage.items.clear(); storage.writes = 0; if (state) storage.items.set(KEY, JSON.stringify(state)); };
-  const overrideOf = (recipe) => ({ manifest: recipe.manifest, lut: recipe.lut });
-  const warm = retiredById("rec.warm-film");
-  const editedWarm = setParam(warm, "temperatureTint", "temperature", 0.35);
   const ownRecipe = { ...setParam(STARTERS[1], "grain", "size", 2), id: "rec.u.mine01", name: "Mine", builtIn: false };
   ownRecipe.manifest.profileId = ownRecipe.id;
   validateRecipe(ownRecipe);
 
-  // (a) The camera's own first read, on a store from the previous build. This is the implicit run.
+  seed({ v: 1, recipes: [{ ...ownRecipe, id: STARTERS[1].id, manifest: { ...ownRecipe.manifest, profileId: STARTERS[1].id } }] });
+  assert.deepEqual((await store.allRecipes()).map((r) => r.id), STARTERS.map((r) => r.id));
+
   seed({
     v: 1,
     recipes: [ownRecipe],
-    overrides: {
-      "rec.warm-film": overrideOf(editedWarm),                       // edited: must survive
-      "rec.soft-digital": overrideOf(retiredById("rec.soft-digital")), // untouched: nothing of theirs to keep
-      "rec.video-tape": { manifest: { schema: 99 }, lut: null },       // invalid: already unusable
-    },
-    lastUsed: { recipeId: "rec.warm-film", strength: 0.65 },
+    overrides: { "rec.gone": { manifest: ownRecipe.manifest, lut: null } },
+    lastUsed: { recipeId: "rec.gone", strength: 0.65 },
   });
-  const [all, last] = await Promise.all([store.allRecipes(), store.lastUsed()]);
-  assert.deepEqual(all.slice(0, 4).map((r) => r.id), STARTERS.map((r) => r.id), "the picker opens on the new starters, in order");
-  assert.ok(all.slice(0, 4).every((r, i) => sameLook(r, STARTERS[i])), "a retired override never lands on a new starter");
-  assert.ok(all.every((r) => !isRetired(r.id)), "a retired starter is never a choice");
-  const mine = all.filter((r) => !r.builtIn);
-  assert.equal(mine.length, 2, "their own recipe, and the one edited look carried forward");
-  assert.deepEqual(mine[0], ownRecipe, "their own recipe is untouched");
-  const carried = mine[1];
-  assert.match(carried.id, /^rec\.u\./);
-  assert.equal(carried.name, "Warm film", "under the old look's name");
-  assert.equal(carried.manifest.profileId, carried.id);
-  assert.ok(sameLook(carried, editedWarm), "with exactly the look they had set");
-  // The look that was in use was theirs, edited: the camera reopens on it, carried forward, and
-  // not on the successor, which they have never seen. (Scenario (d) is the unedited case.)
-  assert.deepEqual(last, { recipeId: carried.id, strength: 0.65 }, "last used follows the carried-forward look at the same strength");
-  assert.deepEqual(Object.keys(stored().overrides), [], "no retired override is left behind");
-  assert.deepEqual(stored().lastUsed, { recipeId: carried.id, strength: 0.65 });
-  assert.equal(storage.writes, 1, "one write");
-
-  // (b) Idempotent: a second run finds nothing and writes nothing.
-  const afterFirst = storage.items.get(KEY);
-  await store.migrateRetiredRecipes();
-  await store.migrateRetiredRecipes();
-  assert.equal(storage.items.get(KEY), afterFirst, "a second run changes nothing");
-  assert.equal(storage.writes, 1, "and does not write");
-  assert.equal((await store.allRecipes()).filter((r) => r.name === "Warm film").length, 1, "the look is carried forward once");
-
-  // (c) A store with nothing retired in it is left exactly as it was, byte for byte.
-  const digicamOverride = setParam(STARTERS[1], "vignette", "strength", 0.3);
-  seed({ v: 1, recipes: [ownRecipe], overrides: { "rec.digicam": overrideOf(digicamOverride) },
-    lastUsed: { recipeId: "rec.u.mine01", strength: 0.4 }, somethingNewer: { kept: true } });
-  const untouched = storage.items.get(KEY);
-  await store.migrateRetiredRecipes();
-  assert.equal(storage.items.get(KEY), untouched);
-  assert.equal(storage.writes, 0, "nothing retired, nothing written");
-  assert.ok(sameLook((await store.allRecipes())[1], digicamOverride), "a current starter's override still applies");
-  assert.deepEqual(await store.lastUsed(), { recipeId: "rec.u.mine01", strength: 0.4 });
-
-  // (d) Only lastUsed is retired: mapped, and everything else in the store is kept as it was.
-  seed({ v: 1, recipes: [ownRecipe], lastUsed: { recipeId: "rec.video-tape", strength: 1 }, somethingNewer: { kept: true } });
-  await store.migrateRetiredRecipes();
-  assert.deepEqual(stored(), { v: 1, recipes: [ownRecipe], lastUsed: { recipeId: "rec.camcorder", strength: 1 }, somethingNewer: { kept: true } });
-  assert.deepEqual(await store.lastUsed(), { recipeId: "rec.camcorder", strength: 1 });
-
-  // (e) Fail soft. Nothing here may reject: the camera's first read goes through it.
-  seed(null);
-  await store.migrateRetiredRecipes();
-  assert.equal(storage.writes, 0, "an empty store is not written");
-  for (const junk of ["not json", "[]", "null", "7", '{"overrides":[],"recipes":"x","lastUsed":"rec.warm-film"}',
-    '{"overrides":{"rec.warm-film":null,"rec.video-tape":7}}']) {
-    storage.items.clear(); storage.items.set(KEY, junk);
-    await store.migrateRetiredRecipes();
-    assert.deepEqual((await store.allRecipes()).map((r) => r.id), STARTERS.map((r) => r.id), `survives ${junk}`);
-  }
-  storage.failReads = true;
-  await store.migrateRetiredRecipes();
-  storage.failReads = false;
-  // A write that fails loses nothing: the stored override is still there for the next launch, and
-  // the camera still opens on the successor.
-  seed({ v: 1, recipes: [], overrides: { "rec.warm-film": overrideOf(editedWarm) }, lastUsed: { recipeId: "rec.soft-digital", strength: 0.5 } });
-  const beforeFailure = storage.items.get(KEY);
-  storage.failWrites = true;
-  await store.migrateRetiredRecipes();
-  storage.failWrites = false;
-  assert.equal(storage.items.get(KEY), beforeFailure, "a failed write leaves the store as it was");
-  assert.deepEqual(await store.lastUsed(), { recipeId: "rec.digicam", strength: 0.5 }, "and a retired last-used still opens on its successor");
-  await store.migrateRetiredRecipes();
-  assert.equal((await store.allRecipes()).filter((r) => r.name === "Warm film").length, 1, "the next run carries it forward");
-
-  // (f) A saved recipe may never take a starter's id, current or retired.
-  seed({ v: 1, recipes: [{ ...ownRecipe, id: "rec.warm-film", manifest: { ...ownRecipe.manifest, profileId: "rec.warm-film" } }] });
-  assert.deepEqual((await store.allRecipes()).map((r) => r.id), STARTERS.map((r) => r.id));
+  assert.deepEqual((await store.allRecipes()).map((r) => r.id), [...STARTERS.map((r) => r.id), ownRecipe.id]);
+  assert.deepEqual(await store.lastUsed(), { recipeId: DEFAULT_RECIPE_ID, strength: DEFAULT_STRENGTH },
+    "a recipe that is gone: the camera reopens on the phone's own look");
+  assert.equal(storage.writes, 0, "reading writes nothing");
 
   console.log("looks ok — Phone pinned; Digicam, Disposable and Camcorder hold their numbers at 60 and 100; "
-    + "one strength law; retired starters resolve as shipped; the store carries retired data forward once");
+    + "one strength law; the store keeps starter ids for starters and drops what it no longer knows");
   console.log(report.join("\n"));
 }

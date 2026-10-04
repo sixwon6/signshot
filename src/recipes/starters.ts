@@ -5,8 +5,6 @@ import { neutralRecipe, type Recipe, type RecipeManifest } from "./model";
  * The starters: built-in recipes, each named for a camera you could have owned. Ordinary recipe
  * data, never stored, renamed or deleted. Each colour grade is a LUT computed here, so it is
  * reviewable as maths, and `scripts/check-looks.mjs` holds each one to the numbers that define it.
- *
- * Starters that no longer ship live in `retired.ts`; their ids are never reused.
  */
 
 const LUT_SIZE = 17;

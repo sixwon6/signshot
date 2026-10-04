@@ -83,7 +83,6 @@ import {
   type PhotoPublication,
 } from "../prints/photoPresentation";
 import { develop as developCopy } from "../prints/developCopy";
-import { RETIRED_NAMES } from "../recipes/retired";
 import { allRecipes } from "../recipes/store";
 import { qrMatrix } from "../ui/qr";
 import { colors, space } from "../ui/theme";
@@ -124,11 +123,8 @@ export function ReviewScreen() {
   >(null);
   const [busy, setBusy] = useState(false),
     [feedback, setFeedback] = useState("");
-  /**
-   * Recipe ids to names: the fallback for a camera frame whose sidecar records only the id. A
-   * frame taken with a starter that no longer ships keeps that starter's name.
-   */
-  const [recipeNames, setRecipeNames] = useState<Record<string, string>>(RETIRED_NAMES);
+  /** Recipe ids to names: the fallback for a camera frame whose sidecar records only the id. */
+  const [recipeNames, setRecipeNames] = useState<Record<string, string>>({});
   /**
    * The open photograph's price, read from the chain rather than from its draft, so a price set
    * from the Wallet screen or another device is the one shown here. `supported` is false for a
@@ -264,10 +260,7 @@ export function ReviewScreen() {
     void allRecipes()
       .then((list) => {
         if (live)
-          setRecipeNames({
-            ...RETIRED_NAMES,
-            ...Object.fromEntries(list.map((item) => [item.id, item.name])),
-          });
+          setRecipeNames(Object.fromEntries(list.map((item) => [item.id, item.name])));
       })
       .catch(() => {
         // A name is a nicety; the photograph and its status do not depend on it.

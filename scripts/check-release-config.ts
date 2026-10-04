@@ -169,28 +169,6 @@ export async function genesisRefusal(cluster: Cluster, raw: string | undefined):
   return `EXPO_PUBLIC_SOLANA_RPC_URL is not on ${cluster} (genesis ${said}, expected ${expected}).`;
 }
 
-/**
- * The program `cluster` would publish against, or a refusal message.
- *
- * `configured` is `configuredProgram` from `publications/deployments.ts`, passed in so this
- * function stays free of the environment it reads.
- */
-function resolveProgram(
-  cluster: Cluster,
-  configured: (cluster: Cluster) => { toString(): string },
-): { program: string } | { refusal: string } {
-  try {
-    return { program: String(configured(cluster)) };
-  } catch (error) {
-    return {
-      refusal:
-        `no reviewed program is configured for "${cluster}": ` +
-        `${error instanceof Error ? error.message : String(error)}\n` +
-        `    publications/deployments.ts decides this. A signed APK that cannot publish is not a release.`,
-    };
-  }
-}
-
 /** Google's published set of valid attestation roots, a JSON array of PEM certificates. */
 const ATTESTATION_ROOT_LIST = "https://android.googleapis.com/attestation/root";
 
@@ -286,17 +264,12 @@ async function main(argv: readonly string[]): Promise<void> {
     if (cluster !== "devnet" && process.env[name])
       fail(`${name} is set on a ${cluster} build; it belongs to a devnet test session only.`);
 
-  // Imported after the env is loaded: deployments.ts reads the EXPO_PUBLIC_EDITIONS_* overrides at module load.
-  const { configuredProgram, pinnedImage } = await import("../publications/deployments");
-  const resolved = resolveProgram(cluster, configuredProgram);
-  if ("refusal" in resolved) fail(resolved.refusal);
-  // Publishing refuses a program whose bytes and upgrade authority are not on record
-  // (`publications/programImage.ts`), so a build without that record cannot publish at all.
-  if (!pinnedImage(resolved.program, cluster))
-    fail(
-      `${resolved.program} has no PROGRAM_IMAGES record for "${cluster}" in publications/deployments.ts.\n` +
-        `    Record its ELF digest, length and upgrade authority; without them every publish is refused.`,
-    );
+  // No program of this app's own: editions are Metaplex's Core Candy Machine, the same address on
+  // every cluster. A Seeker-only edition needs the co-signer, an HTTPS URL when set.
+  const { CANDY_MACHINE_PROGRAM } = await import("../publications/candy/programs");
+  const resolved = { program: String(CANDY_MACHINE_PROGRAM) };
+  const cosigner = process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL;
+  if (cosigner && !cosigner.trim().startsWith("https://")) fail("EXPO_PUBLIC_SEEKER_COSIGNER_URL must be an https:// URL.");
 
   const roots = await attestationRootsRefusal();
   if (roots) fail(roots);

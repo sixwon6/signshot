@@ -54,7 +54,7 @@ export function selectPhotoProof(
         : publication.status === "unavailable"
           ? "unavailable"
           : "unconfirmed";
-    const signature = draft?.attempt?.signature;
+    const signature: string | undefined = undefined;
     // Only the validated view supplies edition links; a saved address alone cannot rebuild one
     // when draft or trust validation failed.
     return {

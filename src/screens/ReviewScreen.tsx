@@ -62,6 +62,8 @@ import {
 } from "../prints/publicationBundle";
 import { getOffer } from "../prints/offer";
 import { formatSol } from "../prints/price";
+import { priceValue } from "../prints/priceToken";
+import type { Price } from "../../publications/candy/edition";
 import { PrintSheet } from "../prints/PrintSheet";
 import { OfferSheet } from "../prints/OfferSheet";
 import { PhotoEditor } from "../prints/PhotoEditor";
@@ -130,7 +132,11 @@ export function ReviewScreen() {
   const [offer, setOffer] = useState<{
     edition: string;
     supported: boolean;
-    offer: { priceLamports: bigint; revision: number } | null;
+    offer: Price | null;
+    reason?: string;
+    minted?: number;
+    seekerOnly?: boolean;
+    anomaly?: string | null;
   } | null>(null);
   const request = useRef(0),
     operation = useRef(false);
@@ -568,9 +574,7 @@ export function ReviewScreen() {
   const currentOffer =
     offer && d && offer.edition === d.edition.edition ? offer : null;
   const priceLine =
-    currentOffer?.offer && currentOffer.offer.priceLamports > 0n
-      ? `${priceCopy.label} ${priceCopy.value(formatSol(currentOffer.offer.priceLamports))}`
-      : "";
+    currentOffer?.offer ? `${priceCopy.label} ${priceValue(currentOffer.offer)}` : "";
   const detailPad = CAPTION_PAD;
   const detailPictureMax = Math.min(440, Math.round(height * 0.5));
   const detailPictureWidth = Math.min(
@@ -729,10 +733,15 @@ export function ReviewScreen() {
                 {d && (
                   <Text style={s.body}>
                     {knownPublished ? "" : "Publication draft · "}
-                    {editionLine(d.edition.supply)}
+                    {currentOffer?.minted !== undefined
+                      ? `${currentOffer.minted} / ${d.edition.supply} issued`
+                      : editionLine(d.edition.supply)}
+                    {currentOffer?.seekerOnly ? " · Seeker holders only" : ""}
                     {d.edition.cluster === "devnet" ? " · Devnet" : ""}
                   </Text>
                 )}
+                {!!currentOffer?.reason && <Text style={s.body}>{currentOffer.reason}</Text>}
+                {!!currentOffer?.anomaly && <Text style={s.body}>{currentOffer.anomaly}</Text>}
                 {/* What a buyer pays for one of the remaining copies. Absent for a free edition. */}
                 {!!priceLine && <Text style={s.body}>{priceLine}</Text>}
               </View>

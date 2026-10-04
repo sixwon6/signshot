@@ -45,9 +45,9 @@ import {
 } from "../publications/core/attestation";
 import { GOOGLE_STATUS_URL as STATUS_URL, publicationTime, readRevocationList } from "../publications/core/attestationCheck";
 import { parseCertificate } from "../src/seeker/keyAttestation";
-import { readPublication } from "../publications/core/protocol";
+import { loadEdition } from "../publications/editions";
+import { CANDY_MACHINE_PROGRAM } from "../publications/candy/programs";
 import { arweaveBytes } from "../publications/rpc";
-import { TRUSTED, programFeatures } from "../publications/deployments";
 import type { Cluster } from "../publications/types";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -84,9 +84,7 @@ if (arg("at")) {
 
 async function publishedAt(rpc: string, program: string, edition: string): Promise<void> {
   if (arg("at")) return;
-  const source = programFeatures(program).publishedAt
-    ? "the edition's published_at, recorded at publish"
-    : "block time of the transaction that created the publisher's claim receipt";
+  const source = "block time of the transaction that created the candy machine";
   try {
     validAt = { time: await publicationTime(rpc, program, edition), source };
   } catch (error) {
@@ -114,20 +112,18 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   if (!edition) throw new Error("give --edition <address> or --file <document.json>");
   const cluster = (arg("cluster") ?? "devnet") as Cluster;
   const rpc = arg("rpc") ?? (cluster === "devnet" ? "https://api.devnet.solana.com" : "https://api.mainnet.solana.com");
-  const programs = TRUSTED[cluster];
-  let found: Awaited<ReturnType<typeof readPublication>> = null, program = "";
-  for (const candidate of programs) {
-    found = await readPublication(rpc, candidate, edition);
-    if (found) { program = candidate; break; }
-  }
-  if (!found) throw new Error(`edition ${edition} was not found under a reviewed ${cluster} deployment`);
-  const { state } = found;
+  const verdict = await loadEdition(rpc, edition);
+  if (!verdict.ok) throw new Error(`edition ${edition}: ${verdict.reason}`);
+  const program = CANDY_MACHINE_PROGRAM;
   await publishedAt(rpc, program, edition);
-  const bytes = await arweaveBytes(state.uri.split("/").pop()!, state.metadataHash);
-  check("chain-state", true, `document bytes hash to the on-chain metadata_hash ${state.metadataHash}`);
+  const bytes = await arweaveBytes(verdict.uri.split("/").pop()!);
+  check("chain-state", true, `document read from the edition's URI ${verdict.uri}`);
+  const json = JSON.parse(new TextDecoder().decode(bytes));
+  const nonce = json?.properties?.seedshot?.manifest?.nonce ?? "";
+  const imageHash = Array.from(verdict.imageSha256, (x: number) => x.toString(16).padStart(2, "0")).join("");
   return {
-    json: JSON.parse(new TextDecoder().decode(bytes)),
-    expected: { cluster, program, edition, collection: state.collection, creator: state.creator, nonce: state.nonce, imageHash: state.imageHash },
+    json,
+    expected: { cluster, program, edition, collection: verdict.collection, creator: verdict.publisher, nonce, imageHash },
   };
 }
 

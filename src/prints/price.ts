@@ -9,7 +9,11 @@
  * the client reads from the cluster (`minimumPriceLamports`), never from a constant.
  */
 import { request } from "../../publications/rpc";
-import type { PreparedQuote } from "./quoteRefresh";
+/** An estimate as the review shows it: the total, and the rows it is made of. */
+export interface Estimate {
+  estimatedLamports: bigint;
+  estimateBreakdown: { networkFee: bigint; accountCost: bigint; allowance: bigint };
+}
 
 /** 1 SOL = 1,000,000,000 lamports. https://solana.com/docs/references/terminology#lamport */
 const LAMPORTS_PER_SOL = 1_000_000_000n;
@@ -103,7 +107,7 @@ export function checkPriceMinimum(lamports: bigint, minimum: bigint): bigint {
  * row of its own — and both come out of the accounts row. Rows are clamped at zero.
  */
 export function costRows(
-  prepared: Pick<PreparedQuote, "estimatedLamports" | "estimateBreakdown">,
+  prepared: Estimate,
   apart = 0n,
 ) {
   const { networkFee, accountCost, allowance } = prepared.estimateBreakdown;
@@ -117,4 +121,28 @@ export function costRows(
     accounts: less(accountCost, networkFee + apart),
     allowance,
   };
+}
+
+/**
+ * A typed token amount as base units, exactly, for a mint with `decimals` places; empty is 0n.
+ * The same rules as `parseSolPrice`.
+ */
+export function parseUnits(text: string, decimals: number): bigint {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed) return 0n;
+  const match = DECIMAL.exec(trimmed);
+  if (!match || !(match[1] || match[2])) throw new Error("Enter an amount, like 100.");
+  const fraction = match[2] ?? "";
+  if (fraction.length > decimals) throw new Error(`This token has at most ${decimals} decimal places.`);
+  const units = BigInt(match[1] || "0") * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0");
+  if (units > MAX_PRICE_LAMPORTS) throw new Error(TOO_LARGE);
+  return units;
+}
+
+/** Base units as a decimal string for a mint with `decimals` places, trailing zeros trimmed. */
+export function formatUnits(units: bigint, decimals: number): string {
+  if (decimals === 0) return units.toString();
+  const scale = 10n ** BigInt(decimals);
+  const fraction = (units % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${units / scale}.${fraction}` : `${units / scale}`;
 }

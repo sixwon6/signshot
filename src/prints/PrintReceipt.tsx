@@ -2,10 +2,21 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { costSol as sol } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 import type { prepareSetup, PublicationDraft } from "./creator";
-import { costRows, formatSol } from "./price";
+import { costRows } from "./price";
+import { priceValue } from "./priceToken";
+import { draftPrice } from "./creator";
+import type { Price } from "../../publications/candy/edition";
+
+/** The draft's price; an unreadable one is shown as free rather than taking the receipt down. */
+function readDraftPrice(d: PublicationDraft): Price {
+  try {
+    return draftPrice(d);
+  } catch {
+    return { kind: "free" };
+  }
+}
 import { shortAddress } from "./photoPresentation";
 import { deviceName, securityLevelName } from "../../publications/core/attestation";
-import { programFeatures } from "../../publications/deployments";
 import { deviceValue, type DeviceCheck } from "../seeker/useDeviceVerdict";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
@@ -40,7 +51,7 @@ export function PrintReceipt({
   onToggleWallet(): void;
 }) {
   /** The price the draft itself committed to, read back like every other receipt row. */
-  const draftPrice = draftPriceLamports(draft);
+  const shownPrice = draft ? priceValue(readDraftPrice(draft)) : null;
   return draft ? (
     <View style={s.receipt}>
       {quote?.step === "sign" && (
@@ -54,22 +65,13 @@ export function PrintReceipt({
       <Row label={copy.rowCopies} value={String(draft.edition.supply)} />
       {/* The price is a buyer's, not the publisher's: it is stated beside the copies and
           never added into the estimate below. */}
-      {draftPrice !== null && (
-        <Row
-          label={priceCopy.label}
-          value={
-            draftPrice > 0n
-              ? priceCopy.value(formatSol(draftPrice))
-              : priceCopy.free
-          }
-        />
-      )}
+      {shownPrice !== null && <Row label={priceCopy.label} value={shownPrice} />}
       {/* Sealed at publish beside the price, where the deployment takes them. */}
-      {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && (
+      {(
         <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
       )}
       {/* Always stated: the switch may ask for Seeker-only on a wallet with no token to seal. */}
-      {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && draft.edition.supply > 1 && (
+      {draft.edition.supply > 1 && (
         <Row label={copy.rowCollectors}
           value={draft.seekerOnly ? collectCopy.seekerOnly : collectCopy.anyone} />
       )}
@@ -187,20 +189,6 @@ function WalletRow({
       )}
     </Pressable>
   );
-}
-
-/**
- * The price a saved draft committed to, in lamports, or null when it carries none. Stored as a
- * decimal string because a draft is JSON; an unreadable one is treated as no price rather than
- * taken down to a crash, since the amount is a receipt line and not what the wallet signs.
- */
-function draftPriceLamports(draft: PublicationDraft | null): bigint | null {
-  if (!draft?.price) return draft?.price === "0" ? 0n : null;
-  try {
-    return BigInt(draft.price);
-  } catch {
-    return null;
-  }
 }
 
 const s = StyleSheet.create({

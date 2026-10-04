@@ -10,7 +10,6 @@
 
 import { request } from "../rpc";
 import { deviceVerdict, type AttestationSummary, type DeviceVerdict, type RevocationList } from "./attestation";
-import { account, addresses, readEdition } from "./protocol";
 
 /** Google's list, which the app and the verifier fetch directly. */
 export const GOOGLE_STATUS_URL = "https://android.googleapis.com/attestation/status";
@@ -139,12 +138,9 @@ export async function publicationTime(endpoint: string, program: string, edition
   const key = `${endpoint}\n${program}\n${edition}`;
   const held = timeCache.get(key);
   if (held) return held;
-  const raw = await account(endpoint, edition);
-  if (!raw || raw.owner !== program || raw.executable) throw new Error("Edition not found on this network");
-  const state = readEdition(raw.bytes, program);
-  const time = state.publishedAt !== null
-    ? new Date(state.publishedAt * 1000)
-    : await receiptCreationTime(endpoint, program, edition, state);
+  // A candy machine edition: the transaction in which the System program created the candy
+  // machine account for `program` (the Candy Machine program), which only its own key could sign.
+  const time = await receiptCreationTime(endpoint, program, edition);
   if (timeCache.size >= 256) timeCache.clear();
   timeCache.set(key, time);
   return time;
@@ -165,11 +161,8 @@ async function receiptCreationTime(
   endpoint: string,
   program: string,
   edition: string,
-  state: { creator: string; nonce: string },
 ): Promise<Date> {
-  const keys = await addresses(program, state.creator, state.nonce);
-  if (keys.edition !== edition) throw new Error("Invalid edition addresses");
-  const receipt = keys.receipt;
+  const receipt = edition;
   const history: SignatureEntry[] = [];
   let before: string | undefined;
   for (let page = 1; ; page += 1) {

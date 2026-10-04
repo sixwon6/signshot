@@ -1,7 +1,6 @@
 import { Pressable, Text } from "react-native";
 import { estimate } from "../ui/copy";
-import { costRows } from "./price";
-import type { PreparedQuote } from "./quoteRefresh";
+import { costRows, type Estimate } from "./price";
 import { sheetStyles as s } from "./sheetStyles";
 
 export const costSol = (lamports: bigint) => (Number(lamports) / 1e9).toFixed(6);
@@ -15,7 +14,7 @@ export function CostEstimate({
   includeAccountCost = true,
   apart = 0n,
 }: {
-  prepared: Pick<PreparedQuote, "estimatedLamports" | "estimateBreakdown">;
+  prepared: Estimate;
   expanded: boolean;
   onToggle(): void;
   suffix?: string;

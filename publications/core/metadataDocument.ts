@@ -3,13 +3,12 @@ import { readDescription } from "./details";
 import { checkAttributes, exactKeys, object, readAttestationBundle } from "./attestation";
 import { genesisAttributes, readGenesisClaim } from "./genesisToken";
 import { collectUrl } from "./links";
-import { programFeatures } from "../deployments";
 import { canonicalize, type JcsValue } from "../../src/jcs";
 
 const MISMATCH = "Photo metadata does not match the published edition";
 const ARWEAVE_IMAGE = /^https:\/\/arweave\.net\/[A-Za-z0-9_-]{43}$/;
-/** This earlier reviewed devnet deployment published the richer erashot-core/1 document. */
-const LEGACY_PROGRAM = "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq";
+
+
 
 type Commitment = {
   cluster: Cluster; program: string; edition: string; collection: string;
@@ -40,7 +39,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   catch { throw new Error(MISMATCH); }
   // The formats `metadata()` wrote before the collect link and the file list: read on the
   // deployments they were published on, and on no program deployed after them.
-  const earlier = !programFeatures(expected.program).royaltiesAndSeekerOnly;
+  const earlier = false;
   if (exactKeys(doc, ["name", "description", "image"])) {
     if (!earlier) throw new Error(MISMATCH);
     return { image: doc.image, description };
@@ -105,25 +104,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
     }
   }
 
-  // Legacy metadata is still hash-bound. It cannot choose the network, program, ownership,
-  // edition size or image fingerprint: every repeated claim must agree with verified state.
-  if (expected.cluster !== "devnet" || expected.program !== LEGACY_PROGRAM ||
-      !exactKeys(doc, ["name", "description", "image", "erashot", "properties"]))
-    throw new Error(MISMATCH);
-  const legacy = object(doc.erashot), properties = object(doc.properties);
-  if (!legacy || legacy.schema !== "erashot-core/1" || legacy.protocol !== CORE_PROTOCOL ||
-      legacy.image !== doc.image || !properties || properties.category !== "image" ||
-      !exactKeys(properties, ["category", "files"]) || !Array.isArray(properties.files) || properties.files.length !== 1)
-    throw new Error(MISMATCH);
-  for (const key of ["cluster", "program", "edition", "collection", "creator", "nonce", "title", "supply", "imageHash"] as const)
-    if (legacy[key] !== expected[key]) throw new Error(MISMATCH);
-  const file = object(properties.files[0]);
-  if (!file || !exactKeys(file, ["type", "uri"]) || file.type !== "image/jpeg" || file.uri !== doc.image ||
-      typeof legacy.width !== "number" || !Number.isSafeInteger(legacy.width) || legacy.width <= 0 ||
-      typeof legacy.height !== "number" || !Number.isSafeInteger(legacy.height) || legacy.height <= 0)
-    throw new Error(MISMATCH);
-  // Capture/source annotations are historical metadata, not proof of ownership or provenance.
-  return { image: doc.image, description, dimensions: { width: legacy.width, height: legacy.height } };
+  throw new Error(MISMATCH);
 }
 
 /**

@@ -4,7 +4,18 @@ import {
   SolanaMobileWalletAdapterProtocolError,
   SolanaMobileWalletAdapterProtocolErrorCode,
 } from "@solana-mobile/mobile-wallet-adapter-protocol";
-import { ExpiredQuoteError } from "../prints/quoteRefresh";
+/**
+ * A reviewed transaction that can no longer be handed to the wallet: its blockhash ran out, or
+ * (`changed`) what it would do moved since the review. Classified by type, never by text.
+ */
+export class ExpiredQuoteError extends Error {
+  readonly changed: boolean;
+  constructor(message: string, changed: boolean) {
+    super(message);
+    this.name = "ExpiredQuoteError";
+    this.changed = changed;
+  }
+}
 
 /** Only the protocol's explicit signing refusal proves this signing request was not sent. */
 export function isSigningRefused(e: unknown): boolean {

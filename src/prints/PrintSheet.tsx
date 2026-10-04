@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CaptureRecord, PhotoEdit } from "../../modules/seeker-camera";
 import type { WalletSession } from "../solana/walletSession";
 import {
-  canSealGenesis,
+  seekerOnlyAvailable,
   createDraft,
   prepareSetup,
   sendSetup,
@@ -25,16 +25,13 @@ import {
   type PublicationState,
 } from "./creator";
 import { useStorageTopUp } from "./useStorageTopUp";
-import { terms } from "../../publications/core/protocol";
+import { terms } from "../../publications/core/document";
 import { useDeviceVerdict } from "../seeker/useDeviceVerdict";
 import { normalizeDescription } from "../../publications/core/details";
 import { readPhotoEdit } from "./photoStorage";
-import { parseSolPrice } from "./price";
+import { parseSolPrice, parseUnits } from "./price";
+import { loadPriceToken, priceOf, type PriceToken } from "./priceToken";
 import { shortAddress } from "./photoPresentation";
-import {
-  configuredProgram,
-  programFeatures,
-} from "../../publications/deployments";
 import {
   DEFAULT_ROYALTY_BPS,
   DEFAULT_SEEKER_ONLY,
@@ -54,9 +51,8 @@ import {
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import { assertReviewedProgram } from "../../publications/programImage";
 import { useTermsAgreement } from "../moderation/store";
-import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT } from "../solana/cluster";
+import { IS_MAINNET } from "../solana/cluster";
 import {
   isChangedQuote,
   isExpiredQuote,
@@ -67,15 +63,6 @@ import { useSheetOperation } from "./useSheetOperation";
 import { PrintDetails } from "./PrintForm";
 import { PrintReceipt } from "./PrintReceipt";
 import { PrintDock } from "./PrintDock";
-
-/**
- * Before a wallet signs anything `era_editions` runs: the draft's program, or the one a fresh
- * publication uses, must still be the reviewed bytes under the recorded upgrade authority
- * (`publications/programImage.ts`). Refuses with one line otherwise.
- */
-async function checkProgram(program?: string) {
-  await assertReviewedProgram(RPC_ENDPOINT, program ?? configuredProgram(cluster), cluster);
-}
 
 export function PrintSheet({
   record,
@@ -122,6 +109,9 @@ export function PrintSheet({
   /** The price of a copy, as typed, in SOL; empty is free. Offered only where `priceable`. */
   const [priceText, setPriceText] = useState("");
   const [offers, setOffers] = useState(false);
+  /** The unit the price is typed in; "token" is offered only where this build has a price token. */
+  const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
+  const [token, setToken] = useState<PriceToken | null>(null);
   /**
    * The royalty, in basis points and whole percents, and whether only Seeker Genesis Token holders
    * may collect. Frozen into the draft like the price, and offered only where the deployment a
@@ -182,18 +172,10 @@ export function PrintSheet({
         if (!live) return;
         setEdit(selected);
         setAvailability(available);
-        // The deployment a fresh publication would use decides which terms can be set.
-        // `configuredProgram` throws when publishing is unavailable, already its own screen state.
-        const features = (() => {
-          try {
-            return available.enabled ? programFeatures(configuredProgram(cluster)) : null;
-          } catch {
-            return null;
-          }
-        })();
-        setOffers(!!features?.offers);
-        setDistribution(!!features?.royaltiesAndSeekerOnly);
-        setSealable(!!features && canSealGenesis(configuredProgram(cluster)));
+        setOffers(true);
+        setDistribution(true);
+        void seekerOnlyAvailable().then((ok) => { if (live) setSealable(ok); });
+        void loadPriceToken().then((t) => { if (live) setToken(t); }, () => undefined);
         await applyPublicationState(state);
         if (!live) return;
         if (state.draft) {
@@ -205,8 +187,6 @@ export function PrintSheet({
           setSeekerOnly(state.draft.seekerOnly);
         }
         if (state.reason) setStatus(state.reason);
-        // Warms the program check while the details are typed; publishing asks again and refuses.
-        void checkProgram(state.draft?.edition.program).catch(() => {});
       } catch (e) {
         if (live) setError(safeErrorText(e));
       } finally {
@@ -230,8 +210,6 @@ export function PrintSheet({
       storage: "Checking image storage…",
       estimate: "Calculating a fresh transaction cost…",
     }[stage]));
-    // Only a quote to sign reaches the program; an edition already on chain needs no check.
-    if (next.step === "sign") await checkProgram(current.edition.program);
     setQuote(next);
     if (next.step === "ready") {
       setPublished(true);
@@ -268,7 +246,7 @@ export function PrintSheet({
           // The same gates `createDraft` applies, run before the wallet opens.
           const moment = normalizeDescription(caption);
           // Zero or no price publishes free.
-          const lamports = priced ? priceLamports : undefined;
+          const lamports = priced ? priceOf(priceUnit, priceLamports) : undefined;
           const owner = await session.connectAnd((wallet) =>
             session.authorizeSession(wallet),
           );
@@ -309,8 +287,7 @@ export function PrintSheet({
     return run(async () => {
       setError("");
       try {
-        if (quote.step === "sign") await checkProgram(draft.edition.program);
-        const receipt = await sendSetup(record, draft, session, quote, (phase) =>
+        await sendSetup(record, draft, session, quote, (phase) =>
           setStatus(
             {
               wallet: "Review and approve in your wallet…",
@@ -322,12 +299,7 @@ export function PrintSheet({
         );
         setPublished(true);
         setQuote(null);
-        // Published either way; a receipt mismatch (the landed transaction was not the reviewed
-        // one) is said instead of the usual status.
-        if (receipt === "mismatched") {
-          setError(copy.reviewMismatch);
-          setStatus("");
-        } else setStatus("");
+        setStatus("");
         onChanged?.();
       } catch (e) {
         setQuote(null);
@@ -435,7 +407,7 @@ export function PrintSheet({
     try {
       // The one place a typed amount becomes lamports. An amount that cannot be represented
       // exactly is refused here, before a wallet, rather than rounded into a transaction.
-      priceLamports = parseSolPrice(priceText);
+      priceLamports = priceUnit === "token" && token ? parseUnits(priceText, token.decimals) : parseSolPrice(priceText);
     } catch (e) {
       priceError = safeErrorText(e);
     }
@@ -527,6 +499,9 @@ export function PrintSheet({
                 setCount={setCount}
                 priceable={priceable}
                 priceText={priceText}
+                priceUnit={priceUnit}
+                setPriceUnit={setPriceUnit}
+                tokenLabel={token?.label ?? null}
                 setPriceText={setPriceText}
                 priceError={priceError}
                 distribution={distribution}

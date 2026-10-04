@@ -5,7 +5,7 @@
  */
 
 import type { CaptureRecord } from "../../modules/seeker-camera";
-import { operationInProgress } from "../../publications/lifecycle";
+import { operationInProgress } from "./locks";
 import { CLUSTER_NAME as cluster } from "../solana/cluster";
 import type { Cluster, CoreDraft } from "../../publications/types";
 // `creator.ts` imports this module in return; only function references cross that cycle and

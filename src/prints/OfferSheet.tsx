@@ -24,14 +24,18 @@ import type { CoreMetadata } from "../../publications/types";
 import {
   getOffer,
   isOfferWorking,
+  prepareClose,
   prepareOffer,
+  samePrice,
   sendOffer,
+  type EditionOffer,
   type OfferQuote,
 } from "./offer";
-import type { EditionOffer } from "../../publications/core/protocol";
-import { formatSol, parseSolPrice } from "./price";
+import { formatSol, formatUnits, parseSolPrice, parseUnits } from "./price";
+import { priceOf, priceToken, priceValue } from "./priceToken";
+import type { Price } from "../../publications/candy/edition";
 import { colors, space } from "../ui/theme";
-import { NetworkLabel, Pill } from "../ui/primitives";
+import { Chip, NetworkLabel, Pill } from "../ui/primitives";
 import {
   actions,
   changedEstimate,
@@ -77,6 +81,8 @@ export function OfferSheet({
   const [current, setCurrent] = useState<EditionOffer | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [priceText, setPriceText] = useState("");
+  const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
+  const token = priceToken();
   /** Set means a `set_offer` confirmed in this sheet; the flow is finished. */
   const [saved, setSaved] = useState<EditionOffer | null>(null);
 
@@ -98,8 +104,12 @@ export function OfferSheet({
         setCurrent(next.offer);
         // The field starts at the price that is already set, so leaving it alone changes nothing
         // and clearing it is how a creator makes the edition free again.
-        setPriceText(next.offer ? formatSol(next.offer.priceLamports) : "");
-        setStatus(next.supported ? "" : copy.unsupported);
+        const offer = next.offer;
+        setPriceUnit(offer?.kind === "token" ? "token" : "sol");
+        const known = priceToken();
+        setPriceText(offer?.kind === "sol" ? formatSol(offer.lamports)
+          : offer?.kind === "token" && known ? formatUnits(offer.amount, known.decimals) : "");
+        setStatus(next.supported ? "" : next.reason ?? copy.unsupported);
       } catch (e) {
         if (live && id === request.current) {
           setStatus("");
@@ -119,9 +129,12 @@ export function OfferSheet({
       setStatus(copy.working);
       return;
     }
-    let lamports: bigint;
+    let price: Price;
     try {
-      lamports = parseSolPrice(priceText);
+      const known = priceToken();
+      price = priceUnit === "token" && known
+        ? priceOf("token", parseUnits(priceText, known.decimals))
+        : priceOf("sol", parseSolPrice(priceText));
     } catch (e) {
       clearQuote();
       setError(safeErrorText(e, copy.invalid));
@@ -134,7 +147,7 @@ export function OfferSheet({
       clearQuote();
       setStatus("");
       try {
-        const next = await prepareOffer(edition, lamports);
+        const next = await prepareOffer(edition, price);
         setQuote(next);
       } catch (e) {
         clearQuote();
@@ -144,6 +157,22 @@ export function OfferSheet({
           cancelled: copy.cancelled,
           fallback: copy.invalid,
         });
+      }
+    });
+  }
+
+  /** "Close sale": review closing, simulated and costed. Nothing is signed here. */
+  async function reviewClose() {
+    if (running.current || !supported || finished) return;
+    return run(async () => {
+      setError("");
+      clearQuote();
+      setStatus("");
+      try {
+        setQuote(await prepareClose(edition));
+      } catch (e) {
+        clearQuote();
+        showCheckFailure(e, { timedOut: walletTimeout.offerCostCheck, cancelled: copy.cancelled, fallback: copy.invalid });
       }
     });
   }
@@ -159,8 +188,12 @@ export function OfferSheet({
         );
         clearQuote();
         setCurrent(next);
-        setSaved(next);
+        setSaved(next ?? { kind: "free" });
         setStatus("");
+        if (quote.action === "close") {
+          setSupported(false);
+          setStatus("Sale closed.");
+        }
         onSaved?.();
       } catch (e) {
         clearQuote();
@@ -181,10 +214,9 @@ export function OfferSheet({
           !expired &&
           !changed &&
           !!after &&
-          (after.offer?.revision ?? 0) > quote.fromRevision &&
-          (after.offer?.priceLamports ?? 0n) === quote.priceLamports;
+          (quote.action === "close" ? !after.supported : after.supported && samePrice(after.offer, quote.price));
         if (landed) {
-          setSaved(after.offer ?? { priceLamports: 0n, revision: 0 });
+          setSaved(after.offer ?? { kind: "free" });
           setError("");
           setStatus(timedOut ? walletTimeout.offerFound : "");
           onSaved?.();
@@ -243,13 +275,21 @@ export function OfferSheet({
               <Row
                 label={copy.currentLabel}
                 value={
-                  shown ? copy.value(formatSol(shown.priceLamports)) : copy.free
+                  priceValue(shown)
                 }
               />
             </View>
             {supported && !finished && (
               <View style={sheetStyles.field}>
-                <Text style={sheetStyles.label}>{copy.newLabel}</Text>
+                <Text style={sheetStyles.label}>{token ? "New price" : copy.newLabel}</Text>
+                {!!token && (
+                  <View style={{ flexDirection: "row", gap: space.sm }} accessibilityRole="radiogroup">
+                    <Chip label="SOL" size="small" accessibilityRole="radio" selected={priceUnit === "sol"}
+                      disabled={busy} onPress={() => { setPriceUnit("sol"); clearQuote(); }} style={{ flex: 1 }} />
+                    <Chip label={token.label} size="small" accessibilityRole="radio" selected={priceUnit === "token"}
+                      disabled={busy} onPress={() => { setPriceUnit("token"); clearQuote(); }} style={{ flex: 1 }} />
+                  </View>
+                )}
                 <TextInput
                   style={sheetStyles.input}
                   accessibilityLabel={copy.newLabel}
@@ -272,13 +312,12 @@ export function OfferSheet({
                 <Row
                   label={copy.label}
                   value={
-                    quote.priceLamports > 0n
-                      ? copy.value(formatSol(quote.priceLamports))
-                      : copy.free
+                    quote.action === "close" ? "Closed" : priceValue(quote.price)
                   }
                 />
                 <CostEstimate prepared={quote.prepared} expanded={showCost}
                   onToggle={() => setShowCost((v) => !v)} />
+                {quote.action === "close" && <Text style={sheetStyles.body}>Closing ends the sale. It cannot be reopened.</Text>}
               </View>
             )}
           </ScrollView>
@@ -297,18 +336,21 @@ export function OfferSheet({
               <Pill label={actions.done} disabled={busy} onPress={onClose} />
             ) : quote ? (
               <Pill
-                label={actions.setPrice}
+                label={quote.action === "close" ? "Close sale" : actions.setPrice}
                 accessibilityHint={onChain.setPrice}
                 disabled={busy}
                 onPress={() => void send()}
               />
             ) : (
-              <Pill
-                label={actions.continueToPublish}
-                accessibilityHint={onChain.setPrice}
-                disabled={busy || !supported}
-                onPress={() => void review()}
-              />
+              <>
+                <Pill
+                  label={actions.continueToPublish}
+                  accessibilityHint={onChain.setPrice}
+                  disabled={busy || !supported}
+                  onPress={() => void review()}
+                />
+                <Pill label="Close sale" variant="secondary" disabled={busy || !supported} onPress={() => void reviewClose()} />
+              </>
             )}
           </View>
         </View>

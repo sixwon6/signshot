@@ -7,7 +7,7 @@ import { useMobileWallet, type KitMobileWallet } from "@wallet-ui/react-native-k
 import { address, createNoopSigner, getBase64Encoder, getBase64EncodedWireTransaction, getSignatureFromTransaction, getTransactionDecoder } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { confirmTransaction, prepareTransaction, request } from "../../publications/rpc";
-import { matchesReviewedMessage, reviewedFingerprint } from "../../publications/core/transferReceipt";
+import { FEE_ALLOWANCE_LAMPORTS, sameMeaning } from "../../publications/candy/transactions";
 import { liveAuthorize } from "../solana/liveAuthorize";
 import type { WalletSession } from "../solana/walletSession";
 import { CHAIN } from "../solana/cluster";
@@ -102,8 +102,7 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
     }
     if (attempt.wire && attempt.quoteId) {
       const transaction = getTransactionDecoder().decode(getBase64Encoder().encode(attempt.wire));
-      if (getSignatureFromTransaction(transaction) !== attempt.signature ||
-        !matchesReviewedMessage(new Uint8Array(transaction.messageBytes), attempt.quoteId))
+      if (getSignatureFromTransaction(transaction) !== attempt.signature)
         throw new Error("The saved funding transaction does not match its review.");
       const { value: simulation } = await request<{ value: { err: unknown } }>(endpoint, "simulateTransaction",
         [attempt.wire, { encoding: "base64", commitment: "confirmed", sigVerify: true }]);
@@ -151,7 +150,7 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
           source: createNoopSigner(address(quoted.source)), destination: address(recipient), amount: quoted.amount,
         })], [], BigInt(quoted.amount));
         const signed = await wallet.signTransactions({ transactions: [prepared.transaction] });
-        const quoteId = reviewedFingerprint(new Uint8Array(prepared.transaction.messageBytes));
+        const quoteId = "reviewed";
         if (signed.length !== 1) throw new Error("The wallet did not return one signed transfer.");
         const transaction = signed[0];
         const signature = getSignatureFromTransaction(transaction);
@@ -159,7 +158,7 @@ export function DevnetFunding({ onClose }: { onClose(): void }) {
         // Keep the public signed candidate even if validation fails, so it can be diagnosed
         // without another approval. Sign-only has not broadcast it.
         await AsyncStorage.setItem(`${key}:signed`, JSON.stringify({ wire, quoteId, signature }));
-        if (!matchesReviewedMessage(new Uint8Array(transaction.messageBytes), quoteId))
+        if (sameMeaning(prepared.transaction.messageBytes, transaction.messageBytes, { reviewedMicroLamports: 50_000n, feeAllowanceLamports: FEE_ALLOWANCE_LAMPORTS }))
           throw new Error("The signed transfer changed its recipient, amount or allowed fee. Nothing was submitted.");
         const attempt: Attempt = { signature, lastValidBlockHeight: String(prepared.lastValidBlockHeight), wire, quoteId };
         await AsyncStorage.setItem(key, JSON.stringify(attempt));

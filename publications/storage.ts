@@ -14,7 +14,6 @@ import {
 } from "@solana/kit";
 import { utf8 } from "../src/arweave/codec";
 import { turboItemStatus, TurboError, TURBO_FREE_ITEM_BYTES } from "../src/arweave/turbo";
-import { matchesReviewedMessage, verifiedMessage } from "./core/transferReceipt";
 import { NEEDS_SOL, request } from "./rpc";
 import { TURBO_PAYMENT_HOSTS, TURBO_UPLOAD_HOSTS } from "./turboHosts";
 import type { CoreDraft, PublicationStorageProblem, StorageTopUp } from "./types";
@@ -420,97 +419,9 @@ export function paysStorage(message: Uint8Array, payer: string, destination: str
   }
 }
 
-/** How far back each address's history is walked, and how many of its oldest transactions are read. */
-const HISTORY_PAGES = 5, HISTORY_PAGE = 1000, OLDEST_READ = 20;
-/** How a read transaction answers a search: the reviewed message, a storage payment, or neither. */
-type Verdict = "reviewed" | "payment" | null;
-
-/**
- * The publication transaction when the wallet never returned its receipt: the oldest successful
- * transaction whose message matches the fingerprint saved before the wallet opened, checked as
- * `recoverTransferReceipt` checks a transfer's. The creator's claim receipt is searched first:
- * `publish` creates it and nothing else normally touches it, while every collect writes the edition.
- * The edition is searched after. Pre-funding either address can put transfers ahead of the
- * publication, so several of the oldest are read. A wallet that added its own instructions (compute
- * budget, Lighthouse) changes the fingerprint, so failing that, the oldest that `paysStorage` is taken.
- */
-export async function findStoragePayment(
-  endpoint: string,
-  publication: { receipt: string; edition: string },
-  quoteId: string,
-  payment: { payer: string; destination: string },
-): Promise<string> {
-  const judge = (message: Uint8Array): Verdict =>
-    matchesReviewedMessage(message, quoteId) ? "reviewed"
-      : paysStorage(message, payment.payer, payment.destination) ? "payment" : null;
-  for (const account of [publication.receipt, publication.edition]) {
-    const found = await oldestMatching(endpoint, account, judge);
-    if (found) return found;
-  }
-  throw new PublicationStorageError({ kind: "unavailable", retryable: true,
-    message: "The publication's payment was not found. Check again shortly." });
-}
-
-/**
- * The stand-alone payment when the wallet never returned its receipt: among the payer's transactions
- * from the slot its blockhash was read at, the reviewed message, or one the wallet rewrote that
- * `paysStorage` on that same blockhash. Every draft of a wallet names the same upload key, so the
- * blockhash is what tells this payment from the publication's or another draft's. `null` if absent.
- */
-export async function findStorageTopUp(
-  endpoint: string,
-  topUp: Pick<StorageTopUp, "quoteId" | "blockhash" | "slot">,
-  payment: { payer: string; destination: string },
-): Promise<string | null> {
-  return oldestMatching(endpoint, payment.payer, (message) =>
-    matchesReviewedMessage(message, topUp.quoteId) ? "reviewed"
-      : paysStorage(message, payment.payer, payment.destination, topUp.blockhash) ? "payment" : null,
-  topUp.slot);
-}
-
-/**
- * The oldest judged transaction at `account` from `fromSlot` on: a reviewed match before a payment.
- * Only a transaction whose signature verifies over its message (`verifiedMessage`) is judged.
- */
-async function oldestMatching(
-  endpoint: string,
-  account: string,
-  judge: (message: Uint8Array) => Verdict,
-  fromSlot = 0,
-): Promise<string | null> {
-  const landed: { signature: string; slot: number }[] = [];
-  let before: string | undefined;
-  for (let page = 0; page < HISTORY_PAGES; page += 1) {
-    const batch = await request<unknown>(endpoint, "getSignaturesForAddress",
-      [account, { limit: HISTORY_PAGE, commitment: "confirmed", ...(before ? { before } : {}) }]);
-    if (!Array.isArray(batch)) throw new Error("Invalid Solana response");
-    for (const entry of batch) {
-      if (typeof entry?.signature !== "string" || entry.err !== null ||
-        !Number.isSafeInteger(entry.slot) || entry.slot < fromSlot ||
-        (entry.confirmationStatus !== "confirmed" && entry.confirmationStatus !== "finalized")) continue;
-      try { signature(entry.signature); } catch { continue; }
-      landed.push({ signature: entry.signature, slot: entry.slot });
-    }
-    const last = batch[batch.length - 1];
-    if (batch.length < HISTORY_PAGE || typeof last?.signature !== "string" || !(last.slot >= fromSlot)) break;
-    before = last.signature;
-  }
-  // RPC lists newest first; the publication created both accounts, so it is among the oldest. A
-  // read that fails is a candidate not confirmed, never an error.
-  const oldest = landed.reverse().slice(0, OLDEST_READ);
-  const verdicts = await Promise.all(oldest.map(async (entry): Promise<Verdict> => {
-    try {
-      const result = await request<unknown>(endpoint, "getTransaction", [entry.signature,
-        { commitment: "confirmed", encoding: "base64", maxSupportedTransactionVersion: 0 }]);
-      const message = verifiedMessage(result, entry.signature, entry.slot);
-      return message ? judge(message) : null;
-    } catch {
-      return null;
-    }
-  }));
-  const first = (verdict: Verdict) => oldest.find((_, index) => verdicts[index] === verdict)?.signature;
-  return first("reviewed") ?? first("payment") ?? null;
-}
+/** A confirmed publication whose storage has not been bought: the dock offers the stand-alone payment. */
+export const storagePaymentNeeded = () => new PublicationStorageError({ kind: "quota", retryable: false,
+  message: "Pay for the photo's storage to finish publishing." });
 
 export function storageProblem(error: unknown, paid = false, funding?: StorageFunding): StorageProblem {
   if (error instanceof PublicationStorageError) return error.problem;

@@ -60,18 +60,46 @@ export async function liveAuthorize(
   config: LiveAuthorizeConfig,
   wallet: KitMobileWallet,
 ): Promise<Account> {
+  return (await authorizeWith(config, wallet)).account;
+}
+
+/** MWA's `sign_in_result`, base64 fields, passed on unchanged. */
+export interface SignInResult { address: string; signed_message: string; signature: string; signature_type?: string }
+
+/**
+ * Sign-in-with-Solana inside an open session: `authorize` with `sign_in_payload` (MWA 2.0). A
+ * wallet that skips the sign-in when it reuses a token is asked once more without the token.
+ */
+export async function liveSignIn(
+  config: LiveAuthorizeConfig,
+  wallet: KitMobileWallet,
+  payload: Record<string, unknown>,
+): Promise<{ account: Account; signInResult: SignInResult }> {
+  let result = await authorizeWith(config, wallet, payload);
+  if (!result.signInResult) result = await authorizeWith(config, wallet, payload, true);
+  if (!result.signInResult) throw new Error("The wallet did not sign in. Try again, or use another wallet.");
+  return { account: result.account, signInResult: result.signInResult };
+}
+
+async function authorizeWith(
+  config: LiveAuthorizeConfig,
+  wallet: KitMobileWallet,
+  signIn?: Record<string, unknown>,
+  withoutToken = false,
+): Promise<{ account: Account; signInResult?: SignInResult }> {
   const { store, chain, identity } = config;
-  const authToken = store.$authToken.get();
+  const authToken = withoutToken ? undefined : store.$authToken.get();
+  const extra = signIn ? { sign_in_payload: signIn as never } : {};
   let result;
   try {
-    result = await wallet.authorize({ auth_token: authToken, chain, identity });
+    result = await wallet.authorize({ auth_token: authToken, chain, identity, ...extra });
   } catch (error) {
     if (
       error instanceof SolanaMobileWalletAdapterProtocolError &&
       error.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED
     ) {
       try {
-        result = await wallet.authorize({ chain, identity });
+        result = await wallet.authorize({ chain, identity, ...extra });
       } catch (retryError) {
         // MWA spec: a token rejected with ERROR_AUTHORIZATION_FAILED must be discarded. Drop it
         // even when the no-token retry fails too, or every later operation re-prompts. Best
@@ -92,5 +120,5 @@ export async function liveAuthorize(
       ? previous
       : first;
   await store.persist({ accounts, authToken: result.auth_token, selectedAccount });
-  return selectedAccount;
+  return { account: selectedAccount, signInResult: result.sign_in_result as SignInResult | undefined };
 }

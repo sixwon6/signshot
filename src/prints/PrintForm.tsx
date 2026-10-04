@@ -29,6 +29,9 @@ export function PrintDetails({
   priceable,
   priceText,
   setPriceText,
+  priceUnit,
+  setPriceUnit,
+  tokenLabel,
   priceError,
   distribution,
   royaltyBps,
@@ -52,6 +55,10 @@ export function PrintDetails({
   priceable: boolean;
   priceText: string;
   setPriceText: Dispatch<SetStateAction<string>>;
+  priceUnit: "sol" | "token";
+  setPriceUnit: Dispatch<SetStateAction<"sol" | "token">>;
+  /** The price token's label ("SKR") when this build has one, else null: SOL only. */
+  tokenLabel: string | null;
   priceError: string;
   distribution: boolean;
   royaltyBps: number;
@@ -123,7 +130,15 @@ export function PrintDetails({
       {/* The price of a copy: absent, never disabled, where it cannot apply. */}
       {priceable && (
         <View style={s.group}>
-          <Text style={sheetStyles.label}>{priceCopy.publishLabel}</Text>
+          <Text style={sheetStyles.label}>{tokenLabel ? priceCopy.publishLabelAny : priceCopy.publishLabel}</Text>
+          {!!tokenLabel && (
+            <View style={s.row} accessibilityRole="radiogroup">
+              <Chip label="SOL" size="small" accessibilityRole="radio" selected={priceUnit === "sol"}
+                disabled={busy} onPress={() => setPriceUnit("sol")} style={s.flex} />
+              <Chip label={tokenLabel} size="small" accessibilityRole="radio" selected={priceUnit === "token"}
+                disabled={busy} onPress={() => setPriceUnit("token")} style={s.flex} />
+            </View>
+          )}
           <TextInput
             style={sheetStyles.input}
             accessibilityLabel={priceCopy.publishLabel}

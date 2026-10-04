@@ -1,82 +1,64 @@
 /**
- * Collecting: a wallet claims the next numbered copy of a published edition with one instruction.
- *
- * Free or paid is decided by the chain, not the screen: `collect` claims a free copy, `buy` claims
- * it and pays the publisher in the same transaction. Which one is built comes from the edition's
- * `Offer` account, re-read immediately before the estimate; the program refuses `collect` on a
- * priced edition (`PaymentRequired`) and `buy` on a free one (`NotForSale`). Either way the
- * collector also pays rent for the print and the `Receipt`, the network fee and Metaplex Core's
- * 1,500,000-lamport create fee, all taken from simulating the collector's own transaction.
- *
- * Program rules this flow respects (`programs/editions/src/lib.rs`):
- *   1. `require!(e.minted < e.supply, SoldOut)`: an edition runs out, permanently.
- *   2. `require!(number == e.minted + 1, StaleNumber)`: the copy number is instruction data, read
- *      from the chain immediately before the estimate.
- *   3. The receipt PDA `["claim", edition, collector]` is `init`: one claim per wallet, ever. That
- *      account, not a signature, proves a claim, and the program refuses a second one. On a
- *      seeker-only edition it is keyed on the collector's Seeker Genesis Token instead
- *      (`publications/core/seekerClaim.ts`).
- *
- * The attempt is persisted before the wallet opens, the edition is re-read immediately before it
- * opens, and one in-process lock per edition stops two taps racing.
+ * Collecting: a wallet claims the next numbered copy of an edition through Metaplex's Core Candy
+ * Guard (`claimDraft` in `publications/candy/edition.ts`). The edition is re-read immediately before
+ * the review and before the wallet opens; the amounts shown are the client's own (`claimCost`), and
+ * the claim moves exactly those, so a price changed since review fails on chain and charges nothing.
+ * A Seeker-only edition is co-signed by the Worker after Sign-in-with-Solana.
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   address,
-  getBase58Decoder,
+  generateKeyPairSigner,
   getBase64Decoder,
-  getCompiledTransactionMessageDecoder,
+  type Address,
 } from "@solana/kit";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
-import { forgetIfRefused } from "../solana/walletErrors";
-import { refreshedQuote } from "./quoteRefresh";
 import {
-  addresses,
-  buyInstruction,
-  collectInstruction,
-  loadTrustedEdition,
-  pricedOffer,
-  readOfferAccount,
-  readPublication,
-  type EditionOffer,
-  type GenesisAccounts,
-} from "../../publications/core/protocol";
-import { claimGenesis, claimedCopy } from "../../publications/core/seekerClaim";
+  canAfford,
+  claimCost,
+  claimDraft,
+  claimStatus,
+  counterAddress,
+  type ClaimCost,
+  type Edition,
+  type Price,
+} from "../../publications/candy/edition";
+import type { Draft, Budget } from "../../publications/candy/transactions";
+import {
+  copiesHeld,
+  copiesLine,
+  editionDisplay,
+  fetchAccount,
+  loadEdition,
+  readHeldCopy,
+  type EditionDisplay,
+} from "../../publications/editions";
+import { FEE_ALLOWANCE_LAMPORTS, NEEDS_SOL } from "../../publications/rpc";
+import type { Cluster, CoreMetadata } from "../../publications/types";
 import { collect as words } from "../ui/copy";
-import { reviewedFingerprint } from "../../publications/core/transferReceipt";
-import { isTrustedDeployment } from "../../publications/deployments";
-import { assertReviewedProgram } from "../../publications/programImage";
-import { assertAttempt, checkAttempt, exclusive, operationInProgress } from "../../publications/lifecycle";
 import { safeErrorText } from "../ui/errorText";
+import { exclusive, operationInProgress } from "./locks";
 import {
-  NEEDS_SOL,
-  OPERATION_FLOOR_LAMPORTS,
-  confirmTransaction,
-  prepareTransaction,
-  request,
-} from "../../publications/rpc";
-import {
-  CORE_PROTOCOL,
-  type Cluster,
-  type CoreMetadata,
-  type PublicationAttempt,
-} from "../../publications/types";
+  TransactionFailure,
+  balance,
+  claimFailure,
+  latestLifetime,
+  prepareDraft,
+  priorityLamports,
+  rent,
+  sendAndConfirm,
+  signWithWallet,
+  withLifetime,
+} from "./send";
+import { cosignClaim, cosignerChallenge, cosignerKey } from "../seeker/cosigner";
+import { associatedTokenAddress, TOKEN_PROGRAM } from "../../publications/candy/programs";
+import { loadPriceToken, tokenValue } from "./priceToken";
+import { publisherGenesisMint } from "../seeker/publisherGenesis";
 
-const UNREVIEWED =
-  "This edition uses a program this app has not reviewed.";
-
-/**
- * One collection at a time per EDITION, in the style of `publicationLockKey` (`coordinator.ts`).
- * Keyed on the edition rather than on a photograph because a collector has no local photograph:
- * the thing two taps could race for is the edition's next copy number.
- */
+/** One collection at a time per edition, in this process. */
 const lock = (edition: string) => `collect:${cluster}:${edition}`;
-
-/** Is a collection running for this edition right now? */
 export const isCollectWorking = (edition: string) => operationInProgress(lock(edition));
-
 // ---------------------------------------------------------------------------
 // Links
 // ---------------------------------------------------------------------------
@@ -185,41 +167,37 @@ export function parseCollectLink(input: string): CollectTarget | null {
   return null;
 }
 
+
 // ---------------------------------------------------------------------------
 // Reading an edition
 // ---------------------------------------------------------------------------
 
-/**
- * A verified, readable edition. `imageUri` is the data URI of exactly the bytes whose sha256
- * matched the on-chain `image_hash`, built the same way `publications/core/library.ts` builds it,
- * so nothing is re-fetched to display what was already verified.
- */
+/** An edition `readEdition` accepted, with its verified picture as a data URI. */
 export interface Collectable {
   edition: CoreMetadata;
+  chain: Edition;
   minted: number;
   remaining: number;
   imageUri: string;
-  /**
-   * The price of a copy, or `null` when free (no offers on this deployment, none set, or zero;
-   * `pricedOffer` never reports `0n`), so `offer !== null` exactly when a claim is a purchase.
-   * For rendering only: `prepareCollect` re-reads the account before building a transaction.
-   */
-  offer: EditionOffer | null;
-  /**
-   * Only Seeker Genesis Token holders may collect, one copy per token: read off the Edition, which
-   * the publication sealed it into, and never changed.
-   */
+  /** The price of a copy (SOL or SKR), or null when free. */
+  offer: Price | null;
   seekerOnly: boolean;
-  /** The permanent chain evidence, including the publisher's own receipt for copy 1. */
-  publication: Awaited<ReturnType<typeof loadTrustedEdition>>["publication"];
+  /** One line when the edition's copies on chain do not add up (`copyAnomalies`), else null. */
+  anomaly: string | null;
 }
 
-/**
- * Read an edition to collect. The program is resolved from the account's OWNER and checked against
- * this build's reviewed deployments, so neither the link nor the metadata can choose one. Throws a
- * sentence a screen can render for every failure: not on the network, not a reviewed deployment, or
- * a document that does not match what was published.
- */
+const asCollectable = (d: EditionDisplay, anomaly: string | null): Collectable => ({
+  edition: d.edition,
+  chain: d.chain,
+  minted: d.minted,
+  remaining: d.remaining,
+  imageUri: `data:image/jpeg;base64,${getBase64Decoder().decode(d.imageBytes)}`,
+  offer: d.offer,
+  seekerOnly: d.seekerOnly,
+  anomaly,
+});
+
+/** Read an edition by its candy machine. Throws a sentence for anything `readEdition` refuses. */
 export async function loadCollectable(edition: string): Promise<Collectable> {
   let key: string;
   try {
@@ -227,360 +205,186 @@ export async function loadCollectable(edition: string): Promise<Collectable> {
   } catch {
     throw new Error(NOT_AN_ADDRESS);
   }
-  // Everything below reads the chain the wallet will broadcast to, so the endpoint is pinned first.
   await assertEndpointCluster();
-  const result = await loadTrustedEdition(RPC_ENDPOINT, key, cluster);
-  // `loadTrustedEdition` already applied this rule; restated because it is the whole of the trust
-  // decision and a refactor there must not quietly remove it here.
-  if (!isTrustedDeployment(cluster, result.edition.program)) throw new Error(UNREVIEWED);
-  return {
-    edition: result.edition,
-    minted: result.minted,
-    remaining: result.remaining,
-    imageUri: `data:image/jpeg;base64,${getBase64Decoder().decode(result.imageBytes)}`,
-    offer: result.offer,
-    seekerOnly: result.seekerOnly,
-    publication: result.publication,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// The durable attempt
-// ---------------------------------------------------------------------------
-
-/**
- * One wallet's collection attempt on one edition, written BEFORE the wallet opens so a lost
- * response is still recoverable. Keyed per wallet as well as per edition: a phone can be used with
- * more than one wallet, and one wallet's outcome says nothing about another's.
- */
-interface CollectAttempt extends PublicationAttempt {
-  version: 1;
-  protocol: typeof CORE_PROTOCOL;
-  collector: string;
-  edition: string;
-  /** The print PDA this claim creates: `["print", edition, u16 le number]`. */
-  asset: string;
-  number: number;
-  /**
-   * `reviewedFingerprint` of the compiled message, ignoring the compute-budget instructions a
-   * wallet may rewrite. Recorded so the attempt names a specific reviewed transaction.
-   */
-  quoteId: string;
-  confirmedAt?: number;
-}
-
-const attemptKey = (edition: string, wallet: string) =>
-  `es.core-collect.v1:${cluster}:${edition}:${wallet}`;
-
-const BAD_ATTEMPT =
-  "The saved collection does not match this edition. Check it before collecting again.";
-
-async function read(e: CoreMetadata, wallet: string): Promise<CollectAttempt | null> {
-  const raw = await AsyncStorage.getItem(attemptKey(e.edition, wallet));
-  if (!raw) return null;
-  const attempt = JSON.parse(raw) as CollectAttempt;
-  assertAttempt(attempt);
-  address(attempt.collector);
-  address(attempt.asset);
-  address(attempt.edition);
-  if (
-    attempt.version !== 1 ||
-    attempt.protocol !== CORE_PROTOCOL ||
-    attempt.collector !== wallet ||
-    attempt.edition !== e.edition ||
-    // Copy 1 is the publisher's, created by `publish`; a claim is never for it.
-    !Number.isInteger(attempt.number) ||
-    attempt.number < 2 ||
-    attempt.number > e.supply ||
-    !/^[a-f0-9]{64}$/.test(attempt.quoteId) ||
-    (attempt.confirmedAt !== undefined &&
-      (!Number.isSafeInteger(attempt.confirmedAt) || attempt.confirmedAt <= 0))
-  )
-    throw new Error(BAD_ATTEMPT);
-  // The recorded asset must be the print PDA those seeds actually produce, so a rewritten record
-  // cannot make a later check ask about somebody else's NFT.
-  const expected = await addresses(e.program, e.creator, e.nonce, attempt.number, wallet);
-  if (expected.print !== attempt.asset) throw new Error(BAD_ATTEMPT);
-  return attempt;
-}
-
-const write = (attempt: CollectAttempt) =>
-  AsyncStorage.setItem(attemptKey(attempt.edition, attempt.collector), JSON.stringify(attempt));
-
-/**
- * Drop an attempt that failed on chain, under the edition lock and only while it is still the one
- * judged. Skipped while a collection runs: that send replaces it.
- */
-async function forgetFailed(e: CoreMetadata, wallet: string, failed: CollectAttempt) {
-  if (operationInProgress(lock(e.edition))) return;
-  await exclusive(lock(e.edition), async () => {
-    const current = await read(e, wallet);
-    if (current !== null && current.signature === failed.signature &&
-      current.quoteId === failed.quoteId && current.lastValidBlockHeight === failed.lastValidBlockHeight)
-      await AsyncStorage.removeItem(attemptKey(e.edition, wallet));
-  });
+  await loadPriceToken().catch(() => null);
+  const verdict = await loadEdition(RPC_ENDPOINT, key);
+  if (!verdict.ok) throw new Error(verdict.reason);
+  const [display, anomaly] = await Promise.all([
+    editionDisplay(cluster, verdict),
+    copiesLine(RPC_ENDPOINT, verdict).catch(() => null),
+  ]);
+  return asCollectable(display, anomaly);
 }
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-type CollectEligibility = "collect" | "already" | "soldOut" | "wait" | "needsGenesis" | "unavailable";
+type CollectEligibility = "collect" | "already" | "soldOut" | "needsGenesis" | "unavailable";
 
 export interface CollectState {
   eligibility: CollectEligibility;
-  attempt: CollectAttempt | null;
-  /** The copy this wallet holds, when `already`. */
+  /** The copy this wallet holds, when it holds one. */
   number?: number;
   reason?: string;
-  /**
-   * On a seeker-only edition, the wallet's Seeker Genesis Token as it was found for this state:
-   * what the claim is keyed on and what the program is handed (`claimGenesis`). Absent otherwise.
-   */
-  genesis?: GenesisAccounts;
 }
 
-const SOLD_OUT = "Sold out.";
-const ALREADY =
-  "Already collected by this wallet.";
-const MAY_LAND = "A collection may still land. Wait a moment, then check again.";
-const CONFIRMED_UNSEEN =
-  "Collection confirmed, but its receipt is not visible yet. Check again.";
-const CANNOT_REPEAT =
-  "The previous collection failed. Reopen the link.";
+const PUBLISHER = "You published this edition and hold copy 1.";
+const BLOCKED = "This wallet cannot claim this edition: its claim record's address is taken.";
 
-/**
- * May this wallet collect, and what is in the way? Never throws: a failure is `unavailable` with
- * its sentence. The permanent receipt is checked first (a wallet that has claimed never claims
- * again), then this wallet's saved attempt (money that may be in flight outranks a supply count).
- * A `terminal` attempt is forgotten and the edition answers for itself; anything else but
- * `retryable` stops the offer, so a classification later added to `checkAttempt` fails safe.
- */
+/** May this wallet claim, and what is in the way? Never throws. */
 export async function getCollectState(c: Collectable, wallet: string): Promise<CollectState> {
-  let attempt: CollectAttempt | null = null;
   try {
-    const e = c.edition;
     address(wallet);
-    if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program))
-      throw new Error(UNREVIEWED);
-    await assertEndpointCluster();
-    attempt = await read(e, wallet);
-
-    // A seeker-only edition's claim is keyed on the wallet's Seeker Genesis Token, found on this
-    // build's own cluster (`claimGenesis`): `null` when it holds none, `undefined` when open.
-    const genesis = wallet === e.creator ? undefined : await claimGenesis(RPC_ENDPOINT, cluster, c.seekerOnly, wallet);
-    const found = genesis ? { genesis } : {};
-    // The publisher's receipt was created by `publish` atomically with print #1 and is already
-    // verified inside `c.publication`, so it costs no request to answer for them.
-    const mine =
-      wallet === e.creator
-        ? c.publication.creatorReceipt
-        : await claimedCopy(RPC_ENDPOINT, e, wallet, genesis);
-    if (mine)
-      return {
-        eligibility: "already",
-        attempt,
-        // A token's copy may sit with the wallet that claimed it, not this one.
-        ...(mine.collector === wallet ? { number: mine.number } : {}),
-        reason: genesis ? words.alreadyGenesis : ALREADY,
-        ...found,
-      };
-
-    if (attempt) {
-      const standing = await checkAttempt(RPC_ENDPOINT, attempt, { operation: "collect" });
-      if (standing === "pending") return { eligibility: "wait", attempt, reason: MAY_LAND };
-      // Confirmed without error, yet no receipt exists: this connection is behind, or the
-      // signature confirmed on a transaction that was not this claim. Neither is a reason to pay
-      // again right now.
-      if (standing === "confirmed")
-        return { eligibility: "unavailable", attempt, reason: CONFIRMED_UNSEEN };
-      if (standing === "terminal") {
-        await forgetFailed(e, wallet, attempt);
-        attempt = null;
-      } else if (standing !== "retryable")
-        return { eligibility: "unavailable", attempt, reason: CANNOT_REPEAT };
+    const e = c.chain;
+    const held = await copiesHeld(RPC_ENDPOINT, e.collection, wallet).catch(() => []);
+    const number = held.find((copy) => copy.edition !== null)?.edition ?? undefined;
+    const mine = number !== undefined ? { number } : {};
+    if (wallet === e.publisher) return { eligibility: "already", ...mine, reason: PUBLISHER };
+    if (e.onePerWallet) {
+      const status = claimStatus(e, await fetchAccount(RPC_ENDPOINT, await counterAddress(e, address(wallet))));
+      if (status === "claimed") return { eligibility: "already", ...mine, reason: words.already };
+      if (status === "blocked") return { eligibility: "unavailable", reason: BLOCKED };
+    } else {
+      // The co-signer decides; this only spares a wallet with no token the sign-in.
+      const key = await cosignerKey();
+      if (!key) return { eligibility: "unavailable", reason: "The Seeker co-signer cannot be reached. Try again shortly." };
+      if (key !== e.cosigner) return { eligibility: "unavailable", reason: "This edition names a co-signer this app does not use." };
+      if ((await publisherGenesisMint(wallet)) === null) return { eligibility: "needsGenesis", ...mine, reason: words.needsGenesis };
     }
-
-    if (c.remaining <= 0) return { eligibility: "soldOut", attempt, reason: SOLD_OUT };
-    if (genesis === null) return { eligibility: "needsGenesis", attempt, reason: words.needsGenesis };
-    return { eligibility: "collect", attempt, ...found };
+    if (e.soldOut) return { eligibility: "soldOut", ...mine, reason: words.soldOut };
+    return { eligibility: "collect", ...mine };
   } catch (error) {
-    return {
-      eligibility: "unavailable",
-      attempt,
-      reason: safeErrorText(error),
-    };
+    return { eligibility: "unavailable", reason: safeErrorText(error) };
   }
-}
-
-/** The refusal for a state that is not `collect`, preferring the state's own explanation. */
-function refusal(state: CollectState): Error {
-  return new Error(
-    state.reason ??
-      {
-        already: ALREADY, soldOut: SOLD_OUT, wait: MAY_LAND, needsGenesis: words.needsGenesis,
-        unavailable: CANNOT_REPEAT, collect: "",
-      }[state.eligibility],
-  );
 }
 
 // ---------------------------------------------------------------------------
 // Quoting and collecting
 // ---------------------------------------------------------------------------
 
-/** The reviewed claim: which copy, which print account, and the exact transaction quoted for it. */
+/** What the review shows, in the shape `CostEstimate` reads. */
+export interface CollectEstimate {
+  estimatedLamports: bigint;
+  estimateBreakdown: { networkFee: bigint; accountCost: bigint; allowance: bigint };
+}
+
 export interface CollectQuote {
   edition: string;
-  number: number;
-  asset: string;
-  id: string;
-  /**
-   * Which instruction this quote was built for. `"buy"` exactly when the offer read a moment before
-   * the estimate carried a price; `"collect"` otherwise. The two are different instructions with
-   * different account lists, so this is not a display flag — `sendCollect` rebuilds the same one.
-   */
+  collector: Address;
+  /** The edition as read for this review; the claim is built from exactly this. */
+  chain: Edition;
+  cost: ClaimCost;
+  draft: Draft;
+  budgets: Budget[];
+  asset: Address;
+  payer: Address;
+  /** "buy" when a price is paid (SOL or SKR), "collect" when free. */
   kind: "collect" | "buy";
-  /**
-   * What reaches the publisher: `0n` for a `collect`, and for a `buy` the amount signed into the
-   * instruction, which the program compares against the live offer. Not the total:
-   * `prepared.estimatedLamports`, the payer's simulated balance delta, already contains it, so the
-   * two are shown apart and never added.
-   */
+  /** The SOL price; 0n when free or priced in a token. */
   priceLamports: bigint;
-  /**
-   * The offer revision the price belongs to, signed into a `buy` alongside it, and `0` for a
-   * `collect`. `revision` rises by one on every `set_offer`, so it is what makes a stale approval
-   * fail (`OfferChanged`) instead of settling at a price nobody reviewed.
-   */
-  revision: number;
-  /**
-   * The Seeker Genesis Token a seeker-only claim was quoted with, handed to the program in both
-   * the reviewed and the approved instruction; absent for an open edition.
-   */
-  genesis?: GenesisAccounts;
-  prepared: Awaited<ReturnType<typeof prepareTransaction>>;
+  /** The price as the edition states it. */
+  price: Price;
+  /** Token units the claim moves (token price), else 0n. */
+  tokens: bigint;
+  prepared: CollectEstimate;
+}
+
+/** Thrown when the edition's terms moved since it was read: the sheet re-reads and shows them. */
+export class TermsChangedError extends Error {}
+
+const sameTerms = (a: Edition, b: Edition) =>
+  JSON.stringify(a.price, (_k, v) => (typeof v === "bigint" ? v.toString() : v)) ===
+    JSON.stringify(b.price, (_k, v) => (typeof v === "bigint" ? v.toString() : v)) &&
+  a.cosigner === b.cosigner && a.publisher === b.publisher;
+
+const FAILURES: Record<string, string> = {
+  "sold-out": words.soldOut,
+  "already-claimed": words.already,
+  "not-enough-sol": NEEDS_SOL,
+  "not-enough-tokens": "This wallet does not hold enough of the token this edition asks for.",
+  "tokens-frozen": "This wallet's token account is frozen.",
+  "needs-cosigner": "This edition is for Seeker holders.",
+  closed: "This edition is closed.",
+  "publisher-cannot-receive": "The publisher's account cannot receive this payment right now.",
+};
+
+/** A claim failure as the sentence a screen shows; terms that moved become `TermsChangedError`. */
+function claimError(error: unknown, collector: Address, payer: Address): Error {
+  if (!(error instanceof TransactionFailure)) return error instanceof Error ? error : new Error(String(error));
+  const reason = claimFailure(error, collector, payer);
+  if (reason === "terms-changed") return new TermsChangedError("The price changed. Review the new price.");
+  return new Error(FAILURES[reason] ?? error.message);
 }
 
 /**
- * The transaction for a quote: `buy` when the offer is priced, `collect` when it is free. One
- * function so the review and the approval cannot drift into different instructions.
+ * Everything checked before the review shows a cost: the edition re-read (and the same terms as
+ * shown), this wallet's state, its balance against the client's amounts, and a simulation.
  */
-const claimInstruction = (
-  c: Collectable,
-  collector: string,
-  quote: Pick<CollectQuote, "kind" | "number" | "priceLamports" | "revision" | "genesis">,
-) =>
-  quote.kind === "buy"
-    ? buyInstruction(c.edition, collector, quote.number, quote.priceLamports, quote.revision, quote.genesis)
-    : collectInstruction(c.edition, collector, quote.number, quote.genesis);
-
-/**
- * The wallet's balance in lamports, at confirmed commitment. Read only to refuse a purchase the
- * wallet plainly cannot cover, before a simulation is spent on it.
- */
-async function balanceLamports(wallet: string): Promise<bigint> {
-  const { value } = await request<{ value: number }>(RPC_ENDPOINT, "getBalance", [
-    wallet,
-    { commitment: "confirmed" },
-  ]);
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-    throw new Error("The network did not report this wallet's balance.");
-  return BigInt(value);
+/** The collector's balance of `mint` in its associated token account (0n when it has none). */
+async function tokenBalance(owner: Address, mint: Address): Promise<bigint> {
+  const account = await fetchAccount(RPC_ENDPOINT, await associatedTokenAddress(owner, mint));
+  // SPL Token account: mint (32), owner (32), amount u64 at 64.
+  if (!account || account.owner !== TOKEN_PROGRAM || account.bytes.length < 72) return 0n;
+  return new DataView(account.bytes.buffer, account.bytes.byteOffset, account.bytes.byteLength).getBigUint64(64, true);
 }
 
-const PUBLISHER =
-  "You published this edition and hold copy 1.";
-const EXPIRED = "The estimate expired. Review the collection again.";
-
-/** The fee payer of a compiled v0 message: its first static account. */
-const feePayerOf = (messageBytes: Uint8Array) =>
-  getCompiledTransactionMessageDecoder().decode(messageBytes).staticAccounts[0];
-
-/**
- * Everything checked before the review shows a cost, and the transaction that cost belongs to.
- * The copy number and the offer are read from the chain here, immediately before the estimate:
- * `collect` requires `number == minted + 1`, and `buy` signs the quoted price and revision, so a
- * stale read would only fail after the wallet opened. A price changed after this read fails with
- * `OfferChanged` and charges nothing.
- */
 export async function prepareCollect(c: Collectable, wallet: string): Promise<CollectQuote> {
-  const e = c.edition;
-  address(wallet);
-  // The estimate, the receipt and the confirmation all have to be on the chain the wallet
-  // broadcasts to.
+  const collector = address(wallet);
   await assertEndpointCluster();
-  if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
-  // The collector signs and pays, and a signer's privileges reach every program it calls: the
-  // deployed bytes and upgrade authority must still be the reviewed ones.
-  await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
-  // `publish` initialised the creator's receipt at ["claim", edition, creator] and `struct Collect`
-  // declares that same account `init`, so the program would reject this before it did anything
-  // else. Refused here, with the reason, rather than as a simulation failure.
-  if (wallet === e.creator) throw new Error(PUBLISHER);
-  if (operationInProgress(lock(e.edition)))
+  if (operationInProgress(lock(c.edition.edition)))
     throw new Error("This edition already has a collection in progress. Wait for it to finish.");
-  const state = await getCollectState(c, wallet);
-  if (state.eligibility !== "collect") throw refusal(state);
-
-  const live = await readPublication(RPC_ENDPOINT, e.program, e.edition);
-  if (!live) throw new Error("Edition not found on this network");
-  // The terms the instruction is built from must still be the terms on chain. Nothing in the
-  // program can change them, so a difference means the loaded edition is not this account.
-  if (
-    live.state.supply !== e.supply ||
-    live.state.creator !== e.creator ||
-    live.state.nonce !== e.nonce ||
-    live.state.title !== e.title
-  )
-    throw new Error("This edition changed since it was read. Open the link again.");
-  if (live.state.minted >= live.state.supply) throw new Error(SOLD_OUT);
-  const number = live.state.minted + 1;
-
-  // The live offer, not the one loaded with the edition. `pricedOffer` collapses "no offer",
-  // "no offers on this program" and "priced at zero" into the one answer they all mean: free.
-  const offer = pricedOffer(await readOfferAccount(RPC_ENDPOINT, e.program, e.edition));
-  // The token the state above just found, so the claim is keyed on the one checked for a receipt.
-  const genesis = state.genesis ? { genesis: state.genesis } : {};
-  const shape = offer
-    ? { kind: "buy" as const, number, priceLamports: offer.priceLamports, revision: offer.revision, ...genesis }
-    : { kind: "collect" as const, number, priceLamports: 0n, revision: 0, ...genesis };
-  if (offer) {
-    // The price is known here; current account rent and fees come from the simulation below.
-    // The historical rent table can exceed today's rent and must not reject a funded buyer.
-    const balance = await balanceLamports(wallet);
-    if (balance < offer.priceLamports) throw new Error(NEEDS_SOL);
+  const verdict = await loadEdition(RPC_ENDPOINT, c.edition.edition);
+  if (!verdict.ok) throw new Error(verdict.reason);
+  if (!sameTerms(verdict, c.chain)) throw new TermsChangedError("The price changed. Review the new price.");
+  const state = await getCollectState({ ...c, chain: verdict }, wallet);
+  if (state.eligibility !== "collect") throw new Error(state.reason ?? words.unavailable);
+  const counter = verdict.onePerWallet ? await fetchAccount(RPC_ENDPOINT, await counterAddress(verdict, collector)) : null;
+  const cost = await claimCost(verdict, rent);
+  if (!canAfford(await balance(wallet), cost, await rent(0))) throw new Error(NEEDS_SOL);
+  if (verdict.price.kind === "token") {
+    await loadPriceToken().catch(() => null);
+    const held = await tokenBalance(collector, verdict.price.mint);
+    if (held < cost.tokens) throw new Error(`This wallet holds ${tokenValue(held)}. A copy costs ${tokenValue(cost.tokens)}.`);
   }
-  const instruction = await claimInstruction(c, wallet, shape);
-  const keys = await addresses(e.program, e.creator, e.nonce, number, wallet);
-  const prepared = await prepareTransaction(
-    RPC_ENDPOINT,
-    wallet,
-    [instruction],
-    [],
-    // Historical reference only. `prepareTransaction` checks the full price, current account
-    // costs and network fees from the simulated payer balance delta before wallet approval.
-    OPERATION_FLOOR_LAMPORTS[shape.kind],
-  );
-  const id = reviewedFingerprint(new Uint8Array(prepared.transaction.messageBytes));
-  if (state.attempt?.quoteId === id)
-    throw new Error(
-      "This estimate repeats a collection message already sent. Wait for a new estimate and review again.",
-    );
-  return { edition: e.edition, asset: keys.print, id, prepared, ...shape };
+  const [asset, payer, tokenAccount] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner(), generateKeyPairSigner()]);
+  const draft = await claimDraft({
+    edition: verdict, counter, cost, collector, asset, payer,
+    ...(verdict.price.kind === "token" ? { tokenAccount } : {}),
+  });
+  let ready;
+  try {
+    ready = await prepareDraft(draft);
+  } catch (error) {
+    throw claimError(error, collector, payer.address);
+  }
+  const networkFee = cost.fees + priorityLamports(ready.budgets);
+  const accountCost = cost.payerFunding + networkFee;
+  return {
+    edition: c.edition.edition,
+    collector,
+    chain: verdict,
+    cost,
+    draft,
+    budgets: ready.budgets,
+    asset: asset.address,
+    payer: payer.address,
+    kind: verdict.price.kind === "free" ? "collect" : "buy",
+    priceLamports: cost.price,
+    price: verdict.price,
+    tokens: cost.tokens,
+    prepared: {
+      estimatedLamports: accountCost + FEE_ALLOWANCE_LAMPORTS,
+      estimateBreakdown: { networkFee, accountCost, allowance: FEE_ALLOWANCE_LAMPORTS },
+    },
+  };
 }
 
-type CollectProgress = "wallet" | "confirming";
+type CollectProgress = "wallet" | "cosigner" | "confirming";
 
 /**
- * Approve, confirm, and verify the claim. Returns the copy number this wallet now holds.
- *
- * Proved by the permanent `Receipt` account, never the signature: a wallet can return a signature
- * for a failed transaction, and a lagging node can report a confirmation. Unlike `transfer.ts`, no
- * previous-message bookkeeping is needed: the receipt PDA is `init` in both `Collect` and `Buy`, so
- * a resubmitted message can never claim or charge twice.
- *
- * A purchase is never re-priced here: `refreshedQuote` rebuilds the same instruction and refuses any
- * change in bytes or cost, so a price moved since review fails with `OfferChanged`.
+ * Sign (after Sign-in-with-Solana on a Seeker-only edition), co-sign when needed, send, confirm.
+ * Returns the copy number now in this wallet, read off the new copy itself.
  */
 export async function sendCollect(
   c: Collectable,
@@ -588,85 +392,36 @@ export async function sendCollect(
   session: WalletSession,
   onProgress?: (p: CollectProgress) => void,
 ): Promise<{ number: number }> {
-  const e = c.edition;
-  return exclusive(lock(e.edition), async () => {
-    const reviewedBytes = new Uint8Array(quote.prepared.transaction.messageBytes);
-    if (quote.edition !== e.edition || quote.id !== reviewedFingerprint(reviewedBytes))
-      throw new Error("The collection review changed. Check this edition again.");
-    if (e.cluster !== cluster || !isTrustedDeployment(cluster, e.program)) throw new Error(UNREVIEWED);
-    // The collector is read out of the reviewed message, not passed beside it: the first static
-    // account of a compiled message is its fee payer (https://solana.com/docs/core/transactions),
-    // so no separate argument can point the attempt at another wallet.
-    const collector = feePayerOf(reviewedBytes);
-    if (collector === e.creator) throw new Error(PUBLISHER);
-    const keys = await addresses(e.program, e.creator, e.nonce, quote.number, collector);
-    if (keys.print !== quote.asset)
-      throw new Error("The collection review names an unexpected print. Review it again.");
-
-    const state = await getCollectState(c, collector);
-    if (state.eligibility !== "collect") throw refusal(state);
-    // A seeker-only claim is keyed on the token: another one now is another claim than reviewed.
-    if (state.genesis?.mint !== quote.genesis?.mint || state.genesis?.token !== quote.genesis?.token)
-      throw new Error("The collection review changed. Check this edition again.");
-    // Again right before the wallet opens: two header reads while the reviewed slot is cached.
-    await assertReviewedProgram(RPC_ENDPOINT, e.program, cluster);
-
-    let attempt: CollectAttempt | undefined;
+  return exclusive(lock(c.edition.edition), async () => {
+    if (quote.edition !== c.edition.edition) throw new Error("The collection review changed. Check this edition again.");
+    // The same transaction as reviewed, on a fresh blockhash: the review can outlast one.
+    const lifetime = await latestLifetime();
+    const ready = withLifetime(quote.draft, quote.budgets, lifetime);
+    const seekerOnly = quote.chain.cosigner !== null;
+    const challenge = seekerOnly ? await cosignerChallenge(quote.collector) : undefined;
     onProgress?.("wallet");
-    await session.connectAnd(async (wallet) => {
-      const selected = await session.authorizeSession(wallet);
-      if (selected.address !== collector)
-        throw new Error("Use the wallet shown in the collection review.");
-      // A wallet's own approval sheet can outlast a blockhash, so the reviewed transaction is
-      // rebuilt on a fresh lifetime; `refreshedQuote` refuses anything else that moved, including
-      // the cost.
-      const prepared = await refreshedQuote(
-        RPC_ENDPOINT,
-        collector,
-        [await claimInstruction(c, collector, quote)],
-        quote.prepared,
-        EXPIRED,
-      );
-      // Persisted before the wallet opens, on the REFRESHED lifetime: an attempt saved with the
-      // reviewed height could be judged retryable while the signed transaction can still land.
-      attempt = {
-        version: 1,
-        protocol: CORE_PROTOCOL,
-        collector,
-        edition: e.edition,
-        asset: quote.asset,
-        number: quote.number,
-        quoteId: reviewedFingerprint(new Uint8Array(prepared.transaction.messageBytes)),
-        lastValidBlockHeight: String(prepared.lastValidBlockHeight),
-      };
-      await write(attempt);
-      // The edition lock still covers the removal, so another send cannot replace it.
-      const signatures = await forgetIfRefused(wallet.signAndSendTransactions({
-        transactions: [prepared.transaction],
-        minContextSlot: Number(prepared.minContextSlot),
-        skipPreflight: false,
-      }), () => AsyncStorage.removeItem(attemptKey(e.edition, collector)));
-      // MWA can return null or short signatures; saving one would make the attempt unreadable.
-      if (signatures.length !== 1 || signatures[0].length !== 64)
-        throw new Error("No wallet receipt. Check the collection before retrying.");
-      attempt.signature = getBase58Decoder().decode(signatures[0]);
-      await write(attempt);
-    });
-    if (!attempt?.signature)
-      throw new Error("No wallet receipt. Check the collection before retrying.");
-
+    const signed = await signWithWallet(session, quote.collector, ready.prepared, challenge);
+    let tx = signed.transactions[0];
+    if (seekerOnly) {
+      onProgress?.("cosigner");
+      tx = await cosignClaim({
+        wallet: quote.collector,
+        nonce: String(challenge!.nonce),
+        signInResult: signed.signInResult!,
+        edition: quote.edition,
+        cluster,
+        transaction: tx,
+      });
+    }
     onProgress?.("confirming");
-    await confirmTransaction(RPC_ENDPOINT, attempt.signature, BigInt(attempt.lastValidBlockHeight));
-    // On a seeker-only edition the receipt is the token's, at the address the claim was keyed on.
-    const receipt = await claimedCopy(RPC_ENDPOINT, e, collector, quote.genesis);
-    if (!receipt)
-      throw new Error(
-        "The transaction confirmed, but the collection receipt is not visible yet. Check again before collecting.",
-      );
-    if (receipt.asset !== quote.asset || receipt.number !== quote.number)
-      throw new Error("A copy was collected, but not the one reviewed. Check this edition.");
-    attempt.confirmedAt = Date.now();
-    await write(attempt);
-    return { number: receipt.number };
+    try {
+      await sendAndConfirm(tx, lifetime.lastValidBlockHeight);
+    } catch (error) {
+      throw claimError(error, quote.collector, quote.payer);
+    }
+    const copy = await readHeldCopy(RPC_ENDPOINT, quote.asset, quote.chain.collection);
+    if (!copy || copy.edition === null)
+      throw new Error("The claim confirmed, but the copy is not visible yet. Check again.");
+    return { number: copy.edition };
   });
 }

@@ -11,7 +11,7 @@ export const CORE_PROTOCOL = "metaplex-core-editions-v1" as const;
 /** The clusters this app has a use for. Spelt as the RPC cluster names, not the MWA chain ids. */
 export type Cluster = "devnet" | "mainnet-beta";
 
-/** The program's ceiling on `CoreDraft.royaltyBps`: 10% (`InvalidRoyalty`, 6010, above it). */
+/** The app's ceiling on `CoreDraft.royaltyBps`: 10%. */
 export const MAX_ROYALTY_BPS = 1000;
 /** A new draft's royalty, 5%, and its Seeker-only setting, on. */
 export const DEFAULT_ROYALTY_BPS = 500;
@@ -120,61 +120,50 @@ export interface PublicationStorageProblem {
 }
 
 /**
- * The persisted draft, under `es.core.v1:${cluster}:${baseName}`. Bound to the cluster and
- * program recorded inside it, so a configuration change cannot repoint an existing publication.
+ * The persisted draft, under `es.candy.v1:${cluster}:${baseName}`. The edition is a Metaplex Core
+ * Candy Machine (`publications/candy`): `edition.edition` is the candy machine, `edition.collection`
+ * the Core collection, `edition.program` the Candy Machine program. Drafts of the earlier program
+ * live under another key and are never read.
  */
 export interface CoreDraft {
-  version: 1;
+  version: 2;
   protocol: typeof CORE_PROTOCOL;
   edition: CoreMetadata;
-  /** The canonical (JCS) metadata document whose bytes hash to the on-chain `metadata_hash`. */
+  /** The canonical (JCS) metadata document; its Arweave id is `metadataId`. */
   metadata: string;
-  /** Arweave id of that document; the on-chain `uri` is `https://arweave.net/${metadataId}`. */
+  /** Arweave id of that document; every copy's `uri` is `https://arweave.net/${metadataId}`. */
   metadataId: string;
   imagePath: string;
   sourceHash: string;
-  /**
-   * Mainnet could not be asked for the wallet's Seeker Genesis Token when the draft was made, so
-   * the document names none (`publisherGenesisMint`). The review says so. A local note only.
-   */
   genesisUnchecked?: true;
-  /**
-   * The price of a copy in LAMPORTS, as a decimal integer string: "100000000" is 0.1 SOL. A string
-   * because `JSON.stringify` throws on a bigint and a JSON number would change a price above 2^53.
-   * Absent or "0" means free, as does no `Offer` account; a non-zero value makes `prepareSetup`
-   * append `set_offer` to the publication transaction. Not part of the hashed metadata document:
-   * the edition commitment is sealed, the distribution offer beside it is not.
-   */
+  /** A SOL price per copy in LAMPORTS, as a decimal string; absent (or "0") is free. */
   price?: string;
-  /**
-   * The creator's royalty on resales in basis points, 0–`MAX_ROYALTY_BPS` (500 is 5%). Sealed at
-   * publish into the collection's locked `Royalties` plugin, which names the creator alone, so
-   * unlike the price it never changes afterwards. `DEFAULT_ROYALTY_BPS` unless the creator chose.
-   * Always 0 on a program without `programFeatures().royaltiesAndSeekerOnly`, which cannot hold one.
-   */
+  /** A token price (not offered in the app yet): classic SPL mint and amount in base units. */
+  tokenPrice?: { mint: string; amount: string };
+  /** Royalty on resales in basis points, 0–`MAX_ROYALTY_BPS`. */
   royaltyBps: number;
-  /**
-   * Only a wallet holding a Seeker Genesis Token can collect, one copy per token. Sealed at
-   * publish like the royalty. `DEFAULT_SEEKER_ONLY` unless the creator chose; always `false` on a
-   * program without `programFeatures().royaltiesAndSeekerOnly`.
-   */
+  /** Only Seeker Genesis Token holders may claim, one copy per token, through the co-signer. */
   seekerOnly: boolean;
-  attempt?: PublicationAttempt;
-  /** Last confirmation time, shown as cached when the network cannot be checked. */
+  /** The co-signer's key a Seeker-only edition's guard names. */
+  cosigner?: string;
+  /**
+   * The phone's own keypairs (ed25519 seeds, hex): the collection, the candy machine (the
+   * edition's address and its guard's base) and copy 1. They hold no power once published.
+   */
+  seeds: { collection: string; candyMachine: string; copy: string };
+  /**
+   * Both publish transactions as signed by the wallet and finished here (base64 wire), kept so
+   * "Continue" can re-send them until `lastValidBlockHeight`.
+   */
+  signed?: { first: string; second: string; lastValidBlockHeight: string };
+  /** When both transactions were seen confirmed. */
   confirmedAt?: number;
   storage?: "local" | "pending" | "available";
   storageError?: PublicationStorageProblem;
-  /**
-   * Mainnet: how the uploads are paid for once settled (`StorageFunding` in `storage.ts`), so a
-   * resumed upload neither re-posts a credited payment nor waits out a refusal again.
-   */
   storageFunding?: "credit" | "free";
-  /** When the payment service first left the payment `tx` uncredited (`settleStoragePayment`). */
   storageSettling?: { tx: string; since: number };
-  /** Mainnet: storage bought again after the provider refused the upload or found its credit short. */
   storageTopUp?: StorageTopUp;
 }
-
 /**
  * What every screen renders. `container` is the Core `CollectionV1`, `creatorAsset` is print #1,
  * `supply` is edition size (not issued count) and `creator` is the publisher (not the owner).

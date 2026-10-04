@@ -30,14 +30,14 @@ import { OfferSheet } from "../prints/OfferSheet";
 import { SendSheet } from "../prints/SendSheet";
 import { heldCopy, type TransferTarget } from "../prints/transfer";
 import { formatSol } from "../prints/price";
+import { loadPriceToken, priceValue } from "../prints/priceToken";
 import { parseCollectLink, type CollectTarget } from "../prints/collect";
 import { scanQr, scanQrAvailable } from "../prints/collectQr";
 import { useSeekerIdentity } from "../seeker/useSeekerIdentity";
 import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT, assertEndpointCluster, isClusterMismatch } from "../solana/cluster";
 import { request } from "../../publications/rpc";
 import { loadLibrary, type LibraryMode, type LibraryPhoto, type LibraryResult } from "../../publications/core/library";
-import { collectUrl, explorerUrl } from "../../publications/core/protocol";
-import { TRUSTED } from "../../publications/deployments";
+import { collectUrl, explorerUrl } from "../../publications/core/document";
 import { readKnownCollections, rememberKnownCollections } from "../prints/knownCollections";
 import { useAppActive } from "../useAppActive";
 import { reportMailto, type Veil } from "../moderation/core";
@@ -169,7 +169,7 @@ export function ChainScreen() {
     // for this wallet, so its prints are still found when other assets crowd the first page.
     assertEndpointCluster()
       .then(() => readKnownCollections(cluster, wallet))
-      .then(known => loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal, known))
+      .then(async known => { await loadPriceToken().catch(() => null); return loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal, known); })
       .then(
         result => {
           if (controller.signal.aborted) return;
@@ -180,7 +180,7 @@ export function ChainScreen() {
         },
         (e: unknown) => { if (!controller.signal.aborted) setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: false, failed: true,
           error: isClusterMismatch(e) ? e.message
-            : TRUSTED[cluster].length ? undefined : collection.notOnNetwork })); },
+            : undefined })); },
       );
     return () => controller.abort();
   }, [focused, active, wallet, mode, key, refresh]);
@@ -409,11 +409,12 @@ export function ChainScreen() {
                   yours={e.creator === wallet} verbatim={e.creator !== wallet} accessibilityLabel={collection.copyPublisher}
                   onPress={() => void copy("by", e.creator)} />
                 <Fact tag={collection.issuedLabel} value={collection.tally(activePhoto.photo.minted, e.supply)} />
+                {activePhoto.photo.seekerOnly && <Fact tag="COLLECTORS" value="Seeker holders only" />}
                 {/* What a copy costs, and on the creator's own publication the way to change it:
                     the price of the copies nobody has taken yet. Keyed by the edition, so a
                     photograph that never came from this phone can still be priced. */}
                 <Fact tag={priceCopy.label}
-                  value={activePhoto.photo.offer ? priceCopy.value(formatSol(activePhoto.photo.offer.priceLamports)) : priceCopy.free}
+                  value={priceValue(activePhoto.photo.offer)}
                   accessibilityLabel={actions.setPrice} testID="wallet-price"
                   onPress={e.creator === wallet ? () => setPriceEdition(e) : undefined} />
               </View>

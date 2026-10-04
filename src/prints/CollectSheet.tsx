@@ -26,6 +26,7 @@ import {
 } from "./collect";
 import { shortAddress } from "./photoPresentation";
 import { formatSol } from "./price";
+import { priceValue, tokenValue } from "./priceToken";
 import { colors, space } from "../ui/theme";
 import { NetworkLabel, PhotoFrame, Pill } from "../ui/primitives";
 import {
@@ -40,7 +41,7 @@ import {
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
 import { CLUSTER_NAME as cluster, IS_MAINNET } from "../solana/cluster";
-import { collectUrl, explorerUrl } from "../../publications/core/protocol";
+import { collectUrl, explorerUrl } from "../../publications/core/document";
 import { reportMailto } from "../moderation/core";
 import { useModeration, useTermsAgreement } from "../moderation/store";
 import { TermsAgreement } from "../moderation/TermsAgreement";
@@ -223,7 +224,7 @@ export function CollectSheet({
       setError("");
       try {
         const receipt = await sendCollect(current, quote, session, (phase) =>
-          setStatus(phase === "wallet" ? copy.progressWallet : copy.progressConfirming),
+          setStatus(phase === "wallet" ? copy.progressWallet : phase === "cosigner" ? copy.progressCosigner : copy.progressConfirming),
         );
         clearQuote();
         setCollected(receipt.number);
@@ -259,9 +260,7 @@ export function CollectSheet({
               : expired
                 ? expiredEstimate.collect
                 : cancelled
-                  ? next?.eligibility === "collect" || next?.eligibility === "soldOut"
-                    ? copy.cancelled
-                    : copy.cancelledPending
+                  ? copy.cancelled
                   : "",
         );
       }
@@ -312,9 +311,7 @@ export function CollectSheet({
           ? state?.reason ?? copy.already
           : eligibility === "soldOut"
             ? copy.soldOut
-            : eligibility === "wait"
-              ? copy.wait
-              : eligibility === "unavailable"
+            : eligibility === "unavailable"
                 ? copy.unavailable
                 : // `needsGenesis` is said once, by the status beside the action.
                   null;
@@ -365,7 +362,7 @@ export function CollectSheet({
                     : // "COPY 3 OF 10 · 0.25 SOL": the copy this would take, and what it asks for
                       // it. A free edition says nothing, because nothing is what it asks.
                       copy.nextCopy(collectable.minted, e.supply) +
-                      (offer ? ` · ${priceCopy.value(formatSol(offer.priceLamports))}` : "")}
+                      (offer ? ` · ${priceValue(offer)}` : "")}
               </Text>
             )}
             <Text style={sheetStyles.title}>{heading}</Text>
@@ -389,20 +386,7 @@ export function CollectSheet({
               </View>
             )}
             {!!blocker && <Text style={sheetStyles.body}>{blocker}</Text>}
-            {/* The transaction that collected this copy, when one was recorded. */}
-            {!!state?.attempt?.signature && (
-              <Pill
-                label={actions.viewTransactionShort}
-                variant="secondary"
-                onPress={() => {
-                  void Linking.openURL(
-                    `https://explorer.solana.com/tx/${state.attempt!.signature}${
-                      IS_MAINNET ? "" : "?cluster=devnet"
-                    }`,
-                  ).catch((problem) => setError(safeErrorText(problem)));
-                }}
-              />
-            )}
+            {!!collectable?.anomaly && <Text style={sheetStyles.help}>{collectable.anomaly}</Text>}
             {/* The edition itself, always: the record this sheet is reading from. */}
             {!wrongNetwork && (
               <Pill
@@ -445,14 +429,16 @@ export function CollectSheet({
             {quote && !finished && !wrongNetwork && (
               <>
                 {quote.kind === "buy" && (
-                  <Row label={priceCopy.label} value={priceCopy.value(formatSol(quote.priceLamports))} />
+                  <Row label={priceCopy.label} value={priceValue(quote.price)} />
                 )}
                 {/* A buy's estimate already holds its price, so the total is the estimate alone. */}
                 <CostEstimate prepared={quote.prepared} apart={quote.priceLamports} expanded={showCost}
                   onToggle={() => setShowCost(v => !v)} />
                 {quote.kind === "buy" && (
                   <Row label={priceCopy.totalLabel}
-                    value={priceCopy.value(formatSol(quote.prepared.estimatedLamports))} />
+                    value={quote.price.kind === "token"
+                      ? `${tokenValue(quote.tokens)} + ${priceCopy.value(formatSol(quote.prepared.estimatedLamports))}`
+                      : priceCopy.value(formatSol(quote.prepared.estimatedLamports))} />
                 )}
               </>
             )}
@@ -486,7 +472,7 @@ export function CollectSheet({
                 disabled={busy}
                 onPress={() => void send()}
               />
-            ) : eligibility === "wait" || eligibility === "unavailable" ? (
+            ) : eligibility === "unavailable" ? (
               <Pill
                 label={actions.checkCollect}
                 disabled={busy || !collectable}

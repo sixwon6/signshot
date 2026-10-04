@@ -486,6 +486,7 @@ export const collect = {
 
   /** Progress, while the wallet is open and while Solana confirms. */
   progressWallet: "Approve in wallet…",
+  progressCosigner: "Checking Seeker Genesis Token…",
   progressConfirming: "Confirming…",
   loading: "Reading this edition…",
   checking: "Checking this wallet…",
@@ -505,6 +506,7 @@ export const price = {
 
   /** The publish sheet's optional field. An edition of 1 has nothing to sell, so it has no field. */
   publishLabel: "Price per copy in SOL (optional)",
+  publishLabelAny: "Price per copy (optional)",
   publishPlaceholder: "Free",
 
   /** The label of a price wherever it is read back: a receipt row, a readout, a cost line. */

@@ -2,6 +2,11 @@ name = "signshot-cosigner"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
+# Served from the app domain only: the account workers.dev address and preview URLs are off.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "cosign.erashot.app", custom_domain = true }]
+
 # Secrets, set with `wrangler secret put <NAME>` (never in this file):
 #   COSIGNER_SECRET_KEY  solana-keygen JSON (64-byte array) of the ACTIVE Third Party Signer key
 #   COSIGNER_SECRET_KEYS optional: JSON array of further ACCEPTED keys (rotation overlap)

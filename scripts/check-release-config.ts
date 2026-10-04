@@ -1,13 +1,13 @@
 /**
- * Release gate: which program will this APK ask a wallet to approve?
+ * Release gate: which cluster and endpoint will this APK use?
  *
  *   npx tsx scripts/check-release-config.ts [--allow-cluster devnet]
  *   npm run release:check
  *
  * EXPO_PUBLIC_* values are inlined into the bundle and every `.env*` file is gitignored, so an
- * unreviewed local file could silently decide the cluster or program of a signed release. This loads
- * the environment as `expo export:embed --dev false` does, resolves the cluster and program, prints
- * them and records them in `.expo/release/config.json`.
+ * unreviewed local file could silently decide the cluster or endpoint of a signed release. This
+ * loads the environment as `expo export:embed --dev false` does, resolves the cluster, prints it and
+ * records it in `.expo/release/config.json`.
  *
  * Refuses when an env file a production bundle would load exists, when the cluster is not
  * mainnet-beta without `--allow-cluster devnet`, when a mainnet build has no RPC override or names a
@@ -36,7 +36,6 @@ const RECORD = resolve(ROOT, ".expo", "release", "config.json");
 /** The build record written beside the APK. Values only — never a secret, never an endpoint. */
 interface ReleaseConfig {
   cluster: Cluster;
-  program: string;
   /** Whether an RPC override is configured, never the endpoint itself. */
   rpcUrlConfigured: boolean;
   commit: string;
@@ -240,9 +239,9 @@ async function main(argv: readonly string[]): Promise<void> {
     fail(
       `the project root holds ${files.length} environment file${files.length === 1 ? "" : "s"}: ${files.join(", ")}.\n` +
         `    Expo loads these into a production bundle and .gitignore hides them, so what they configure\n` +
-        `    never reaches a diff or a review — and what they configure is which program the user's wallet\n` +
-        `    approves. Move or delete them for the release build and set the values on the command line if\n` +
-        `    they are needed.`,
+        `    never reaches a diff or a review — and what they configure is the cluster and endpoint every\n` +
+        `    transaction goes to. Move or delete them for the release build and set the values on the command\n` +
+        `    line if they are needed.`,
     );
   }
 
@@ -258,10 +257,7 @@ async function main(argv: readonly string[]): Promise<void> {
   const network = await genesisRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (network) fail(network);
 
-  // No program of this app's own: editions are Metaplex's Core Candy Machine, the same address on
-  // every cluster. A Seeker-only edition needs the co-signer, an HTTPS URL when set.
-  const { CANDY_MACHINE_PROGRAM } = await import("../publications/candy/programs");
-  const resolved = { program: String(CANDY_MACHINE_PROGRAM) };
+  // A Seeker-only edition needs the co-signer, an HTTPS URL when set.
   const cosigner = process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL;
   if (cosigner && !cosigner.trim().startsWith("https://")) fail("EXPO_PUBLIC_SEEKER_COSIGNER_URL must be an https:// URL.");
 
@@ -270,7 +266,6 @@ async function main(argv: readonly string[]): Promise<void> {
 
   const config: ReleaseConfig = {
     cluster,
-    program: resolved.program,
     rpcUrlConfigured: Boolean(process.env.EXPO_PUBLIC_SOLANA_RPC_URL),
     commit: headCommit(ROOT),
     timestamp: new Date().toISOString(),
@@ -279,12 +274,11 @@ async function main(argv: readonly string[]): Promise<void> {
 
   console.log("release config ok");
   console.log(`  cluster                  ${config.cluster}${cluster === "mainnet-beta" ? "" : "  (explicitly allowed)"}`);
-  console.log(`  program                  ${config.program}`);
   console.log(`  EXPO_PUBLIC_SOLANA_RPC_URL  ${config.rpcUrlConfigured ? `set (value not printed), on ${config.cluster}` : "not set"}`);
   console.log(`  attestation roots        the ${GOOGLE_ATTESTATION_ROOT_KEYS.length} pinned roots are exactly Google's live list`);
   console.log(`  commit                   ${config.commit}`);
   console.log(`  record                   ${file}`);
-  console.log("\nRecord the cluster and program with the APK's SHA-256 in the release notes.");
+  console.log("\nRecord the cluster with the APK's SHA-256 in the release notes.");
 }
 
 function fail(message: string): never {

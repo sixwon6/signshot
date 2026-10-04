@@ -24,7 +24,7 @@ type PhotoDocument = {
   genesisMint?: string;
 };
 /**
- * Published documents also require checking their bytes against the on-chain metadata hash.
+ * A document read against what the chain holds (`expected`): it must repeat it exactly.
  * `serialized` is the document's exact text when the caller has it: an attested document must
  * then be canonical, so no reader anywhere can see a duplicate-key value this one did not check.
  */
@@ -39,7 +39,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   // `external_url`, Metaplex `attributes`, and `properties` holding exactly the one image file and
   // its category. Under `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
   // Seeker Genesis Token (`genesisToken`), or both. Evidence that fails `readAttestationBundle` or
-  // `checkAttributes` is SET ASIDE, not fatal: the photograph is still a valid, hash-bound
+  // `checkAttributes` is SET ASIDE, not fatal: the photograph is still a valid
   // publication with no device claim, and the Proof sheet says why. Refusing it would add no safety
   // and would make an immutable document unviewable if a keystore format outgrew this reader.
   const current = exactKeys(doc, ["name", "description", "image", "external_url", "attributes", "properties"]);
@@ -120,7 +120,7 @@ export function readSavedPhotoMetadata(serialized: string, edition: CoreMetadata
     if (parsed.image !== edition.image || parsed.description !== description ||
         (parsed.dimensions && (parsed.dimensions.width !== edition.width || parsed.dimensions.height !== edition.height)))
       throw new Error(MISMATCH);
-    // The attestation summary and the Genesis Token claim are whatever the hash-bound document
+    // The attestation summary and the Genesis Token claim are whatever the document itself
     // supports, never the saved copy.
     const { attestation: _saved, attestationProblem: _problem, genesisMint: _mint, ...saved } = edition;
     const rest = parsed.genesisMint ? { ...saved, genesisMint: parsed.genesisMint } : saved;

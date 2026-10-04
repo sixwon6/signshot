@@ -2,7 +2,7 @@ import { getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Ad
 
 /**
  * The only transactions the co-signer key ever signs: a claim of one copy of a Seeker-only
- * edition, exactly as the app's client builds it (`claimTransaction` in
+ * edition, exactly as the app's client builds it (`claimDraft` in
  * publications/candy/edition.ts, instruction builders in publications/candy/programs.ts).
  *
  * ┌──────────────────────────────────────────────────────────────────────────────────────────┐
@@ -85,9 +85,9 @@ export const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
 /** Without SetComputeUnitLimit the runtime grants 200k units per non-ComputeBudget instruction. */
 const DEFAULT_UNITS_PER_INSTRUCTION = 200_000;
 /**
- * The most priority fee (price × limit, in lamports) a claim may carry: 0.0001 SOL. The app's own
- * ceiling is 50,000 µlamports × 400,000 units = 20,000 lamports, plus a 50,000-lamport allowance
- * (publications/rpc.ts); this leaves room for a wallet's rewrite. Price × limit is the only way
+ * The most priority fee (price × limit, in lamports) a claim may carry: 0.0001 SOL. The app reviews
+ * at most 50,000 lamports (src/prints/send.ts) and lets a wallet's rewrite add at most 50,000 more
+ * (`FEE_ALLOWANCE_LAMPORTS`, publications/candy/transactions.ts). Price × limit is the only way
  * this transaction can cost the wallet more than the reviewed amounts.
  */
 export const MAX_PRIORITY_FEE_LAMPORTS = 100_000n;

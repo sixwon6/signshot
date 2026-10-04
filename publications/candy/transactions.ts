@@ -47,9 +47,9 @@ export interface Lifetime { blockhash: Blockhash; lastValidBlockHeight: bigint }
 export interface Budget { units: number; microLamports: bigint }
 
 /**
- * What the wallet may add in priority fee: the reviewed price at the returned limit plus
- * `FEE_ALLOWANCE_LAMPORTS` (50,000 lamports, `publications/rpc.ts`), the allowance the app
- * already shows in its estimate.
+ * What the wallet may add in priority fee: the reviewed price at the returned limit plus 50,000
+ * lamports, the allowance the app already shows in its estimate. Mirrors `FEE_ALLOWANCE_LAMPORTS`
+ * in `publications/rpc.ts`; `candy/` imports nothing of the app's, so the Worker's tests can load it.
  */
 export const FEE_ALLOWANCE_LAMPORTS = 50_000n;
 /** The runtime's ceiling per transaction, and its default per instruction when no limit is set. */

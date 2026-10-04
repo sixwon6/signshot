@@ -37,7 +37,6 @@ import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT, assertEndpointCluste
 import { request } from "../../publications/rpc";
 import { loadLibrary, type LibraryMode, type LibraryPhoto, type LibraryResult } from "../../publications/core/library";
 import { collectUrl, explorerUrl } from "../../publications/core/document";
-import { readKnownCollections, rememberKnownCollections } from "../prints/knownCollections";
 import { useAppActive } from "../useAppActive";
 import { reportMailto, type Veil } from "../moderation/core";
 import { useModeration } from "../moderation/store";
@@ -164,18 +163,13 @@ export function ChainScreen() {
     const controller = new AbortController();
     setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: true }));
     // The endpoint's cluster is checked first; a mismatch keeps its own sentence, since retrying
-    // cannot fix configuration. `known` seeds the rescue scan with collections already verified
-    // for this wallet, so its prints are still found when other assets crowd the first page.
+    // cannot fix configuration.
     assertEndpointCluster()
-      .then(() => readKnownCollections(cluster, wallet))
-      .then(async known => { await loadPriceToken().catch(() => null); return loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal, known); })
+      .then(async () => { await loadPriceToken().catch(() => null); return loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal); })
       .then(
         result => {
           if (controller.signal.aborted) return;
           setState({ key, result, loading: false });
-          // Every item here was verified, so its collection is a safe seed for the next load.
-          void rememberKnownCollections(cluster, wallet,
-            result.items.map(item => item.photo.edition.collection));
         },
         (e: unknown) => { if (!controller.signal.aborted) setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: false, failed: true,
           error: isClusterMismatch(e) ? e.message

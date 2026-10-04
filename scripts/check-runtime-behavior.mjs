@@ -392,7 +392,7 @@ if (!process.argv.includes("--worker")) {
   const nativeRequire = createRequire(require.resolve("@react-navigation/native/package.json"));
   const { getStateFromPath } = nativeRequire("@react-navigation/core");
   const { linking } = await import("../src/navigators/linking.ts");
-  const edition = "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq";
+  const edition = "SampLe1111111111111111111111111111111111111";
   for (const path of ["collect", "collect/"]) {
     const state = getStateFromPath(`/${path}?core=${edition}&cluster=devnet`, linking.config);
     assert.equal(state.routes[0].name, "Chain");

@@ -116,7 +116,7 @@ import { COMPUTE_BUDGET_PROGRAM, prepareForWallet, sameMeaning, type DraftTransa
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 
-// --- The LiteSVM host (as in check-program-svm.ts) -----------------------------------------------
+// --- The LiteSVM host (programs/svm) -------------------------------------------------------------
 
 const HOST_ROOT = join(root, "programs", "svm");
 

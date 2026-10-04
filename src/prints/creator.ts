@@ -764,7 +764,6 @@ export type PublishQuote =
     resend: boolean;
     budgets: Budget[];
     prepared: Awaited<ReturnType<typeof publishCost>>;
-    storageLamports: bigint;
   };
 
 /** "Continue": where the edition stands, and what publishing (the rest of) it costs. Opens no wallet. */
@@ -795,7 +794,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   const ready = await prepareDraft(draft, which === "both" ? [null, SECOND_UNITS] : [null]);
   const prepared = await publishCost(d, terms, which, ready.budgets);
   if ((await balance(d.edition.creator)) < prepared.estimatedLamports) throw new Error(NEEDS_SOL);
-  return { step: "sign", metadataId: d.metadataId, stage: which, resend, budgets: ready.budgets, prepared, storageLamports: 0n };
+  return { step: "sign", metadataId: d.metadataId, stage: which, resend, budgets: ready.budgets, prepared };
 }
 
 /**

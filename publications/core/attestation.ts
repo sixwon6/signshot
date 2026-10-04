@@ -5,8 +5,8 @@
  * challenge is the SHA-256 of a canonical MANIFEST naming this exact publication (edition address,
  * creator, nonce, image fingerprint, capture fingerprints), signs the manifest with that key, and
  * the certificate chain plus signature go into the document under `properties.seedshot`. The
- * document's own hash is on chain, so the evidence is committed with the publication and cannot
- * be transplanted: a certificate from another key, phone or publication carries a different
+ * manifest names the candy machine and the image hash it holds, so the evidence cannot be
+ * transplanted: a certificate from another key, phone or publication carries a different
  * challenge and fails here.
  *
  * What the reader checks, from the document alone: the manifest names this publication; the leaf
@@ -60,7 +60,7 @@ export interface AttestationManifest {
   collection: string;
   creator: string;
   nonce: string;
-  /** The public print's SHA-256; the on-chain `image_hash`. */
+  /** The public print's SHA-256; the candy machine's hidden-settings hash. */
   imageHash: string;
   /** The private version the print was made from (a Develop edit, or the styled frame). */
   sourceHash: string;

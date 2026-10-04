@@ -100,8 +100,8 @@ export function checkPriceMinimum(lamports: bigint, minimum: bigint): bigint {
 
 /**
  * An estimate as rows that add up to it. `accountCost` is the payer's whole simulated balance
- * delta, so it already holds the network fee and `apart` — a price or a storage payment shown on a
- * row of its own — and both come out of the accounts row. Rows are clamped at zero.
+ * delta, so it already holds the network fee and `apart` — a price shown on a row of its own — and
+ * both come out of the accounts row. Rows are clamped at zero.
  */
 export function costRows(
   prepared: Estimate,

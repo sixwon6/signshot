@@ -108,15 +108,12 @@ export function PrintReceipt({
             label={estimate.networkFee}
             value={`${sol(quote.prepared.estimateBreakdown.networkFee)} SOL`}
           />
-          {/* The simulated balance delta contains the network fee and the storage
-              transfer; each is stated on its own row rather than twice. */}
+          {/* The simulated balance delta contains the network fee, which is stated on its own
+              row rather than twice. */}
           <Row
             label={estimate.accountCost}
-            value={`${sol(costRows(quote.prepared, quote.storageLamports).accounts)} SOL`}
+            value={`${sol(costRows(quote.prepared).accounts)} SOL`}
           />
-          {quote.storageLamports > 0n && (
-            <Row label={estimate.storage} value={`${sol(quote.storageLamports)} SOL`} />
-          )}
           <Row
             label={estimate.allowance}
             value={`${sol(quote.prepared.estimateBreakdown.allowance)} SOL`}

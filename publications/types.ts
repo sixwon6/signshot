@@ -38,7 +38,7 @@ export interface CoreMetadata {
   supply: number;
   /** The print's own `https://arweave.net/<id>` URL; the document's `image`. */
   image: string;
-  /** sha256 hex of the print bytes; the on-chain `image_hash`. */
+  /** sha256 hex of the print bytes; the candy machine's hidden-settings hash. */
   imageHash: string;
   /** The print's pixel size, read from the JPEG itself. Layout only. */
   width: number;
@@ -49,7 +49,7 @@ export interface CoreMetadata {
    * What the phone's keystore attested when the document was made, derived from the certificate
    * chain inside the document (`publications/core/attestation.ts`) after that chain verified down
    * to a Google attestation root; never copied from a claim. Absent for a publication made without
-   * hardware attestation, for every earlier document, and when the recorded evidence did not
+   * hardware attestation, and when the recorded evidence did not
    * check out (then `attestationProblem` says why). Not yet a device claim: a screen names the
    * device only after `deviceVerdict` has checked the app, the boot state, revocation and the
    * certificates' dates at publication.
@@ -59,7 +59,7 @@ export interface CoreMetadata {
   attestationProblem?: string;
   /**
    * The Seeker Genesis Token mint the document names (`publications/core/genesisToken.ts`). A
-   * CLAIM, read from the hash-bound document and never from a saved copy: a screen says it is
+   * CLAIM, read from the document at the edition's URI and never from a saved copy: a screen says it is
    * held only after `verifyGenesisToken` has checked it against mainnet. Absent when the
    * publishing wallet held none, or mainnet could not be asked, when the document was made.
    */
@@ -85,16 +85,11 @@ export interface AttestationSummary {
   certificates: { serial: string; notBefore: number; notAfter: number }[];
 }
 
-/**
- * Persisted before opening a wallet. A missing signature leaves submission uncertain.
- */
-export interface PublicationAttempt {
-  lastValidBlockHeight: string;
-  signature?: string;
-}
-
 /** A stand-alone storage payment, persisted before opening a wallet. */
-export interface StorageTopUp extends PublicationAttempt {
+export interface StorageTopUp {
+  lastValidBlockHeight: string;
+  /** Absent: the wallet did not return it, so whether it was sent is unknown. */
+  signature?: string;
   quoteId: string;
   blockhash: string;
   slot: number;
@@ -127,7 +122,7 @@ export interface CoreDraft {
   genesisUnchecked?: true;
   /** A SOL price per copy in LAMPORTS, as a decimal string; absent (or "0") is free. */
   price?: string;
-  /** A token price (not offered in the app yet): classic SPL mint and amount in base units. */
+  /** A token price per copy (SKR, or the devnet stand-in): classic SPL mint and amount in base units. */
   tokenPrice?: { mint: string; amount: string };
   /** Royalty on resales in basis points, 0–`MAX_ROYALTY_BPS`. */
   royaltyBps: number;

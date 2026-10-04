@@ -2,8 +2,8 @@
 # The site is static: no Functions, and no page makes a request of its own.
 #
 # `collect/index.html` and `404.html` repeat their CSP as a <meta> so the policy travels with the
-# document; that copy omits `frame-ancestors`, which CSP3 ignores in a <meta>.
-# `scripts/check-site.ts` asserts the copies match.
+# document; that copy omits `frame-ancestors`, which CSP3 ignores in a <meta>. Edit both copies
+# together.
 
 # Deny every page-level API the site never calls. No HSTS `preload`: `.app` is preloaded at the
 # TLD, so it would add nothing and is hard to reverse.

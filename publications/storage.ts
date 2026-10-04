@@ -70,10 +70,10 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
 /**
  * PAID STORAGE. Turbo's free tier is a lifetime budget per wallet AND per /24 subnet (`GET /info`
  * `freeTier`), and its 402 `FREE_TIER_EXHAUSTED` "is a PERMANENT condition" (upload OpenAPI). A
- * carrier NAT shares a subnet, and the edition is on chain before the upload, so a mainnet build
- * does not rely on it: the publication transaction itself buys the credit. The free tier is only
- * the fallback for a confirmed payment the service will not credit (`settleStoragePayment`), and a
- * stand-alone payment (`storageTopUpTransaction`) buys storage again when that is refused too.
+ * carrier NAT shares a subnet, so a mainnet upload tries the free tier first and, when Turbo
+ * refuses, a stand-alone payment (`storagePaymentInstructions`, sent by `payStorage` in
+ * `src/prints/creator.ts`) buys the credit. The free tier is again the fallback for a confirmed
+ * payment the service will not credit (`settleStoragePayment`).
  *
  * The recipe is turbo-sdk's `SolanaToken.createAndSubmitTx`: a System transfer to the Solana address
  * the payment service advertises at `GET /info`, plus an spl-memo instruction
@@ -81,7 +81,7 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
  * transaction id. The service "credits the sender (or the address named in the payment's
  * credit-destination memo/tag)" (payment OpenAPI), so the credit lands on the upload key, and a
  * data item signed by an ed25519 key is billed to that key's base58 address (turbo-sdk `signer.ts`).
- * One approval, no server, and a transfer that lands only if the edition does.
+ * One approval, no server.
  */
 export const paidStorage = (cluster: string) => cluster === "mainnet-beta";
 
@@ -127,7 +127,7 @@ const ADDRESS_CHANGED: StorageProblem = { kind: "unavailable", retryable: false,
 const PAYMENT_REFUSED: StorageProblem = { kind: "quota", retryable: false,
   message: "The storage provider refused this publication's payment." };
 
-/** What the publication transaction pays for its own uploads. */
+/** What a stand-alone storage payment pays for a publication's uploads. */
 export interface StoragePayment {
   /** `TURBO_SOLANA_ADDRESS`, once the payment service's `/info` has named it. */
   target: string;
@@ -183,7 +183,7 @@ export async function quoteStoragePayment(uploader: string, items: StorageItem[]
   return { target, lamports, destination: uploader };
 }
 
-/** The transfer and the credit-destination memo, appended to the publication's instructions. */
+/** The transfer and the credit-destination memo: the stand-alone payment's instructions. */
 export function storagePaymentInstructions(payer: string, payment: StoragePayment): Instruction[] {
   if (payment.lamports <= 0n || payment.lamports > MAX_STORAGE_LAMPORTS || payment.target !== TURBO_SOLANA_ADDRESS)
     throw new Error("Invalid storage payment.");
@@ -286,14 +286,14 @@ export async function storageCreditHeld(owner: string): Promise<boolean> {
 /**
  * How a confirmed publication's uploads are paid for, recorded on its draft so a resumed upload
  * takes the same path: `credit`, the credit its payment bought; `free`, Turbo's free tier, because
- * the payment service refused that payment for good.
+ * no payment was made or the payment service refused it for good.
  */
 export type StorageFunding = "credit" | "free";
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Claim the credit the confirmed publication transaction bought, before anything is uploaded.
+ * Claim the credit the confirmed storage payment bought, before anything is uploaded.
  * "Re-posting a `tx_id` that is already credited returns `200` with the existing record rather than
  * crediting twice" (payment OpenAPI), so an interrupted upload resumes here without paying again;
  * nothing on this path builds a payment. `receipt` is asked for only when an item is pending, and

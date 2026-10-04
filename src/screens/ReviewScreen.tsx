@@ -351,7 +351,7 @@ export function ReviewScreen() {
   }
   /**
    * One JSON file (metadata, image, signed data items, draft) for a confirmed publication whose
-   * upload is unfinished, re-hashed natively against the signed `image_hash`, then shared. There is
+   * upload is unfinished, re-hashed natively against its published image hash, then shared. There is
    * no import. Items that cannot be rebuilt leave the rest of the bundle.
    */
   async function exportBundle(entry: PhotoEntry) {

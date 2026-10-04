@@ -3,15 +3,9 @@
  *
  * At publish time the app looks up the publishing wallet's SGT on mainnet and writes its MINT
  * ADDRESS into the document under `properties.genesisToken`, beside a Metaplex `attributes` entry
- * a wallet or explorer shows as it is. The document's hash is on chain and the publishing wallet
- * signed the transaction that put it there, so the checks of Solana Mobile's recipe
- * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token) are all answerable by
- * a stranger, from the chain alone:
- *
- *   1. the wallet owns an SGT          — `verifyGenesisToken`, against mainnet, by every reader;
- *   2. the user proved wallet ownership — the wallet signed the publication that names the mint;
- *   3. the token is known by its mint   — it stays the same when the token moves, so it is the
- *                                         per-device identifier the recipe says to return.
+ * a wallet or explorer shows as it is. The mint is what names the token: it stays the same when
+ * the token moves, so it is the per-device identifier Solana Mobile's recipe says to use
+ * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token).
  *
  * The document only CLAIMS a mint. Nothing here or on any screen treats the claim as checked until
  * `verifyGenesisToken` has read the mint account and the publisher's token account itself. The

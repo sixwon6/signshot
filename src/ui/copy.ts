@@ -100,8 +100,6 @@ export const estimate = {
   hide: "Hide cost details",
   networkFee: "Network fee",
   accountCost: "Accounts and Core fee",
-  /** Mainnet only: the Arweave upload, paid to Turbo in the same approval. */
-  storage: "Arweave storage",
   allowance: "Wallet allowance",
 } as const;
 
@@ -395,7 +393,7 @@ export const send = {
  * Collecting: taking one numbered copy of somebody else's edition into your own wallet. A free
  * edition is collected and nothing reaches the publisher; a priced one is bought and its price
  * does (`price` owns those words). Either way the collector pays Solana's own costs (`estimate`).
- * One copy per wallet, while copies remain.
+ * One copy per wallet (per Genesis Token on a Seeker-only edition), while copies remain.
  */
 export const collect = {
   network: "SOLANA MAINNET",
@@ -453,7 +451,7 @@ export const collect = {
 } as const;
 
 /**
- * The price: the publisher's own amount for a copy, in SOL. Never a cost: the costs (network fee,
+ * The price: the publisher's own amount for a copy, in SOL or SKR. Never a cost: the costs (network fee,
  * account rent, the Metaplex Core fee) are the signer's either way, so the two are separate lines
  * and only then added up ("1 numbered copy · 0.25 SOL + network and account costs"). A price of
  * nothing is a free edition: collected, not bought, and nothing reaches the publisher.

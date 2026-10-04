@@ -2,8 +2,8 @@
  * Off-device verifier for `seedshot-attestation/1`. Everything the phone cannot honestly claim
  * about itself is checked here, from the published bytes alone:
  *
- *   1. The document (from Arweave by edition, or a local file) and, by edition, that its bytes
- *      hash to the on-chain `metadata_hash`.
+ *   1. The document: by edition, the one at the URI of a candy machine `readEdition` accepts,
+ *      checked against that edition; or a local file, taken as it is.
  *   2. The bundle, through the app's own reader: manifest names this edition, challenge is the
  *      manifest's SHA-256, signature verifies under the leaf key, key is hardware-backed.
  *   3. The certificate chain: each certificate signed by the next, dates valid, and the last
@@ -71,9 +71,9 @@ function pinnedRootKeys(): string[] {
 /**
  * When the chain must have been valid. Google's device and intermediate attestation certificates
  * are short-lived (a Seeker's StrongBox certificate lives 13 days), so a chain is judged at
- * PUBLICATION time, never "now": by edition, its `published_at`, or on a legacy deployment the
- * block time of the transaction that created the publisher's claim receipt (`publicationTime`,
- * which the app uses too); by file, `--at <ISO date>` or, failing that, now.
+ * PUBLICATION time, never "now": by edition, the block time of the transaction that created the
+ * candy machine (`publicationTime`, which the app uses too); by file, `--at <ISO date>` or,
+ * failing that, now.
  */
 let validAt: { time: Date; source: string } = { time: new Date(), source: "now (no publication time known)" };
 if (arg("at")) {

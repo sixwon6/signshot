@@ -256,8 +256,9 @@ deployed by Wrangler direct upload.
   load, a non-mainnet cluster without `--allow-cluster devnet`, a mainnet build without its own RPC
   URL or with a public solana.com one, an RPC URL that is not HTTPS or carries a query string or
   credentials, an RPC on another network, a co-signer URL that is not HTTPS, and any difference
-  from Google's live attestation roots. `npm run release:apk` deletes an APK whose bundle does not
-  match what the gate recorded or whose signer is not the upload key.
+  from Google's live attestation roots. `npm run release:apk` deletes an APK whose bundle is not
+  this build's (it must carry the fresh `EXPO_PUBLIC_BUILD_NONCE` the script sets, and the RPC URL)
+  or whose signer is not the upload key.
 - **erashot.app.** Static files only, no Functions, and a `default-src 'none'` CSP on every page;
   the collect link page's one script, allowed by its hash, fetches nothing.
 
@@ -284,6 +285,10 @@ EXPO_PUBLIC_SEEKER_COSIGNER_URL=https://cosign.erashot.app
 # EXPO_PUBLIC_PRICE_TOKEN_MINT=
 # optional: an HTTPS RPC URL; devnet otherwise uses the public endpoint
 # EXPO_PUBLIC_SOLANA_RPC_URL=
+# optional: Turbo origins (plain https://host) in place of https://turbo.ardrive.io
+# EXPO_PUBLIC_TURBO_HOST=
+# EXPO_PUBLIC_TURBO_UPLOAD_HOST=
+# EXPO_PUBLIC_TURBO_PAYMENT_HOST=
 ```
 
 Build and install the development client with a device attached, then reload it from Metro for

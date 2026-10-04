@@ -37,7 +37,7 @@ const MAX_EDITIONS = 60;
 
 export async function loadLibrary(
   endpoint: string, cluster: Cluster, wallet: string, mode: LibraryMode,
-  signal?: AbortSignal, _knownCollections?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<LibraryResult> {
   address(wallet);
   const check = () => { if (signal?.aborted) throw new Error("Library request cancelled."); };

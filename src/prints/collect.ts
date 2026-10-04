@@ -111,7 +111,7 @@ function fromUrl(token: string): CollectTarget | null {
   const mark = withoutFragment.indexOf("?");
   if (mark < 0) return null;
   // The route only, at any origin. A link chooses neither a program nor an RPC endpoint — the
-  // edition account's own owner is what decides trust (`loadTrustedEdition`) — so the host is
+  // candy machine's own owner and `readEdition` decide trust (`loadEdition`) — so the host is
   // presentation, and being strict about it would only break a shortened or proxied share link.
   if (!/\/collect\/?$/i.test(withoutFragment.slice(0, mark))) return null;
   const params = query(withoutFragment.slice(mark + 1));

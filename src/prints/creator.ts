@@ -18,7 +18,7 @@ import { getUploadKey, buildDataItem, uploadDataItem } from "../arweave";
 import { canonicalize, type JcsValue } from "../jcs";
 import { RPC_ENDPOINT, CLUSTER_NAME as cluster, assertEndpointCluster } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
-import { arweaveBytes, IntegrityError, NEEDS_SOL, FEE_ALLOWANCE_LAMPORTS } from "../../publications/rpc";
+import { NEEDS_SOL, FEE_ALLOWANCE_LAMPORTS } from "../../publications/rpc";
 import {
   checkStorageCapacity,
   paidStorage,
@@ -550,26 +550,16 @@ export async function payStorage(
   });
 }
 
-const READ_BACK_MS = 30_000, READ_BACK_WAIT_MS = 3_000;
-async function publish(d: CoreDraft, readBackMs: number) {
+/**
+ * The upload is done when Turbo holds both items. Each item's id is derived from its signed
+ * content, so a gateway read-back proves nothing more, and a gateway that is a few seconds
+ * behind used to end every publication on "Photo upload pending".
+ */
+async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
   await Promise.all([uploadDataItem(img.bytes, img.id), uploadDataItem(meta.bytes, meta.id)]);
-  const giveUp = Date.now() + readBackMs;
-  for (;;) {
-    const read = await Promise.allSettled([
-      arweaveBytes(img.id, d.edition.imageHash),
-      arweaveBytes(meta.id, hash(utf8(d.metadata))),
-    ]);
-    const failed = read.flatMap((one) => (one.status === "rejected" ? [one.reason] : []));
-    if (failed.length === 0) return;
-    const wrong = failed.find((reason) => reason instanceof IntegrityError);
-    if (wrong) throw wrong;
-    if (Date.now() >= giveUp) throw failed[0];
-    await new Promise((resolve) => setTimeout(resolve, READ_BACK_WAIT_MS));
-  }
 }
-
-async function uploadConfirmed(r: CaptureRecord, d: CoreDraft, readBackMs = READ_BACK_MS) {
+async function uploadConfirmed(r: CaptureRecord, d: CoreDraft) {
   if (d.storage === "available") return;
   d.storage = "pending";
   delete d.storageError;
@@ -577,7 +567,7 @@ async function uploadConfirmed(r: CaptureRecord, d: CoreDraft, readBackMs = READ
   try {
     if (paidStorage(cluster)) await settleStorage(r, d);
     else await checkStorage(d);
-    await publish(d, readBackMs);
+    await publish(d);
   } catch (error) {
     d.storageError = storageProblem(error, paidStorage(cluster), d.storageFunding);
     if (d.storageFunding === "free" && d.storageError.kind === "quota") delete d.storageFunding;
@@ -600,7 +590,7 @@ export async function retryPublicationStorage(r: CaptureRecord, d: CoreDraft) {
     if (!(await isSigned(d))) throw new Error("Publish the edition before uploading its image.");
     d.confirmedAt ??= Date.now();
     await save(r, d);
-    await uploadConfirmed(r, d, 0);
+    await uploadConfirmed(r, d);
   });
 }
 

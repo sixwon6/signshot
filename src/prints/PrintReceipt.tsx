@@ -66,11 +66,11 @@ export function PrintReceipt({
       {/* The price is a buyer's, not the publisher's: it is stated beside the copies and
           never added into the estimate below. */}
       {shownPrice !== null && <Row label={priceCopy.label} value={shownPrice} />}
-      {/* Sealed at publish beside the price, where the deployment takes them. */}
+      {/* Set at publish beside the price. */}
       {(
         <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
       )}
-      {/* Always stated: the switch may ask for Seeker-only on a wallet with no token to seal. */}
+      {/* Always stated for more than one copy. */}
       {draft.edition.supply > 1 && (
         <Row label={copy.rowCollectors}
           value={draft.seekerOnly ? collectCopy.seekerOnly : collectCopy.anyone} />

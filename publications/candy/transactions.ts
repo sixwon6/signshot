@@ -2,8 +2,7 @@
  * Signing order for edition transactions, pure (no wallet or network calls here).
  *
  * The wallet (Seed Vault through Mobile Wallet Adapter) rewrites what it signs: it may replace the
- * compute-unit price and limit and reorder the message's accounts (see
- * `publications/core/transferReceipt.ts`). A signature made before the wallet signs would no
+ * compute-unit price and limit and reorder the message's accounts. A signature made before the wallet signs would no
  * longer verify, so:
  *   1. `prepareForWallet` compiles a draft into an unsigned transaction for `signTransactions`
  *      (sign only, not send);
@@ -48,8 +47,7 @@ export interface Lifetime { blockhash: Blockhash; lastValidBlockHeight: bigint }
 export interface Budget { units: number; microLamports: bigint }
 
 /**
- * What the wallet may add in priority fee: the same rule as `withinReviewedFee` in
- * `publications/core/transferReceipt.ts`: the reviewed price at the returned limit plus
+ * What the wallet may add in priority fee: the reviewed price at the returned limit plus
  * `FEE_ALLOWANCE_LAMPORTS` (50,000 lamports, `publications/rpc.ts`), the allowance the app
  * already shows in its estimate.
  */

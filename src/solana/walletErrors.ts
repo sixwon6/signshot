@@ -5,37 +5,6 @@ import {
   SolanaMobileWalletAdapterProtocolErrorCode,
 } from "@solana-mobile/mobile-wallet-adapter-protocol";
 /**
- * A reviewed transaction that can no longer be handed to the wallet: its blockhash ran out, or
- * (`changed`) what it would do moved since the review. Classified by type, never by text.
- */
-export class ExpiredQuoteError extends Error {
-  readonly changed: boolean;
-  constructor(message: string, changed: boolean) {
-    super(message);
-    this.name = "ExpiredQuoteError";
-    this.changed = changed;
-  }
-}
-
-/** Only the protocol's explicit signing refusal proves this signing request was not sent. */
-export function isSigningRefused(e: unknown): boolean {
-  return e instanceof SolanaMobileWalletAdapterProtocolError &&
-    e.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED;
-}
-
-/**
- * A single-payload signing request. An explicit refusal sent nothing, so `forget` drops the attempt
- * saved for it, or puts back the one before it; a timeout, a closed session or anything else keeps
- * it, because a signed transaction may still land. Call it inside the operation's lock.
- */
-export function forgetIfRefused<T>(signing: Promise<T>, forget: () => Promise<unknown>): Promise<T> {
-  return signing.catch(async (error: unknown) => {
-    if (isSigningRefused(error)) await forget();
-    throw error;
-  });
-}
-
-/**
  * Did the user back out, rather than something breaking? A cancellation must never render as an
  * error. The shapes, and where each comes from:
  *
@@ -88,14 +57,4 @@ export function isWalletResponseTimeout(e: unknown): boolean {
     e !== null && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
   const message = e instanceof Error ? e.message : typeof e === "string" ? e : "";
   return `${code} ${message}`.toLowerCase().includes("timed out waiting for response");
-}
-
-/** Did a quote outlive the blockhash it was simulated against, with nothing else wrong? */
-export function isExpiredQuote(e: unknown): boolean {
-  return e instanceof ExpiredQuoteError && !e.changed;
-}
-
-/** Was the refusal that the refreshed transaction would not have been the reviewed one? */
-export function isChangedQuote(e: unknown): boolean {
-  return e instanceof ExpiredQuoteError && e.changed;
 }

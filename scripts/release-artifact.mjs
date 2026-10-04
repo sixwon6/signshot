@@ -71,14 +71,12 @@ export function readZipEntry(zip, name) {
  * React Native's bundle task, so Gradle can call a bundle from another cluster or endpoint up to
  * date (https://docs.gradle.org/current/userguide/incremental_build.html). Metro inlines each
  * `EXPO_PUBLIC_*` value as a string literal and Hermes stores a literal as its own bytes, so a
- * value is found by searching for it: this run's `nonce`, the RPC URL when one is set, and on
- * mainnet never the devnet payer. Never repeats a value.
+ * value is found by searching for it: this run's `nonce`, and the RPC URL when one is set. Never
+ * repeats a value.
  */
-export function bundleRefusal(bundle, { nonce, cluster, rpcUrl, devnetPayer }) {
+export function bundleRefusal(bundle, { nonce, rpcUrl }) {
   const carries = (value) => bundle.includes(Buffer.from(value, "utf8"));
   if (!nonce || !carries(nonce)) return "the packaged bundle is not this build's: Gradle reused an earlier one.";
   if (rpcUrl && !carries(rpcUrl)) return "the packaged bundle does not carry this build's EXPO_PUBLIC_SOLANA_RPC_URL.";
-  if (cluster === "mainnet-beta" && devnetPayer && carries(devnetPayer))
-    return "the packaged mainnet bundle carries EXPO_PUBLIC_DEVNET_TEST_PAYER.";
   return null;
 }

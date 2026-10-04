@@ -5,9 +5,9 @@ import { Row } from "./SheetRow";
  * OfferSheet: the creator's price for the remaining copies of one edition.
  *
  * Keyed by edition, not photograph: the Collection tab can open it for a publication whose photo is
- * not on this phone. "Continue" simulates `set_offer` and shows the estimate; only the next tap
+ * not on this phone. "Continue" prepares the change and shows the estimate; only the next tap
  * opens the wallet, and a cleared quote can never be approved. The price reaches the creator; the
- * estimate is the fee and offer-account rent the creator pays, so the two are never added.
+ * estimate is what the creator pays to change it, so the two are never added.
  */
 import { useEffect, useState } from "react";
 import {
@@ -38,8 +38,6 @@ import { colors, space } from "../ui/theme";
 import { Chip, NetworkLabel, Pill } from "../ui/primitives";
 import {
   actions,
-  changedEstimate,
-  expiredEstimate,
   onChain,
   price as copy,
   walletTimeout,
@@ -77,13 +75,13 @@ export function OfferSheet({
     run,
     showCheckFailure,
   } = useSheetOperation<OfferQuote>(copy.loading);
-  /** What the chain says now: the current offer, and whether this deployment can hold one. */
+  /** What the chain says now: the current offer, and whether this app can price the edition. */
   const [current, setCurrent] = useState<EditionOffer | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [priceText, setPriceText] = useState("");
   const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
   const token = priceToken();
-  /** Set means a `set_offer` confirmed in this sheet; the flow is finished. */
+  /** Set means a price change confirmed in this sheet; the flow is finished. */
   const [saved, setSaved] = useState<EditionOffer | null>(null);
 
   /** Read the edition's price. Opens no wallet, so it runs on its own. */
@@ -122,7 +120,7 @@ export function OfferSheet({
     };
   }, [edition.edition]);
 
-  /** "Continue": simulate `set_offer` and show what it would cost. Nothing is signed here. */
+  /** "Continue": prepare the change and show what it would cost. Nothing is signed here. */
   async function review() {
     if (running.current || !supported || finished) return;
     if (isOfferWorking(edition.edition)) {
@@ -200,7 +198,7 @@ export function OfferSheet({
         // Seed Vault broadcasts first and answers only when its success screen is closed, so a
         // timeout usually means the price is already set. The re-read below is what decides, never
         // the error.
-        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        const { cancelled, timedOut, quiet } = walletOutcome(e);
         if (timedOut) setStatus(walletTimeout.offerChecking);
         const after = await getOffer(edition).catch(() => null);
         if (after) {
@@ -208,11 +206,8 @@ export function OfferSheet({
           setCurrent(after.offer);
         }
         // A fresh read can resolve an approval whose answer was lost, and then supersedes the
-        // error. Checked as `offer.ts` does: the approved price and a revision past the quoted one,
-        // which is what tells a confirmed change to free from a cancelled one.
+        // error. Checked as `offer.ts` does: the approved price, or a closed sale.
         const landed =
-          !expired &&
-          !changed &&
           !!after &&
           (quote.action === "close" ? !after.supported : after.supported && samePrice(after.offer, quote.price));
         if (landed) {
@@ -226,13 +221,9 @@ export function OfferSheet({
         setStatus(
           timedOut
             ? walletTimeout.offerPending
-            : changed
-              ? changedEstimate.offer
-              : expired
-                ? expiredEstimate.offer
-                : cancelled
-                  ? copy.cancelled
-                  : "",
+            : cancelled
+              ? copy.cancelled
+              : "",
         );
       }
     });

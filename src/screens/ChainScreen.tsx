@@ -29,7 +29,6 @@ import { CollectSheet } from "../prints/CollectSheet";
 import { OfferSheet } from "../prints/OfferSheet";
 import { SendSheet } from "../prints/SendSheet";
 import { heldCopy, type TransferTarget } from "../prints/transfer";
-import { formatSol } from "../prints/price";
 import { loadPriceToken, priceValue } from "../prints/priceToken";
 import { parseCollectLink, type CollectTarget } from "../prints/collect";
 import { scanQr, scanQrAvailable } from "../prints/collectQr";
@@ -42,8 +41,8 @@ import { readKnownCollections, rememberKnownCollections } from "../prints/knownC
 import { useAppActive } from "../useAppActive";
 import { reportMailto, type Veil } from "../moderation/core";
 import { useModeration } from "../moderation/store";
+import { shortAddress } from "./SettingsScreen";
 
-const short = (value: string) => `${value.slice(0, 4)}…${value.slice(-4)}`;
 /** A small chip is 32 tall and a fingertip is 44. */
 const CHIP_SLOP = { top: 6, bottom: 6 } as const;
 /** How long a key says what it just did before it goes back to being a key. */
@@ -75,7 +74,7 @@ function Print({ item, wallet, compact = false, veil = null }: {
   return <PhotoFrame
     source={{ uri: item.imageUri }}
     title={e.title}
-    byline={e.creator === wallet ? collection.byYou : collection.by(short(e.creator))}
+    byline={e.creator === wallet ? collection.byYou : collection.by(shortAddress(e.creator))}
     mark={collection.imprint}
     aspectRatio={aspectRatio}
   />;
@@ -303,7 +302,7 @@ export function ChainScreen() {
   const activeIndex = activePhoto ? items.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
   /** The wallet's value word: the address, or where the connection got to. */
-  const walletValue = wallet ? short(wallet)
+  const walletValue = wallet ? shortAddress(wallet)
     : walletBusy ? collection.opening
     : connectFailed ? collection.notConnected
     : collection.noWallet;
@@ -405,7 +404,7 @@ export function ChainScreen() {
               {/* The creator's own words, and the only proportional face on the screen. */}
               {!!e.description && !activeVeil && <Text style={s.caption}>{e.description}</Text>}
               <View>
-                <Fact tag={labelOf("by", collection.byLabel)} value={e.creator === wallet ? collection.you : short(e.creator)}
+                <Fact tag={labelOf("by", collection.byLabel)} value={e.creator === wallet ? collection.you : shortAddress(e.creator)}
                   yours={e.creator === wallet} verbatim={e.creator !== wallet} accessibilityLabel={collection.copyPublisher}
                   onPress={() => void copy("by", e.creator)} />
                 <Fact tag={collection.issuedLabel} value={collection.tally(activePhoto.photo.minted, e.supply)} />

@@ -19,6 +19,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { canonicalize, type JcsValue } from "../src/jcs";
 import { parseCertificate } from "../src/seeker/keyAttestation";
 import { ATTESTATION_SCHEMA, type AttestationManifest } from "../publications/core/attestation";
+import { CANDY_MACHINE_PROGRAM } from "../publications/candy/programs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -46,7 +47,7 @@ const CTX = (n: number, inner: number[]) => {
 const manifest: AttestationManifest = {
   schema: ATTESTATION_SCHEMA,
   cluster: "devnet",
-  program: "7ZL3pF3e9RVLjMjZ9QJuNi8Epw9bmPaKBAfVWHX4uGhU",
+  program: CANDY_MACHINE_PROGRAM,
   edition: "SampLe1111111111111111111111111111111111111",
   collection: "SampLe2222222222222222222222222222222222222",
   creator: "SampLe3333333333333333333333333333333333333",

@@ -20,8 +20,8 @@ const android = resolve(root, "android");
 const wrapper = resolve(android, process.platform === "win32" ? "gradlew.bat" : "gradlew");
 
 /**
- * `release:check` runs first: it resolves the cluster and program this bundle will hand a wallet,
- * refuses env files and unflagged devnet builds, and writes .expo/release/config.json.
+ * `release:check` runs first: it resolves the cluster this bundle will use, refuses env files and
+ * unflagged devnet builds, and writes .expo/release/config.json.
  * Arguments pass through, e.g. `npm run release:apk -- --allow-cluster devnet`.
  */
 const passthrough = process.argv.slice(2);
@@ -67,18 +67,12 @@ const r = spawnSync(
 if (r.error) console.error(`could not run ${wrapper}: ${r.error.message}`);
 if ((r.status ?? 1) !== 0) process.exit(r.status ?? 1);
 
-// The bundle inside the APK, against what the gate recorded and this run's environment.
+// The bundle inside the APK, against this run's environment.
 let problem;
 try {
-  const { cluster } = JSON.parse(readFileSync(resolve(root, ".expo", "release", "config.json"), "utf8"));
   const bundle = readZipEntry(readFileSync(APK), "assets/index.android.bundle");
   problem = bundle
-    ? bundleRefusal(bundle, {
-        nonce,
-        cluster,
-        rpcUrl: process.env.EXPO_PUBLIC_SOLANA_RPC_URL,
-        devnetPayer: process.env.EXPO_PUBLIC_DEVNET_TEST_PAYER,
-      })
+    ? bundleRefusal(bundle, { nonce, rpcUrl: process.env.EXPO_PUBLIC_SOLANA_RPC_URL })
     : "the APK has no assets/index.android.bundle.";
 } catch (error) {
   problem = `the APK's bundle could not be read (${error instanceof Error ? error.message : String(error)}).`;

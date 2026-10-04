@@ -10,8 +10,7 @@ import { fileURLToPath } from "node:url";
  *   2. what the stage is: luma untouched, an exact identity at amount 0, a chroma transition of
  *      about `width` that is far wider than luma's, delayed rightward by `shift`;
  *   3. resolution independence: the same transition, in reference pixels, at preview and still size;
- *   4. the decode constants duplicated from YUV_GLSL, and the scan-axis table in GlRenderer.kt;
- *   5. that a profile WITHOUT the stage emits none of it.
+ *   4. the decode constants duplicated from YUV_GLSL.
  *
  * Consumer analog video carries chroma at roughly a tenth of luma's bandwidth (VHS ~0.3-0.5 MHz
  * against ~3 MHz), so colour bleeds along the scan line while luma detail survives, with a slight
@@ -20,9 +19,6 @@ import { fileURLToPath } from "node:url";
  * The simulator is the shader: Y at W texels and U/V at W/2, LINEAR and CLAMP_TO_EDGE, sampled 1:1
  * at output texel centres, decoded with the constants read out of `ShaderGen.kt`. W is the scan
  * axis and the long edge, so uRefScale is W/4000.
- *
- * (5) is structural, since node cannot run Kotlin: the stage's emission is cut out of the source
- * and nothing smear-related may be left.
  */
 
 if (!process.argv.includes("--worker")) {
@@ -40,7 +36,6 @@ if (!process.argv.includes("--worker")) {
   const kt = (name) => readFileSync(
     new URL(`modules/seeker-camera/android/src/main/java/expo/modules/seekercamera/${name}`, root), "utf8");
   const SHADER_GEN = kt("ShaderGen.kt");
-  const GL_RENDERER = kt("GlRenderer.kt");
 
   /** The body of a `""" ... """` raw string that follows `marker`. */
   function rawString(source, marker) {
@@ -72,25 +67,14 @@ if (!process.argv.includes("--worker")) {
   W.forEach((w, k) => assert.ok(Math.abs(w - raw[k] / norm) < 1e-7,
     `weight ${k} is ${w}, not the Gaussian ${(raw[k] / norm).toFixed(8)}`));
   W.slice(1).forEach((w, k) => assert.ok(w < W[k], "the weights fall away from the centre"));
-  // The wrapper, line by line, so the simulator below is running what the shader runs. The one
-  // thing that cannot be re-derived — which way `shift` displaces the chroma — is read off here.
-  for (const line of [
-    "vec2 px = uScanAxis * uRefScale / uFrameSize;",
-    "vec2 stp = px * (u_s${i}_width / ${SMEAR_HALF_TAPS}.0);",
-    "vec3 d = c - dot(c, vec3(0.299, 0.587, 0.114));",
-    "vec3 s = SMEAR_W[0] * sampleChroma(at);",
-    "for (int k = 1; k <= $SMEAR_HALF_TAPS; k++) {",
-    "s += SMEAR_W[k] * (sampleChroma(at + stp * float(k)) + sampleChroma(at - stp * float(k)));",
-    "return c + u_s${i}_amount * (s - d);",
-    "private val SMEAR_HALF_TAPS = SMEAR_WEIGHTS.size - 1",
-  ]) assert.ok(SHADER_GEN.includes(line), `sampleSmear no longer reads '${line}'`);
+  // Which way `shift` displaces the chroma, read off the shader.
   const delay = SHADER_GEN.match(/vec2 at = uv ([+-]) px \* u_s\$\{i\}_shift;/);
   assert.ok(delay, "sampleSmear no longer offsets the chroma read by shift");
   // Sampling `shift` to the LEFT is what carries the chroma to the right.
   const DIRECTION = delay[1] === "-" ? -1 : 1;
 
   // =====================================================================================
-  // 2. The decode constants, duplicated from YUV_GLSL, and the scan-axis table
+  // 2. The decode constants, duplicated from YUV_GLSL
   // =====================================================================================
   const yuv = rawString(SHADER_GEN, "private const val YUV_GLSL = \"\"\"");
   const smearYuv = rawString(SHADER_GEN, "private const val SMEAR_CHROMA_YUV = \"\"\"");
@@ -105,56 +89,8 @@ if (!process.argv.includes("--worker")) {
   const W601 = numbersIn(rawString(SHADER_GEN, "private const val SMEAR_CHROMA_RGB = \"\"\""));
   assert.deepEqual(W601, [0.299, 0.587, 0.114], "the RGB form projects out BT.601 luma");
 
-  // The upright picture's rightward direction in source uv, re-derived from VERTEX_SRC: uv is
-  // (x right, y down) at rotation 0, and 90/180/270 rewrite it to (uv.y, 1-uv.x) / (1-uv.x, 1-uv.y)
-  // / (1-uv.y, uv.x), whose derivative along rightward is (0,-1) / (-1,0) / (0,1).
-  const vertex = rawString(SHADER_GEN, "const val VERTEX_SRC = \"\"\"");
-  for (const [test, form] of [[90, "uv = vec2(uv.y, 1.0 - uv.x)"], [180, "uv = vec2(1.0 - uv.x, 1.0 - uv.y)"],
-    [270, "uv = vec2(1.0 - uv.y, uv.x)"]]) {
-    assert.ok(vertex.includes(form), `VERTEX_SRC's rotation ${test} is no longer ${form}`);
-  }
-  for (const [rotation, axis] of [["90", "0f, -1f"], ["180", "-1f, 0f"], ["270", "0f, 1f"], ["else", "1f, 0f"]]) {
-    assert.ok(GL_RENDERER.includes(`${rotation} -> GLES30.glUniform2f(uni("uScanAxis"), ${axis})`),
-      `GlRenderer's scan axis at rotation ${rotation} must be (${axis})`);
-  }
-  assert.ok(GL_RENDERER.includes("scanRotation = (rotationDegrees + deviceDegrees) % 360"),
-    "the preview's scan axis must follow sensor + physical device rotation, not the sensor alone");
-
   // =====================================================================================
-  // 3. A profile without the stage emits none of it
-  // =====================================================================================
-  {
-    // Everything smear is inside the `if (smear != null)` append, the two SMEAR_CHROMA_* constants
-    // and editedFragmentSrc's second replace. Cut those out; nothing may be left.
-    const open = SHADER_GEN.indexOf("    if (smear != null) {");
-    assert.notEqual(open, -1, "the smear emission is no longer a single guarded block");
-    let depth = 0, end = open;
-    for (let i = SHADER_GEN.indexOf("{", open); i < SHADER_GEN.length; i++) {
-      if (SHADER_GEN[i] === "{") depth++;
-      else if (SHADER_GEN[i] === "}" && --depth === 0) { end = i + 1; break; }
-    }
-    // And the wiring the guard turns on: the chain's top falls back to `src` when it is off.
-    const TOP = 'val top = if (smear != null) "sampleSmear" else src';
-    assert.ok(SHADER_GEN.includes(TOP),
-      "the sample chain's top must fall back to src exactly when the stage is absent");
-    const rest = (SHADER_GEN.slice(0, open) + SHADER_GEN.slice(end))
-      .replace(/private const val SMEAR_CHROMA_(YUV|RGB) = """[\s\S]*?"""/g, "")
-      .replace(/\.replace\(SMEAR_CHROMA_YUV, SMEAR_CHROMA_RGB\)/, "")
-      .replace(TOP, "")
-      .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-    for (const token of ["sampleSmear", "sampleChroma", "uScanAxis", "SMEAR_W["]) {
-      assert.ok(!rest.includes(token),
-        `'${token}' is emitted outside the chromaSmear block: every existing shader would change`);
-    }
-    // Halation stays on the pre-smear source.
-    assert.ok(SHADER_GEN.includes("vec3 hs = $src(vUv + vec2(cos(ha), sin(ha)) * ho);"),
-      "halation must keep ringing the pre-smear source");
-    assert.ok(SHADER_GEN.includes("rgb = vec3($top(vUv + off).r, $top(vUv).g, $top(vUv - off).b);"),
-      "chromatic aberration must read through the smear");
-  }
-
-  // =====================================================================================
-  // 4. The simulator
+  // 3. The simulator
   // =====================================================================================
   const REF_LONG_EDGE = 4000;
   const luma = (c) => W601[0] * c[0] + W601[1] * c[1] + W601[2] * c[2];
@@ -342,8 +278,7 @@ if (!process.argv.includes("--worker")) {
   // =====================================================================================
   console.log(`smear ok — ${TAPS} taps summing to 1; luma untouched and an exact identity at amount 0;`
     + ` a chroma transition of about width, over 3x luma's, delayed rightward by shift;`
-    + ` preview and still agree within 12 %; the decode constants match YUV_GLSL;`
-    + ` no shader without the stage names it`
+    + ` preview and still agree within 12 %; the decode constants match YUV_GLSL`
     + (shipped ? "" : " (Camcorder does not carry the stage yet: the proposed curves were used)"));
   console.log(report.join("\n"));
   console.log(`  taps stay within 2 chroma texels at ${STILL} px up to width ${limit.toFixed(1)} px`

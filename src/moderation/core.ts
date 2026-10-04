@@ -1,6 +1,6 @@
 /**
  * Terms, reports, blocks and the moderation list, as data. No React, no storage, no DOM: the app
- * (`src/moderation/store.ts`) and `scripts/check-site.ts` read these same rules.
+ * reads them through `src/moderation/store.ts`.
  *
  * A publication is permanent on Arweave and Solana and nobody can delete it. What Signshot can do
  * is decide what its own views show: Signshot's list at `MODERATION_URL` hides editions and

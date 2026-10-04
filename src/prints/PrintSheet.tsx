@@ -45,8 +45,6 @@ import {
 } from "../ui/primitives";
 import {
   actions,
-  changedEstimate,
-  expiredEstimate,
   publish as copy,
   walletTimeout,
 } from "../ui/copy";
@@ -54,8 +52,6 @@ import { safeErrorText } from "../ui/errorText";
 import { useTermsAgreement } from "../moderation/store";
 import { IS_MAINNET } from "../solana/cluster";
 import {
-  isChangedQuote,
-  isExpiredQuote,
   isUserCancellation,
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
@@ -114,13 +110,12 @@ export function PrintSheet({
   const [token, setToken] = useState<PriceToken | null>(null);
   /**
    * The royalty, in basis points and whole percents, and whether only Seeker Genesis Token holders
-   * may collect. Frozen into the draft like the price, and offered only where the deployment a
-   * fresh publication uses takes them.
+   * may collect. Frozen into the draft like the price.
    */
   const [royaltyBps, setRoyaltyBps] = useState(DEFAULT_ROYALTY_BPS);
   const [seekerOnly, setSeekerOnly] = useState(DEFAULT_SEEKER_ONLY);
   const [distribution, setDistribution] = useState(false);
-  // Seeker-only is sealed with the creator's Genesis Token, which only a mainnet build can send.
+  // Seeker-only needs the co-signer (`seekerOnlyAvailable`).
   const [sealable, setSealable] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [published, setPublished] = useState(false);
@@ -138,7 +133,6 @@ export function PrintSheet({
 
   async function applyPublicationState(state: PublicationState) {
     setDraft(state.draft);
-    // A saved intent follows its validated deployment, independently of the fresh default.
     setAccess(
       state.draft && state.view
         ? "saved"
@@ -259,7 +253,7 @@ export function PrintSheet({
             moment,
             lamports,
             // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
-            // records Seeker-only only with the wallet's Genesis Token to seal.
+            // records Seeker-only only for more than one copy, with the co-signer configured.
             distribution ? { royaltyBps, seekerOnly: sealable && (solo || seekerOnly) } : undefined,
           );
           setDraft(current);
@@ -306,10 +300,8 @@ export function PrintSheet({
         // A timeout is not a failure: Seed Vault broadcasts first and replies only when its success
         // screen is closed, so the edition is usually already published.
         const timedOut = isWalletResponseTimeout(e);
-        const expired = isExpiredQuote(e);
-        const changed = isChangedQuote(e);
         setError(
-          isUserCancellation(e) || timedOut || expired || changed
+          isUserCancellation(e) || timedOut
             ? ""
             : safeErrorText(e),
         );
@@ -333,11 +325,7 @@ export function PrintSheet({
           );
         } else
           setStatus(
-            changed
-              ? changedEstimate.publish
-              : expired
-                ? expiredEstimate.publish
-                : `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Check publication status before trying again.`,
+            `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Check publication status before trying again.`,
           );
         onChanged?.();
       }
@@ -398,8 +386,8 @@ export function PrintSheet({
   }
   const previewTitle = draft?.edition.title ?? title.trim();
 
-  // A price only where there is a copy to sell (an edition of 1 keeps its single copy) and the
-  // program has `set_offer`; otherwise nothing on the sheet mentions a price.
+  // A price only where there is a copy to sell (an edition of 1 keeps its single copy); otherwise
+  // nothing on the sheet mentions a price.
   const priceable = !draft && !solo && offers;
   let priceError = "";
   let priceLamports = 0n;

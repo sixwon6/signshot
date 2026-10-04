@@ -127,7 +127,7 @@ function hostExecutable(): string {
   console.log("Building the LiteSVM host (programs/svm)...");
   const run = process.platform === "win32"
     ? spawnSync("pwsh", ["-NoProfile", "-Command",
-      `& '${join(root, "programs", "editions", "scripts", "build-native-windows.ps1")}'` +
+      `& '${join(root, "programs", "svm", "scripts", "build-native-windows.ps1")}'` +
       ` -ToolsRoot '${process.env.SVM_TOOLS_ROOT ?? join(process.env.LOCALAPPDATA ?? tmpdir(), "ssbt")}'` +
       ` -ProgramRoot '${HOST_ROOT}' -CargoArgs @(${cargoArgs.map((a) => `'${a}'`).join(",")})`], { encoding: "utf8" })
     : spawnSync("cargo", cargoArgs, { cwd: HOST_ROOT, encoding: "utf8" });

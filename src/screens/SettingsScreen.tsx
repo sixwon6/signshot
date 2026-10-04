@@ -43,7 +43,7 @@ import { SUPPORT_EMAIL, TERMS_URL } from "../moderation/core";
  */
 const PRIVACY_URL = "https://erashot.app/privacy";
 
-function shortAddress(address: string): string {
+export function shortAddress(address: string): string {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
 

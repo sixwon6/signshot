@@ -119,20 +119,8 @@ function creates(tx: ParsedTransaction, account: string, owner: string): boolean
 const timeCache = new Map<string, Date>();
 
 /**
- * When the edition at `edition` was published, from the chain.
- *
- * A deployment with `programFeatures(program).publishedAt` wrote the Clock sysvar's
- * `unix_timestamp` into the Edition account as `published_at` at publish and never writes it
- * again, so the answer is one read of an account only that program can write. Nothing anyone
- * sends afterwards, to the edition or to any address near it, can move it or hide it.
- *
- * The legacy deployments (`LEGACY_WITHOUT_PUBLISHED_AT`) recorded no time, so for them it is the
- * block time of the transaction that created the publisher's own claim receipt (`["claim",
- * edition, creator]`, made by `publish` with copy #1 and never written again, so its history is
- * normally that one transaction); see `receiptCreationTime`.
- *
- * Throws when the Edition is missing or unreadable in its program's layout, or, on a legacy
- * deployment, when the receipt's history is too long to walk or its creation is not found.
+ * When the edition at `edition` was published, from the chain; see `creationTime`. Throws when its
+ * history is too long to walk or its creation is not found.
  */
 export async function publicationTime(endpoint: string, program: string, edition: string): Promise<Date> {
   const key = `${endpoint}\n${program}\n${edition}`;
@@ -140,34 +128,31 @@ export async function publicationTime(endpoint: string, program: string, edition
   if (held) return held;
   // A candy machine edition: the transaction in which the System program created the candy
   // machine account for `program` (the Candy Machine program), which only its own key could sign.
-  const time = await receiptCreationTime(endpoint, program, edition);
+  const time = await creationTime(endpoint, program, edition);
   if (timeCache.size >= 256) timeCache.clear();
   timeCache.set(key, time);
   return time;
 }
 
 /**
- * A legacy edition's publication time: the block time of the transaction that created its
- * creator's claim receipt.
+ * The block time of the transaction that created `edition` as an account of `program`.
  *
  * Not simply the oldest signature: anyone who knows an address can mention it in a transaction,
- * and a publisher knows their PDAs before publishing, so an early mention could backdate the
- * edition into an expired certificate's lifetime. The creating transaction is the one where the
- * System program created (or assigned) the receipt to the edition program, which only the program
- * can sign for. The walk stops at `MAX_SIGNATURE_PAGES`, so on these deployments a history padded
- * past it leaves the time unknown; `published_at` is what closes that.
+ * so an early mention could backdate the edition into an expired certificate's lifetime. The
+ * creating transaction is the one where the System program created (or assigned) the account to
+ * `program`. The walk stops at `MAX_SIGNATURE_PAGES`, so a history padded past it leaves the time
+ * unknown.
  */
-async function receiptCreationTime(
+async function creationTime(
   endpoint: string,
   program: string,
   edition: string,
 ): Promise<Date> {
-  const receipt = edition;
   const history: SignatureEntry[] = [];
   let before: string | undefined;
   for (let page = 1; ; page += 1) {
     const batch = await request<SignatureEntry[]>(endpoint, "getSignaturesForAddress", [
-      receipt,
+      edition,
       { limit: SIGNATURE_PAGE, commitment: "confirmed", ...(before ? { before } : {}) },
     ]);
     if (!Array.isArray(batch)) throw new Error("Invalid Solana response");
@@ -182,7 +167,7 @@ async function receiptCreationTime(
       signature,
       { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" },
     ]);
-    if (!tx || tx.meta?.err !== null || !creates(tx, receipt, program)) continue;
+    if (!tx || tx.meta?.err !== null || !creates(tx, edition, program)) continue;
     if (typeof tx.blockTime !== "number" || !Number.isSafeInteger(tx.blockTime) || tx.blockTime <= 0)
       throw new Error("The publication transaction has no block time.");
     return new Date(tx.blockTime * 1000);

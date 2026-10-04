@@ -19,17 +19,17 @@ export const DEFAULT_SEEKER_ONLY = true;
 
 /**
  * The phone's own record of one publication; never published. The public document is built by
- * `metadata()` in `core/protocol.ts`: `name`, `description` and `image`, plus `attributes` and
+ * `metadata()` in `core/document.ts`: `name`, `description` and `image`, plus `attributes` and
  * `properties` when the phone attested the publication (`properties.seedshot`) or the publishing
  * wallet held a Seeker Genesis Token (`properties.genesisToken`).
  */
 export interface CoreMetadata {
   cluster: Cluster;
-  /** The `era_editions` deployment that owns the edition account. Never taken from a link. */
+  /** The Candy Machine program that owns the edition account. Never taken from a link. */
   program: string;
-  /** `["edition", creator, nonce]` PDA — the publication's identity. */
+  /** The candy machine's address — the publication's identity. */
   edition: string;
-  /** The Core `CollectionV1`, `["collection", edition]`. */
+  /** The Core `CollectionV1`. */
   collection: string;
   creator: string;
   /** 32 bytes of hex; see the domain-separated derivation in `src/prints/creator.ts`. */
@@ -64,13 +64,6 @@ export interface CoreMetadata {
    * publishing wallet held none, or mainnet could not be asked, when the document was made.
    */
   genesisMint?: string;
-  /**
-   * The edition program verified that mint at publish — a Seeker Genesis Token, held by the
-   * creator — and sealed it into the collection's locked attributes. Read from the chain
-   * on every load (`sealedGenesisMint`), never from a saved copy; never set without `genesisMint`.
-   * It counts on mainnet only (`genesisDisplay`).
-   */
-  genesisSealed?: boolean;
 }
 
 /** Mirrors what `core/attestation.ts` derives; repeated here to keep this module runtime-free. */
@@ -100,10 +93,7 @@ export interface PublicationAttempt {
   signature?: string;
 }
 
-/**
- * A stand-alone storage payment (`storageTopUpTransaction`), persisted before opening a wallet. The
- * blockhash and the slot it was read at find a lost receipt (`findStorageTopUp`).
- */
+/** A stand-alone storage payment, persisted before opening a wallet. */
 export interface StorageTopUp extends PublicationAttempt {
   quoteId: string;
   blockhash: string;
@@ -122,8 +112,7 @@ export interface PublicationStorageProblem {
 /**
  * The persisted draft, under `es.candy.v1:${cluster}:${baseName}`. The edition is a Metaplex Core
  * Candy Machine (`publications/candy`): `edition.edition` is the candy machine, `edition.collection`
- * the Core collection, `edition.program` the Candy Machine program. Drafts of the earlier program
- * live under another key and are never read.
+ * the Core collection, `edition.program` the Candy Machine program.
  */
 export interface CoreDraft {
   version: 2;

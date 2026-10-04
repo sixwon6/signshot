@@ -153,9 +153,8 @@ export function PrintDetails({
           {!!priceError && <Text style={sheetStyles.error}>{priceError}</Text>}
         </View>
       )}
-      {/* The royalty and who may collect. Absent, never disabled, on a deployment that
-          takes neither; who may collect only where there is a copy to collect and a
-          Genesis Token can be sealed. */}
+      {/* The royalty and who may collect; who may collect only where there is a copy to
+          collect and the co-signer is configured. */}
       {distribution && (
         <View style={s.group}>
           <View style={s.countRow}>

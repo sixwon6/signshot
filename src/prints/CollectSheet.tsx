@@ -31,9 +31,7 @@ import { colors, space } from "../ui/theme";
 import { NetworkLabel, PhotoFrame, Pill } from "../ui/primitives";
 import {
   actions,
-  changedEstimate,
   collect as copy,
-  expiredEstimate,
   moderation as moderationCopy,
   onChain,
   price as priceCopy,
@@ -94,9 +92,9 @@ export function CollectSheet({
   const wrongNetwork = target.cluster !== cluster;
 
   /**
-   * Re-read the edition after a refusal. A refused review or buy is most often the offer moving
-   * under the quote (OfferChanged, PaymentRequired), and the price on screen must be the one the
-   * chain holds now, not the one that was just refused. Best effort: a failed re-read keeps the
+   * Re-read the edition after a refusal. A refused review or buy is most often the price moving
+   * under the quote, and the price on screen must be the one the chain holds now, not the one
+   * that was just refused. Best effort: a failed re-read keeps the
    * last good edition rather than blanking the sheet.
    */
   async function reload(): Promise<Collectable | null> {
@@ -237,14 +235,14 @@ export function CollectSheet({
         // Seed Vault broadcasts first and answers only when its success screen is closed, so a
         // timeout usually means the copy has already been collected. The state read below is what
         // decides, never the error.
-        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        const { cancelled, timedOut, quiet } = walletOutcome(e);
         if (timedOut) setStatus(walletTimeout.collectChecking);
         const latest = cancelled ? current : ((await reload()) ?? current);
         const next = await getCollectState(latest, wallet).catch(() => null);
         if (next) setState(next);
         // A fresh read can resolve a collect whose own receipt check failed. Its verdict supersedes
         // the error: never leave retry instructions under a copy that is confirmed.
-        if (next?.eligibility === "already" && next.number !== undefined && !expired && !changed) {
+        if (next?.eligibility === "already" && next.number !== undefined) {
           setCollected(next.number);
           setError("");
           setStatus(timedOut ? walletTimeout.collectFound : "");
@@ -255,13 +253,9 @@ export function CollectSheet({
         setStatus(
           timedOut
             ? walletTimeout.collectPending
-            : changed
-              ? changedEstimate.collect
-              : expired
-                ? expiredEstimate.collect
-                : cancelled
-                  ? copy.cancelled
-                  : "",
+            : cancelled
+              ? copy.cancelled
+              : "",
         );
       }
     });

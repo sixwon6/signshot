@@ -30,7 +30,7 @@ export function ProofSheet({
   const draft = proof.kind === "core" ? proof.draft : null;
   const genesisCheck = useGenesisStanding(draft?.edition.genesisMint, draft?.edition.creator);
   const genesis = genesisCheck && draft
-    ? genesisDisplay(genesisCheck, { cluster: draft.edition.cluster, sealed: !!draft.edition.genesisSealed })
+    ? genesisDisplay(genesisCheck)
     : null;
   const published = proof.confirmation === "confirmed";
   const cached = proof.confirmation === "cached";
@@ -134,9 +134,6 @@ export function ProofSheet({
                   <Text style={s.value} selectable>
                     {draft.edition.genesisMint}
                   </Text>
-                )}
-                {genesis?.sealed && (
-                  <Text style={sheetStyles.help}>{copy.genesisSealed}</Text>
                 )}
               </>
             )}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { mock } from "node:test";
 
 // Isolate synchronous URL parsing so a decoder regression cannot hang the test runner.
@@ -22,7 +22,6 @@ if (!process.argv.includes("--worker")) {
   assert.equal(matchesUploadCertificate(existingSigner.replace("CN=Era Shot", "CN=AndroidDebugKey"), uploadDigest), false);
   assert.equal(matchesUploadCertificate(existingSigner + `Signer #2 certificate SHA-256 digest: ${uploadDigest}\n`, uploadDigest), false);
   assert.equal(matchesUploadCertificate("", uploadDigest), false);
-  const kit = await import("@solana/kit");
   const { rpcWithTimeout } = await import("../publications/rpc.ts");
   mock.timers.enable({ apis: ["setTimeout"] });
   let timedOutSignal;
@@ -133,90 +132,16 @@ if (!process.argv.includes("--worker")) {
     }
     assert.equal(rateLimitDelayMs(1, "soon", now, 0.5), 1_000, "an unreadable header falls back to the backoff");
   }
-  const { isSigningRefused } = await import("../src/solana/walletErrors.ts");
-  const { SolanaMobileWalletAdapterProtocolError, SolanaMobileWalletAdapterProtocolErrorCode,
-    SolanaMobileWalletAdapterError, SolanaMobileWalletAdapterErrorCode } =
-    createRequire(import.meta.url)("@solana-mobile/mobile-wallet-adapter-protocol");
-  const refused = new SolanaMobileWalletAdapterProtocolError(
-    1, SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED, "Declined");
-  assert.equal(isSigningRefused(refused), true);
-  assert.equal(isSigningRefused(new Error("Timed out waiting for response")), false,
-    "a missing wallet response must retain the pending attempt");
-  assert.equal(isSigningRefused(new SolanaMobileWalletAdapterError(
-    SolanaMobileWalletAdapterErrorCode.ERROR_SESSION_CLOSED, "Closed")), false,
-    "closing the wallet can happen after broadcast");
-  assert.equal(isSigningRefused({code: -3}), false, "unverified errors must not erase transaction state");
-  assert.equal(isSigningRefused(new SolanaMobileWalletAdapterProtocolError(
-    1, SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SUBMITTED, "Submission uncertain")), false);
   {
-    // The estimate is the payer's simulated balance delta, so a buy's already holds its price: the
-    // total is the estimate alone, its rows add up to it, and a wallet holding exactly it passes.
-    const { prepareTransaction, NEEDS_SOL } = await import("../publications/rpc.ts");
     const { costRows } = await import("../src/prints/price.ts");
-    const realFetch = globalThis.fetch;
-    const payer = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
-    // Core's fee, mainnet rent for the 193-byte print and the 106-byte receipt, and the network fee.
-    const price = 1_000_000_000, costs = 1_500_000 + 1_630_680 + 1_188_720 + 5_000;
-    const chain = { balance: 0, accounts: undefined };
-    const payerAfter = () => [{ lamports: chain.balance - price - costs, owner: "11111111111111111111111111111111",
-      executable: false, rentEpoch: 0, space: 0, data: ["", "base64"] }];
-    globalThis.fetch = async (_url, options) => {
-      const { id, method } = JSON.parse(options.body);
-      const context = { slot: 100 };
-      const answers = {
-        getLatestBlockhash: () => ({ context, value: { blockhash: "EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k", lastValidBlockHeight: 200 } }),
-        simulateTransaction: () => ({ context, value: { err: null, logs: [], unitsConsumed: 50_000, returnData: null,
-          accounts: chain.accounts === undefined ? payerAfter() : chain.accounts } }),
-        getRecentPrioritizationFees: () => [],
-        getFeeForMessage: () => ({ context, value: 5_000 }),
-        getBalance: () => ({ context, value: chain.balance }),
-      };
-      if (!answers[method]) throw new Error(`the estimate is not expected to call ${method}`);
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id, result: answers[method]() }),
-        { headers: { "Content-Type": "application/json" } });
-    };
-    const memo = [{ programAddress: kit.address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: [], data: new Uint8Array([1]) }];
-    const quote = (balance, accounts) => {
-      Object.assign(chain, { balance, accounts });
-      return prepareTransaction("https://rpc.test", payer, memo);
-    };
-    try {
-      const reviewed = await quote(10_000_000_000);
-      const estimate = reviewed.estimatedLamports;
-      assert.ok(estimate > BigInt(price + costs) - 10_000n && estimate < BigInt(price + costs) + 60_000n,
-        "the estimate holds the price once");
-      const rows = costRows(reviewed, BigInt(price));
-      assert.equal(rows.total, estimate, "a buy's total is the estimate alone");
-      assert.equal(BigInt(price) + rows.cost, rows.total, "the price and the costs line add up to the total");
-      assert.equal(rows.networkFee + rows.accounts + rows.allowance, rows.cost, "the cost rows add up to the costs line");
-      assert.equal((await quote(Number(estimate))).estimatedLamports, estimate,
-        "a wallet holding exactly the price and the costs passes");
-      await assert.rejects(quote(Number(estimate) - 1), { message: NEEDS_SOL });
-      // No post-state for the payer is refused, never read as free; `null` is an account gone
-      // afterwards, which is zero lamports and so more than the wallet holds.
-      for (const accounts of [null, [], [{ ...payerAfter()[0], lamports: undefined }]])
-        await assert.rejects(quote(10_000_000_000, accounts), /did not report this transaction's cost/);
-      await assert.rejects(quote(10_000_000_000, [null]), { message: NEEDS_SOL });
-    } finally {
-      globalThis.fetch = realFetch;
-    }
     // A publish holds its storage payment the way a buy holds its price.
-    const breakdown = (accountCost) => ({ networkFee: 5_000n, accountCost, allowance: 50_000n, floor: 0n });
+    const breakdown = (accountCost) => ({ networkFee: 5_000n, accountCost, allowance: 50_000n });
     const publish = costRows({ estimatedLamports: 16_050_000n, estimateBreakdown: breakdown(16_000_000n) }, 2_000_000n);
     assert.equal(publish.networkFee + publish.accounts + 2_000_000n + publish.allowance, publish.total);
     // A transfer creates nothing: its delta is the fee, which is not counted twice.
     const send = costRows({ estimatedLamports: 55_000n, estimateBreakdown: breakdown(5_000n) });
     assert.deepEqual([send.accounts, send.networkFee + send.allowance], [0n, send.total]);
     assert.equal(costRows({ estimatedLamports: 55_000n, estimateBreakdown: breakdown(0n) }, 1n).accounts, 0n, "clamped at zero");
-    // The screens read the same rows (they cannot load under node).
-    const { readFileSync } = await import("node:fs");
-    const collectSheet = readFileSync(new URL("../src/prints/CollectSheet.tsx", import.meta.url), "utf8");
-    assert.match(collectSheet, /<CostEstimate prepared=\{quote\.prepared\} apart=\{quote\.priceLamports\}/);
-    assert.doesNotMatch(collectSheet, /priceLamports \+/, "the price is never added to an estimate that holds it");
-    assert.match(readFileSync(new URL("../src/prints/CostEstimate.tsx", import.meta.url), "utf8"),
-      /const rows = costRows\(prepared, apart\);[\s\S]*costSol\(rows\.cost\)[\s\S]*costSol\(rows\.accounts\)/);
-    assert.match(readFileSync(new URL("../src/prints/PrintReceipt.tsx", import.meta.url), "utf8"),
-      /costRows\(quote\.prepared, quote\.storageLamports\)\.accounts/);
   }
   const { DEFAULT_CAPTURE_SETTINGS, settingsFromEffective, clampSettings, autoEvSpan } =
     await import("../src/capture/model.ts");
@@ -669,7 +594,6 @@ if (!process.argv.includes("--worker")) {
   assert.equal(production.length, 4);
   assert.deepEqual(refusedEnvFiles(production), [...production].sort(),
     "the gate refuses every file Expo loads for a production export");
-  const { readFileSync, readdirSync } = await import("node:fs");
 
   {
     // release:apk, around Gradle: the same env files refused again, and the bundle in the APK
@@ -712,7 +636,6 @@ if (!process.argv.includes("--worker")) {
     };
     const NONCE = "9f0c2a7d41be8e35c6d0a1f47b2e9c58";
     const RPC = "https://rpc.example.com/solana";
-    const PAYER = "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT";
     // Hermes bytecode keeps each ASCII literal as its own bytes among binary ones.
     const hermes = (...literals) => Buffer.concat([Buffer.from([0xc6, 0x1f, 0xbc, 0x03]), ...literals.map((s) => Buffer.concat([Buffer.from(s), Buffer.from([0])])), Buffer.alloc(4096, 7)]);
     const bundle = hermes(NONCE, RPC, "https://api.mainnet.solana.com");
@@ -734,7 +657,7 @@ if (!process.argv.includes("--worker")) {
     assert.throws(() => artifact.readZipEntry(apk.subarray(0, apk.length - 1), "a"), /not a zip/, "a cut-off end record");
 
     const refusal = (bytes, env) => artifact.bundleRefusal(artifact.readZipEntry(zipOf([{ name: "b", data: bytes, deflate: true }]), "b"), env);
-    assert.equal(refusal(bundle, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC, devnetPayer: PAYER }), null);
+    assert.equal(refusal(bundle, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC }), null);
     assert.equal(refusal(bundle, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: undefined }), null, "no RPC URL, nothing to find");
     assert.match(refusal(hermes(RPC), { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC }), /not this build's/,
       "a bundle Gradle kept from an earlier build");
@@ -742,28 +665,7 @@ if (!process.argv.includes("--worker")) {
     const otherRpc = refusal(hermes(NONCE, "https://old.example.com/solana"), { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC });
     assert.match(otherRpc, /EXPO_PUBLIC_SOLANA_RPC_URL/);
     assert.ok(!otherRpc.includes("example.com"), "the URL is never repeated");
-    const withPayer = hermes(NONCE, RPC, PAYER);
-    assert.match(refusal(withPayer, { nonce: NONCE, cluster: "mainnet-beta", rpcUrl: RPC, devnetPayer: PAYER }), /EXPO_PUBLIC_DEVNET_TEST_PAYER/);
-    assert.equal(refusal(withPayer, { nonce: NONCE, cluster: "devnet", rpcUrl: RPC, devnetPayer: PAYER }), null, "a devnet session's build carries it");
-
-    // Metro inlines only a literal `process.env.NAME`, and the app always bundles cluster.ts.
-    const cluster = readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8");
-    assert.match(cluster, /^export const BUILD_NONCE = process\.env\.EXPO_PUBLIC_BUILD_NONCE;$/m);
-    assert.match(readFileSync(new URL("../App.tsx", import.meta.url), "utf8"), /from "\.\/src\/solana\/cluster";/);
-    const release = readFileSync(new URL("./release-apk.mjs", import.meta.url), "utf8");
-    const at = (text) => release.indexOf(text);
-    assert.ok(at("refusedEnvFiles(readdirSync(root))") > at("check-release-config.ts")
-      && at('for (const kind of ["assets", "res"])') > at("refusedEnvFiles(readdirSync(root))")
-      && at('rmSync(resolve(android, "app", "build", "generated", kind, "react", "release"), { recursive: true, force: true });') > 0
-      && at("env: { ...process.env, EXPO_PUBLIC_BUILD_NONCE: nonce },") > at('for (const kind of ["assets", "res"])')
-      && at('readZipEntry(readFileSync(APK), "assets/index.android.bundle")') > at(":app:assembleRelease")
-      && at("bundleRefusal(bundle, {") > at(":app:assembleRelease")
-      && at("rmSync(APK, { force: true });\n  process.exit(1);\n}") > at("bundleRefusal(bundle, {"),
-      "release:apk refuses env files, removes the bundle outputs and sets the nonce before Gradle, and checks the APK after it");
   }
-  assert.match(readFileSync(new URL("../src/solana/cluster.ts", import.meta.url), "utf8"),
-    /PUBLIC_MAINNET_ENDPOINT = "https:\/\/api\.mainnet\.solana\.com"/,
-    "the public fallback is the host https://solana.com/docs/references/clusters names");
 
   {
     // The price floor is the cluster's rent-exempt minimum for an empty account, read, never kept.

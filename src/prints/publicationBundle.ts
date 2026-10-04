@@ -23,9 +23,9 @@ interface PublicationBundleDocument {
   cluster: CoreDraft["edition"]["cluster"];
   /** The publishing wallet. The same address `edition.creator` names; both are written. */
   wallet: string;
-  /** The edition PDA. */
+  /** The edition's candy machine. */
   edition: string;
-  /** The program deployment that owns it. */
+  /** The program that owns it. */
   program: string;
   /** The canonical (JCS) metadata document, verbatim. Its bytes hash to `metadataHash`. */
   metadata: string;

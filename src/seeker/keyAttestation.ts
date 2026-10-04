@@ -37,7 +37,6 @@ const P384_OID = "1.3.132.0.34";
 /**
  * Google's Android key attestation roots, as SHA-256 of their SubjectPublicKeyInfo DER. The
  * four RSA roots published over the years share one key; the EC root began signing in 2026.
- * `scripts/check-attestation.ts` asserts these equal the PEM file's keys.
  */
 export const GOOGLE_ATTESTATION_ROOT_KEYS: readonly string[] = [
   "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae", // RSA-4096, serial f92009e853b6b045

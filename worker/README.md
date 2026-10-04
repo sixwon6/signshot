@@ -1,5 +1,8 @@
 # Signshot Seeker co-signer
 
+Served at https://cosign.erashot.app (a custom domain; the workers.dev address and preview URLs
+are off). The app reads it from `EXPO_PUBLIC_SEEKER_COSIGNER_URL`.
+
 A Cloudflare Worker that holds the Third Party Signer key of Seeker-only editions. It co-signs a claim only after Solana Mobile's server-side check ([detecting Seeker users](https://docs.solanamobile.com/recipes/general/detecting-seeker-users), [Seeker Genesis Token](https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token)):
 
 1. Sign-in-with-Solana proves that the caller controls the wallet.
@@ -49,6 +52,7 @@ Failures:
 | 400 | `bad-request` |
 | 401 | `nonce-invalid`, `nonce-expired`, `nonce-used`, `signature-invalid` |
 | 403 | `no-genesis-token` |
+| 404 | `not-found` (any other path or method) |
 | 409 | `genesis-used`, `genesis-pending` |
 | 413 | `too-large` |
 | 422 | `transaction-refused` (with `reason`), `blockhash-invalid`, `too-many-tokens` |
@@ -93,7 +97,7 @@ A stranger with a fresh keypair, a made-up edition and a random blockhash costs 
 **ComputeBudget**
 - At most one SetComputeUnitLimit and one SetComputeUnitPrice, with any values, at any position.
 - The limit is at most 1,400,000.
-- price × limit (or × 200,000 per instruction, if no limit is set) must come to at most `MAX_PRIORITY_FEE_LAMPORTS` = 100,000 lamports (0.0001 SOL). The app's own ceiling is 20,000 lamports plus a 50,000 allowance.
+- price × limit (or × 200,000 per instruction, if no limit is set) must come to at most `MAX_PRIORITY_FEE_LAMPORTS` = 100,000 lamports (0.0001 SOL). The app reviews at most 50,000 lamports of priority fee and lets the wallet add at most 50,000 more.
 - This product is the only way the transaction can cost the wallet more than it reviewed.
 
 **Wallet-added programs**
@@ -142,7 +146,7 @@ A later claim that finds a pending row releases it only if the old transaction c
 
 If the copy is there, the row is marked `confirmed`. If it isn't, the later claim takes the row over through a compare-and-swap.
 
-An earlier design compared the old blockhash's validity at "confirmed". That was unsound: the confirmed bank lags, so a seconds-old blockhash read as invalid and one SGT could get several co-signed copies.
+The old blockhash's validity at "confirmed" is never the test: the confirmed bank lags, so a seconds-old blockhash would read as invalid and one SGT could get several co-signed copies.
 
 This is sound only because a claim never carries a durable nonce: the only System instructions allowed are the layout's Transfer, CreateAccount and Allocate. The cost is that a failed or unsent claim holds its SGT for 150 blocks plus the confirmed lag, about 60–90 seconds. Retrying the identical claim (the same message bytes, by the same wallet) is signed again. A different message that reuses the asset is not a retry.
 
@@ -167,7 +171,8 @@ wrangler secret put MAINNET_RPC_URL       # https://mainnet.helius-rpc.com/?api-
 - `wrangler.toml` sets the vars `SIWS_DOMAIN`, `SIWS_URI` and `DEVNET_RPC_URL`. It also sets two rate limits:
   - 20 requests a minute per client network and route, on `/health`, `/challenge` and `/claim` (an IPv6 /64 counts as one client);
   - 600 requests a minute for the whole Worker.
-- Worker code can't stop a flood from using up the account's daily request quota on workers.dev: every request counts, including refused ones. That needs a custom domain with Cloudflare WAF rate limiting in front.
+- `wrangler.toml` serves the Worker only on the custom domain `cosign.erashot.app` (`workers_dev = false`, `preview_urls = false`).
+- Worker code can't stop a flood from using up the account's daily request quota: every request counts, including refused ones. Only Cloudflare WAF rate limiting in front of the domain can.
 
 **Key rotation.**
 - `COSIGNER_SECRET_KEY` is the active key; `/health` names it.
@@ -188,8 +193,9 @@ The tests run inside workerd with a local D1 and a fake RPC that returns Helius-
 
 ## Deploy
 
+The D1 database `signshot-claims` exists; its `database_id` is in `wrangler.toml`.
+
 ```sh
-wrangler d1 create signshot-claims        # put the printed database_id in wrangler.toml
 wrangler d1 migrations apply signshot-claims --remote
 wrangler secret put …                     # the three secrets above
 wrangler deploy

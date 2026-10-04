@@ -25,8 +25,6 @@ import { typeScale as type } from "../ui/type";
 import { NetworkLabel, PhotoFrame, Pill } from "../ui/primitives";
 import {
   actions,
-  changedEstimate,
-  expiredEstimate,
   onChain,
   send as copy,
   walletTimeout,
@@ -186,7 +184,7 @@ export function SendSheet({
         clearQuote();
         // Seed Vault broadcasts first and replies only when its success screen is closed, so a
         // timeout usually means the copy was already sent.
-        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        const { cancelled, timedOut, quiet } = walletOutcome(e);
         setError(quiet ? "" : safeErrorText(e));
         if (timedOut) setStatus(walletTimeout.sendChecking);
         // The same read "Check transfer status" performs, run by the sheet itself.
@@ -199,7 +197,7 @@ export function SendSheet({
         setNewTransfer(false);
         // A fresh read can resolve a send whose initial receipt check failed. Its result
         // supersedes that error; do not put retry instructions beneath a confirmed transfer.
-        if (next?.status === "sent" && !expired && !changed &&
+        if (next?.status === "sent" &&
             next.attempt?.recipient === quote.recipient) {
           onSent?.();
           setError("");
@@ -212,11 +210,7 @@ export function SendSheet({
             ? next?.status === "sent"
               ? walletTimeout.sendFound
               : walletTimeout.sendPending
-            : changed
-              ? changedEstimate.transfer
-              : expired
-                ? expiredEstimate.transfer
-                : `${cancelled ? "Wallet closed. " : ""}Check the transfer status before retrying.`,
+            : `${cancelled ? "Wallet closed. " : ""}Check the transfer status before retrying.`,
         );
       }
     });

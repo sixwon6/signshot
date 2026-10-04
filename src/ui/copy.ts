@@ -92,10 +92,7 @@ export const onChain = {
   shareLink: "Shares the link to this edition.",
 } as const;
 
-/**
- * The itemised estimate. It is advisory: anyone may send lamports to the deterministic addresses
- * and `clear_pda` refunds them to the payer, so the real cost can be lower.
- */
+/** The itemised estimate. */
 export const estimate = {
   /** The one cost line. The parts below it are a tap away, not a wall of numbers. */
   label: "Estimated cost",
@@ -141,28 +138,6 @@ export const walletTimeout = {
 } as const;
 
 /**
- * An estimate is simulated against a blockhash, and a blockhash expires. Nothing was signed,
- * nothing was spent, and the only thing lost is the estimate itself.
- */
-export const expiredEstimate = {
-  publish: "Estimate expired. Tap Continue again.",
-  transfer: "Estimate expired. Review the transfer again.",
-  collect: "Estimate expired. Tap Continue again.",
-  offer: "Estimate expired. Tap Continue again.",
-} as const;
-
-/**
- * Not an expiry: the rebuilt transaction does not match the reviewed one (cost, rent or
- * simulation changed), so the new estimate has to be reviewed.
- */
-export const changedEstimate = {
-  publish: "The cost changed. Tap Continue and check the new one.",
-  transfer: "The cost changed. Review the transfer again.",
-  collect: "The cost changed. Tap Continue and check the new one.",
-  offer: "The cost changed. Tap Continue and check the new one.",
-} as const;
-
-/**
  * The recipe picker and sheet. Recipe, stage and parameter names are data from `src/recipes/`,
  * so they are not here.
  */
@@ -190,9 +165,6 @@ export const recipes = {
   namePlaceholder: "Recipe name",
   newLabel: "New recipe",
   continueLabel: "Continue",
-  /** Spoken names. Short, and never shown. */
-  editHint: (name: string) => `${name}. Edit.`,
-  valueOf: (param: string, value: string) => `${param}, ${value}`,
 } as const;
 
 export const camera = {
@@ -267,7 +239,6 @@ export const captureControls = {
   /** The key that turns the colour row to its Kelvin ruler. */
   kelvinKey: "K",
   auto: "Auto",
-  close: "Close",
   /** Spoken names. Short, and never shown. */
   modeDial: "Mode",
   modeNames: { auto: "Auto", program: "Program", manual: "Manual" },
@@ -351,12 +322,6 @@ export const publish = {
     "Saved publication details on this phone could not be read by this version of the app. Nothing was published and nothing on Solana is affected. Discard them to start this photograph again.",
   unavailableBody:
     "Wallet publication has not been enabled. Your photo is ready to save and share.",
-  /**
-   * Shown instead of "Published" when the confirmed transaction is not the reviewed message. The
-   * edition was verified; only what else the transaction carried is unknown.
-   */
-  reviewMismatch:
-    "The transaction your wallet sent is not the one shown in this review. The published edition matches this photograph, but check the transaction in your wallet or an explorer before taking another action.",
 } as const;
 
 export const proof = {
@@ -388,8 +353,7 @@ export const proof = {
   attestationBody: "Shows which device signed this, not what was photographed.",
   /**
    * The document's Seeker Genesis Token claim, as `useGenesisStanding` found it on mainnet, keyed
-   * by `genesisDisplay`. "now" only for a sealed mainnet claim. The mint address is shown under
-   * the row whatever the answer.
+   * by `genesisDisplay`. The mint address is shown under the row whatever the answer.
    */
   genesisLabel: "Seeker Genesis Token",
   genesisNone: "Not recorded.",
@@ -397,12 +361,9 @@ export const proof = {
     checking: "Checking…",
     held: "Held by the publishing wallet.",
     "not-held": "Not held by the publishing wallet.",
-    "not-held-now": "Not held by the publishing wallet now.",
     "not-genesis": "Not a Seeker Genesis Token.",
     unavailable: "Couldn’t check.",
   },
-  /** Under the row for a mainnet seal whose mint mainnet still finds to be an SGT (`genesisDisplay`). */
-  genesisSealed: "Verified and sealed by the edition program at publish.",
   /** "edition of 5 numbered copies" — the person's word, beside the record's own address. */
   editionSize: (supply: number): string =>
     supply === 1 ? "edition of 1" : `edition of ${supply} numbered copies`,
@@ -474,9 +435,7 @@ export const collect = {
   needsGenesis: "Needs a Seeker Genesis Token.",
   /** The states `getCollectState` reports. One sentence each, and never a claim of failure. */
   already: "Already collected by this wallet.",
-  alreadyGenesis: "Already collected with this Seeker Genesis Token.",
   soldOut: "Sold out.",
-  wait: "An earlier collect may still land. Check status in a moment.",
   unavailable: "Couldn’t read this edition. Try again.",
   /** The link named a chain this build does not publish or collect on. */
   wrongNetwork: "This link is for a different network.",
@@ -491,7 +450,6 @@ export const collect = {
   loading: "Reading this edition…",
   checking: "Checking this wallet…",
   cancelled: "Wallet closed.",
-  cancelledPending: "Wallet closed. Check status before retrying.",
 } as const;
 
 /**
@@ -625,8 +583,6 @@ export const collection = {
   notRefreshed: "Not refreshed",
   unread: (count: number): string => `${count} unread`,
   notShown: (count: number): string => `+${count} not shown`,
-  /** Retrying cannot fix the network a build talks to, so this one keeps its sentence. */
-  notOnNetwork: "Not available on this network.",
   /** The collect entry's own two refusals; a link's other refusals carry their own reason. */
   notOurLink: "Not a Signshot link",
   noScanner: "No scanner",
@@ -662,7 +618,6 @@ export const collection = {
   you: "You",
   copyPublisher: "Copy publisher address",
   issuedLabel: "Issued",
-  editionAddress: "Edition address",
   copyEdition: "Copy",
   copyEditionAddress: "Copy edition address",
   explorer: "Explorer",

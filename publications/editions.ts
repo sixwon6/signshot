@@ -133,13 +133,6 @@ export async function editionDisplay(cluster: Cluster, e: Edition): Promise<Edit
   };
 }
 
-/** Load and verify an edition by its candy machine; throws the refusal as a sentence. */
-export async function loadEditionDisplay(endpoint: string, cluster: Cluster, candyMachine: string): Promise<EditionDisplay> {
-  const verdict = await loadEdition(endpoint, candyMachine);
-  if (!verdict.ok) throw new Error(verdict.reason);
-  return editionDisplay(cluster, verdict);
-}
-
 // ---------------------------------------------------------------------------------------------
 // Copies
 // ---------------------------------------------------------------------------------------------

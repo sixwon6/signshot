@@ -7,7 +7,7 @@ dist/
 .metro-health-check*
 expo-env.d.ts
 
-# Read-only mainnet dumps for `npm run test:svm`.
+# Read-only mainnet dumps for `scripts/check-candy-svm.ts`.
 .cache/svm/
 
 # Local environment. Only the example is public.
@@ -32,7 +32,6 @@ android/.kotlin/
 modules/*/android/build/
 modules/*/android/.gradle/
 modules/*/android/.cxx/
-programs/editions/target/
 programs/svm/target/
 *.apk
 *.aab

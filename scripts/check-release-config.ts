@@ -11,10 +11,9 @@
  *
  * Refuses when an env file a production bundle would load exists, when the cluster is not
  * mainnet-beta without `--allow-cluster devnet`, when a mainnet build has no RPC override or names a
- * public solana.com endpoint, when the RPC URL carries a query string or credentials, when no
- * program is configured, and, with network checks that are not part of `npm test`, when the RPC
- * endpoint is on another network or Google's live attestation root list is not exactly the roots
- * this build pins. Never prints the RPC URL: a path can still carry a provider key.
+ * public solana.com endpoint, when the RPC URL carries a query string or credentials, and, with
+ * network checks that are not part of `npm test`, when the RPC endpoint is on another network or
+ * Google's live attestation root list is not exactly the roots this build pins. Never prints the RPC URL: a path can still carry a provider key.
  *
  * `resolveCluster` is duplicated from `src/solana/cluster.ts`, which cannot load under plain Node.
  */
@@ -173,10 +172,9 @@ export async function genesisRefusal(cluster: Cluster, raw: string | undefined):
 const ATTESTATION_ROOT_LIST = "https://android.googleapis.com/attestation/root";
 
 /**
- * The pinned roots (`GOOGLE_ATTESTATION_ROOT_KEYS`, asserted equal to `scripts/attestation-roots.pem`
- * by `npm test`) against Google's live list, by SHA-256 of each root's SubjectPublicKeyInfo. A root
- * Google added means new devices' chains would read "does not end at a Google attestation root" in
- * this build; one Google withdrew means this build still vouches for chains Google no longer does.
+ * The pinned roots (`GOOGLE_ATTESTATION_ROOT_KEYS`) against Google's live list, by SHA-256 of each
+ * root's SubjectPublicKeyInfo. A root Google added means new devices' chains would read "does not
+ * end at a Google attestation root" in this build; one Google withdrew means this build still vouches for chains Google no longer does.
  * Either is a reviewed change to the pin and the PEM, never something a release ships past.
  * `null` when they match.
  */
@@ -208,7 +206,7 @@ export async function attestationRootsRefusal(): Promise<string | null> {
     removed.map((spki) => `    pinned root no longer at Google: SPKI SHA-256 ${spki}\n`).join("") +
     `    Copy the roots from https://developer.android.com/privacy-and-security/security-key-attestation\n` +
     `    into scripts/attestation-roots.pem, update GOOGLE_ATTESTATION_ROOT_KEYS in\n` +
-    `    src/seeker/keyAttestation.ts, and run npm test (check-attestation asserts the two agree).`
+    `    src/seeker/keyAttestation.ts.`
   );
 }
 
@@ -259,10 +257,6 @@ async function main(argv: readonly string[]): Promise<void> {
   if (rpc) fail(rpc);
   const network = await genesisRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (network) fail(network);
-  // The devnet funding tool (`src/dev/DevnetFunding.tsx`) is compiled in when these are set.
-  for (const name of ["EXPO_PUBLIC_DEVNET_TEST_PAYER", "EXPO_PUBLIC_DEVNET_TEST_LAMPORTS"])
-    if (cluster !== "devnet" && process.env[name])
-      fail(`${name} is set on a ${cluster} build; it belongs to a devnet test session only.`);
 
   // No program of this app's own: editions are Metaplex's Core Candy Machine, the same address on
   // every cluster. A Seeker-only edition needs the co-signer, an HTTPS URL when set.

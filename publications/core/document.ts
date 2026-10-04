@@ -15,8 +15,6 @@ import type { Cluster, CoreMetadata } from "../types";
 
 export { collectUrl };
 
-/** Exactly 32 bytes of lowercase hex. */
-export const HEX32 = /^[a-f0-9]{64}$/;
 export const utf8 = (s: string) => new TextEncoder().encode(s);
 export const hash = (b: Uint8Array) => bytesToHex(sha256(b));
 

@@ -8,9 +8,8 @@
 export const DESCRIPTION_LIMIT = 280;
 
 /**
- * Control, zero-width, bidi and invisible code points, including newline and tab. At least as
- * strict as the program's `char::is_control`. `readEdition` applies this to immutable on-chain
- * titles, so adding a range can make a published edition unreadable: check published records first.
+ * Control, zero-width, bidi and invisible code points, including newline and tab. `readEdition`
+ * applies this to immutable on-chain titles, so adding a range can make a published edition unreadable: check published records first.
  * Written as ranges so this source file stays printable ASCII.
  */
 const UNSAFE_RANGES: readonly (readonly [number, number])[] = [
@@ -24,8 +23,8 @@ const UNSAFE_RANGES: readonly (readonly [number, number])[] = [
   [0x202a, 0x202e],
   [0x2060, 0x2064],
   [0x2066, 0x2069],
-  // LINE and PARAGRAPH SEPARATOR: not `Cc`, so the program allows them, but they render as line
-  // breaks in fields that must stay on one line.
+  // LINE and PARAGRAPH SEPARATOR: not `Cc`, but they render as line breaks in fields that must
+  // stay on one line.
   [0x2028, 0x2029],
   [0xfeff, 0xfeff],
 ];

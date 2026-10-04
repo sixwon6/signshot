@@ -1,8 +1,6 @@
 import { useRef, useState } from "react";
 import { safeErrorText } from "../ui/errorText";
 import {
-  isChangedQuote,
-  isExpiredQuote,
   isUserCancellation,
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
@@ -81,12 +79,10 @@ export function useSheetOperation<Q>(initialStatus = "") {
 
 /**
  * How a signing request failed. `quiet` is every outcome a sheet words as a status rather than an
- * error: the user backed out, the wallet never answered, or the quote expired or changed.
+ * error: the user backed out or the wallet never answered.
  */
 export function walletOutcome(e: unknown) {
   const cancelled = isUserCancellation(e),
-    timedOut = isWalletResponseTimeout(e),
-    expired = isExpiredQuote(e),
-    changed = isChangedQuote(e);
-  return { cancelled, timedOut, expired, changed, quiet: cancelled || timedOut || expired || changed };
+    timedOut = isWalletResponseTimeout(e);
+  return { cancelled, timedOut, quiet: cancelled || timedOut };
 }

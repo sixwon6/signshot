@@ -225,12 +225,6 @@ export function formatKelvin(kelvin: number): string {
   return `${Math.round(kelvin)} K`;
 }
 
-export function formatWhiteBalance(whiteBalance: CaptureSettings["whiteBalance"]): string {
-  if (whiteBalance === "auto") return AUTO_LABEL;
-  if (typeof whiteBalance === "string") return whiteBalance;
-  return formatKelvin(whiteBalance.kelvin);
-}
-
 /**
  * Manual focus as a RELATIVE position, `0%` at infinity and `100%` at the closest the lens
  * focuses. Never a distance: the Seeker reports `LENS_INFO_FOCUS_DISTANCE_CALIBRATION` as

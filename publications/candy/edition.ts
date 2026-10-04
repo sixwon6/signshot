@@ -19,9 +19,9 @@
 
 import {
   createNoopSigner, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress,
-  type Address, type Instruction, type KeyPairSigner, type TransactionSigner,
+  type Address, type Instruction, type KeyPairSigner,
 } from "@solana/kit";
-import { decodeGuardData, encodeGuardData, type GuardData, type GuardSet } from "./guards";
+import { encodeGuardData, type GuardData, type GuardSet } from "./guards";
 import type { Draft } from "./transactions";
 import {
   CANDY_GUARD_HEADER,

@@ -5,9 +5,9 @@ edition = "2021"
 publish = false
 
 # LiteSVM in a process of its own, driven line by line over stdin/stdout by
-# `scripts/check-program-svm.ts` (`npm run test:svm`). The `litesvm` npm package ships no Windows
-# binary, so the suite reaches the same Rust crate this way. Host-only test tooling: nothing here
-# is part of the program or its Cargo.lock.
+# `scripts/check-candy-svm.ts`, which builds it on Windows with `scripts/build-native-windows.ps1`.
+# The `litesvm` npm package ships no Windows binary, so the suite reaches the same Rust crate this
+# way. Host-only test tooling, never shipped.
 
 [dependencies]
 litesvm = "=0.16.0"

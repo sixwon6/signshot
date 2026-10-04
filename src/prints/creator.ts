@@ -8,7 +8,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { address, type Address } from "@solana/kit";
+import { address } from "@solana/kit";
 import {
   SeekerCamera,
   type CaptureRecord,
@@ -113,9 +113,8 @@ export function getPrintsAvailability(): { enabled: boolean; reason?: string } {
   return { enabled: true };
 }
 
-/** The durable draft key. Drafts of the earlier program (`es.core.v1:`) are never read. */
+/** The durable draft key. */
 const key = (r: CaptureRecord) => `es.candy.v1:${cluster}:${r.baseName}`;
-const oldKey = (r: CaptureRecord) => `es.core.v1:${cluster}:${r.baseName}`;
 /** The one photo+network lock, shared with the transfer flow. */
 const lock = (r: CaptureRecord) => publicationLockKey(cluster, r.baseName);
 export const isPublicationWorking = (r: CaptureRecord) => publicationInProgress(r);
@@ -248,7 +247,7 @@ export async function discardDraft(r: CaptureRecord) {
 
 /** Forget this photograph's saved intent (the photograph is being deleted). */
 export async function forgetPublicationDraft(r: CaptureRecord) {
-  await AsyncStorage.multiRemove([key(r), oldKey(r)]);
+  await AsyncStorage.removeItem(key(r));
 }
 
 /**

@@ -1,22 +1,12 @@
 import {
   AccountRole,
   address,
-  appendTransactionMessageInstructions,
-  blockhash,
-  compileTransaction,
-  createTransactionMessage,
-  getBase64Decoder,
-  getCompiledTransactionMessageDecoder,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-  signature,
   type Instruction,
 } from "@solana/kit";
 import { utf8 } from "../src/arweave/codec";
 import { turboItemStatus, TurboError, TURBO_FREE_ITEM_BYTES } from "../src/arweave/turbo";
-import { NEEDS_SOL, request } from "./rpc";
 import { TURBO_PAYMENT_HOSTS, TURBO_UPLOAD_HOSTS } from "./turboHosts";
-import type { CoreDraft, PublicationStorageProblem, StorageTopUp } from "./types";
+import type { CoreDraft, PublicationStorageProblem } from "./types";
 
 type StorageProblem = PublicationStorageProblem;
 type StorageItem = { id: string; bytes: Uint8Array };
@@ -220,37 +210,6 @@ export function storagePaymentInstructions(payer: string, payment: StoragePaymen
 }
 
 /**
- * The stand-alone storage payment, as turbo-sdk's `SolanaToken.createAndSubmitTx` builds it: a
- * legacy message holding the transfer and the credit-destination memo and nothing else, not even a
- * compute budget, which two System and Memo instructions do not need. Refused before a wallet opens
- * when the payer cannot cover it and the network fee.
- */
-export async function storageTopUpTransaction(endpoint: string, payer: string, payment: StoragePayment) {
-  const instructions = storagePaymentInstructions(payer, payment);
-  const latest = await request<{ context?: { slot?: unknown }; value?: { blockhash?: unknown; lastValidBlockHeight?: unknown } }>(
-    endpoint, "getLatestBlockhash", [{ commitment: "confirmed" }]);
-  const slot = latest?.context?.slot, height = latest?.value?.lastValidBlockHeight;
-  if (typeof slot !== "number" || !Number.isSafeInteger(slot) || slot < 0 ||
-    typeof height !== "number" || !Number.isSafeInteger(height) || height < 0)
-    throw new Error("Invalid Solana response");
-  const lifetime = { blockhash: blockhash(String(latest.value?.blockhash)), lastValidBlockHeight: BigInt(height) };
-  const transaction = compileTransaction(appendTransactionMessageInstructions(instructions,
-    setTransactionMessageLifetimeUsingBlockhash(lifetime,
-      setTransactionMessageFeePayer(address(payer), createTransactionMessage({ version: "legacy" })))));
-  const [fee, balance] = await Promise.all([
-    request<{ value?: unknown }>(endpoint, "getFeeForMessage",
-      [getBase64Decoder().decode(transaction.messageBytes), { commitment: "confirmed" }]),
-    request<{ value?: unknown }>(endpoint, "getBalance", [payer, { commitment: "confirmed" }]),
-  ]);
-  if (fee?.value === null) throw new Error("Transaction expired. Try again.");
-  if (typeof fee?.value !== "number" || !Number.isSafeInteger(fee.value) ||
-    typeof balance?.value !== "number" || !Number.isSafeInteger(balance.value))
-    throw new Error("Invalid Solana response");
-  if (BigInt(balance.value) < payment.lamports + BigInt(fee.value)) throw new Error(NEEDS_SOL);
-  return { transaction, blockhash: lifetime.blockhash as string, lastValidBlockHeight: lifetime.lastValidBlockHeight, slot };
-}
-
-/**
  * Whether a confirmed publication may buy storage again: the provider refused its upload (the free
  * tier's refusal included) or found its credit short, and no stand-alone payment is still to land
  * or to be credited. A check re-posts that one instead, so nothing is paid twice.
@@ -389,39 +348,6 @@ async function freeTier(items: StorageItem[]): Promise<StorageFunding> {
   if (items.some(item => item.bytes.length >= limit)) throw new PublicationStorageError(PAYMENT_REFUSED);
   return "free";
 }
-
-/**
- * Does this message pay Turbo for `destination`'s credit, however a wallet dressed it: a top-level
- * System transfer from `payer`, its fee payer, to `TURBO_SOLANA_ADDRESS`, and the spl-memo naming
- * `destination`. Accounts are read from the static list only; a lookup-table index matches nothing.
- * `blockhash`, when given, must be the message's own.
- */
-export function paysStorage(message: Uint8Array, payer: string, destination: string, blockhash?: string): boolean {
-  try {
-    const decoded = getCompiledTransactionMessageDecoder().decode(message);
-    if (decoded.version !== 0 && decoded.version !== "legacy") return false;
-    if (blockhash !== undefined && decoded.lifetimeToken !== blockhash) return false;
-    const accounts = decoded.staticAccounts as readonly string[];
-    const memo = utf8(`turboCreditDestinationAddress=${destination}`);
-    let transfer = false, credited = false;
-    for (const { programAddressIndex, accountIndices = [], data = new Uint8Array(0) } of decoded.instructions) {
-      const program = accounts[programAddressIndex];
-      if (program === SYSTEM_PROGRAM && data.length === 12 && accountIndices.length === 2 &&
-        data[0] === 2 && data[1] === 0 && data[2] === 0 && data[3] === 0 && data.slice(4).some(byte => byte !== 0) &&
-        accounts[accountIndices[0]] === payer && accounts[accountIndices[1]] === TURBO_SOLANA_ADDRESS)
-        transfer = true;
-      if (program === MEMO_PROGRAM && data.length === memo.length && memo.every((byte, i) => data[i] === byte))
-        credited = true;
-    }
-    return accounts[0] === payer && transfer && credited;
-  } catch {
-    return false;
-  }
-}
-
-/** A confirmed publication whose storage has not been bought: the dock offers the stand-alone payment. */
-export const storagePaymentNeeded = () => new PublicationStorageError({ kind: "quota", retryable: false,
-  message: "Pay for the photo's storage to finish publishing." });
 
 export function storageProblem(error: unknown, paid = false, funding?: StorageFunding): StorageProblem {
   if (error instanceof PublicationStorageError) return error.problem;

@@ -49,7 +49,6 @@ import {
 import { useStorageTopUp } from "../prints/useStorageTopUp";
 import { isUserCancellation } from "../solana/walletErrors";
 import {
-  forgetTransferAttempt,
   getTransferState,
   isTransferWorking,
   photoTransfer,
@@ -126,8 +125,8 @@ export function ReviewScreen() {
   const [recipeNames, setRecipeNames] = useState<Record<string, string>>({});
   /**
    * The open photograph's price, read from the chain rather than from its draft, so a price set
-   * from the Wallet screen or another device is the one shown here. `supported` is false for a
-   * deployment without prices, which has nothing to set.
+   * from the Wallet screen or another device is the one shown here. `supported` is false for an
+   * edition this app cannot price (`getOffer`).
    */
   const [offer, setOffer] = useState<{
     edition: string;
@@ -419,13 +418,12 @@ export function ReviewScreen() {
                 readTransfer: (record, draft) => getTransferState(photoTransfer(record, draft)),
                 publicationWorking: isPublicationWorking,
                 transferWorking: isTransferWorking,
-                removeFiles: async (record, draft) => {
+                removeFiles: async (record) => {
                   await SeekerCamera.deleteCapture(record.baseName);
                   await savePhotoEdit(record);
-                  // Drop the stored draft and transfer attempt too, or they stay unreachable for
-                  // the life of the install. Only after `deleteCapture` resolves.
+                  // Drop the stored draft too, or it stays unreachable for the life of the
+                  // install. Only after `deleteCapture` resolves.
                   await forgetPublicationDraft(record);
-                  if (draft) await forgetTransferAttempt(draft);
                 },
               });
               setOpenBaseName(null);
@@ -766,8 +764,8 @@ export function ReviewScreen() {
                   onPress={() => void perform(() => shareCard(detail))}
                 />
               )}
-              {/* The creator's own control. Offered only where the edition's deployment can hold
-                  a price at all; the sheet itself is where the amount is reviewed and approved. */}
+              {/* The creator's own control. Offered only where this app can price the edition;
+                  the sheet itself is where the amount is reviewed and approved. */}
               {knownPublished && d && currentOffer?.supported && (
                 <Pill
                   label={actions.price}

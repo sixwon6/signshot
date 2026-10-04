@@ -454,14 +454,3 @@ export function decodeCandyGuard(bytes: Uint8Array): CandyGuardAccount {
   return { base: r.key(), bump: r.u8(), authority: r.key(), guards: decodeGuardData(bytes, CANDY_GUARD_HEADER) };
 }
 
-/** A mint-limit counter's count (absent account: 0). */
-export const decodeMintCounter = (bytes: Uint8Array | null) => (bytes && bytes.length >= 2 ? bytes[0] | (bytes[1] << 8) : 0);
-
-/**
- * `getProgramAccounts` filters that find the candy machine minting into `collection`
- * (`collection_mint` sits after the discriminator, authority and mint authority).
- */
-export const candyMachineOfCollectionFilters = (collection: Address) => [
-  { dataSize: BigInt(CANDY_MACHINE_HIDDEN_BYTES) },
-  { memcmp: { offset: 72n, bytes: collection, encoding: "base58" as const } },
-];

@@ -1,4 +1,4 @@
-import { CORE_PROTOCOL, type AttestationSummary, type Cluster, type CoreMetadata } from "../types";
+import { type AttestationSummary, type Cluster, type CoreMetadata } from "../types";
 import { readDescription } from "./details";
 import { checkAttributes, exactKeys, object, readAttestationBundle } from "./attestation";
 import { genesisAttributes, readGenesisClaim } from "./genesisToken";
@@ -7,8 +7,6 @@ import { canonicalize, type JcsValue } from "../../src/jcs";
 
 const MISMATCH = "Photo metadata does not match the published edition";
 const ARWEAVE_IMAGE = /^https:\/\/arweave\.net\/[A-Za-z0-9_-]{43}$/;
-
-
 
 type Commitment = {
   cluster: Cluster; program: string; edition: string; collection: string;
@@ -37,35 +35,24 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   let description: string;
   try { description = readDescription(doc.description); }
   catch { throw new Error(MISMATCH); }
-  // The formats `metadata()` wrote before the collect link and the file list: read on the
-  // deployments they were published on, and on no program deployed after them.
-  const earlier = false;
-  if (exactKeys(doc, ["name", "description", "image"])) {
-    if (!earlier) throw new Error(MISMATCH);
-    return { image: doc.image, description };
-  }
-
-  // The current document (`metadata()`): the plain three fields, the edition's collect link as
+  // The document (`metadata()`): the plain three fields, the edition's collect link as
   // `external_url`, Metaplex `attributes`, and `properties` holding exactly the one image file and
-  // its category. The earlier one with evidence had neither the link nor the file list. Under
-  // `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
+  // its category. Under `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
   // Seeker Genesis Token (`genesisToken`), or both. Evidence that fails `readAttestationBundle` or
   // `checkAttributes` is SET ASIDE, not fatal: the photograph is still a valid, hash-bound
   // publication with no device claim, and the Proof sheet says why. Refusing it would add no safety
   // and would make an immutable document unviewable if a keystore format outgrew this reader.
   const current = exactKeys(doc, ["name", "description", "image", "external_url", "attributes", "properties"]);
-  if (current || (earlier && exactKeys(doc, ["name", "description", "image", "attributes", "properties"]))) {
+  if (current) {
     const properties = object(doc.properties);
     const keys = properties ? Object.keys(properties) : [];
     const evidence = keys.filter((k) => k === "seedshot" || k === "genesisToken");
-    if (!properties || keys.length !== evidence.length + (current ? 2 : 0) || (!current && evidence.length === 0))
+    if (!properties || keys.length !== evidence.length + 2)
       throw new Error(MISMATCH);
-    if (current) {
-      const files = Array.isArray(properties.files) && properties.files.length === 1 ? object(properties.files[0]) : null;
-      if (doc.external_url !== collectUrl(expected.edition, expected.cluster) || properties.category !== "image" ||
-          !files || !exactKeys(files, ["uri", "type"]) || files.uri !== doc.image || files.type !== "image/jpeg")
-        throw new Error(MISMATCH);
-    }
+    const files = Array.isArray(properties.files) && properties.files.length === 1 ? object(properties.files[0]) : null;
+    if (doc.external_url !== collectUrl(expected.edition, expected.cluster) || properties.category !== "image" ||
+        !files || !exactKeys(files, ["uri", "type"]) || files.uri !== doc.image || files.type !== "image/jpeg")
+      throw new Error(MISMATCH);
     if (serialized !== undefined && canonicalize(json as JcsValue) !== serialized)
       throw new Error(MISMATCH);
 
@@ -90,7 +77,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
     }
     try {
       const read = readAttestationBundle(properties.seedshot, expected);
-      checkAttributes(attributes, read.summary, current ? "current" : "earlier");
+      checkAttributes(attributes, read.summary);
       return {
         image: doc.image,
         description,
@@ -129,16 +116,13 @@ export function readSavedPhotoMetadata(serialized: string, edition: CoreMetadata
     const doc = JSON.parse(serialized) as JcsValue;
     if (canonicalize(doc) !== serialized) throw new Error(MISMATCH);
     const parsed = readPhotoMetadata(doc, edition, serialized);
-    // Only the validated legacy format predates the local caption field. Read its existing
-    // caption into the local view; never rewrite the metadata bytes committed on chain.
-    const description = edition.description === undefined && parsed.dimensions && !parsed.attestation
-      ? parsed.description : readDescription(edition.description);
+    const description = readDescription(edition.description);
     if (parsed.image !== edition.image || parsed.description !== description ||
         (parsed.dimensions && (parsed.dimensions.width !== edition.width || parsed.dimensions.height !== edition.height)))
       throw new Error(MISMATCH);
     // The attestation summary and the Genesis Token claim are whatever the hash-bound document
-    // supports, never the saved copy. `genesisSealed` is a chain fact `isSigned` re-reads.
-    const { attestation: _saved, attestationProblem: _problem, genesisMint: _mint, genesisSealed: _sealed, ...saved } = edition;
+    // supports, never the saved copy.
+    const { attestation: _saved, attestationProblem: _problem, genesisMint: _mint, ...saved } = edition;
     const rest = parsed.genesisMint ? { ...saved, genesisMint: parsed.genesisMint } : saved;
     return parsed.attestation
       ? { ...rest, description, attestation: parsed.attestation }

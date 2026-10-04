@@ -5,8 +5,8 @@
  * parsed in the UI and preserved exactly through review, signing and recovery; unrepresentable
  * precision and overflow are refused. Zero is a free offer, and there is no product minimum. The
  * one floor is the network's: a price above zero must be at least the rent-exempt minimum of an
- * empty account, which `set_offer` reads on chain and refuses below (`PriceTooLow`), and which
- * the client reads from the cluster (`minimumPriceLamports`), never from a constant.
+ * empty account, which the client reads from the cluster (`minimumPriceLamports`), never from a
+ * constant.
  */
 import { request } from "../../publications/rpc";
 /** An estimate as the review shows it: the total, and the rows it is made of. */
@@ -19,7 +19,7 @@ export interface Estimate {
 const LAMPORTS_PER_SOL = 1_000_000_000n;
 /** SOL has nine decimal places; a tenth digit is a lamport fraction, which does not exist. */
 const SOL_DECIMALS = 9;
-/** `price_lamports` is a Borsh `u64`, so this is the largest price the program can hold. */
+/** A price is a `u64` of lamports, so this is the largest one there is. */
 export const MAX_PRICE_LAMPORTS = 0xffff_ffff_ffff_ffffn;
 
 const NOT_A_PRICE = "Enter a price in SOL, like 0.25.";
@@ -33,9 +33,7 @@ const DECIMAL = /^(\d*)(?:\.(\d*))?$/;
  * A typed SOL amount as lamports, exactly.
  *
  * Empty text and "0" both mean FREE and answer `0n` — an empty price field is how a creator says
- * "no price", and zero is how the program stores that same intent (`price_lamports == 0` is what
- * `collect` requires and what `buy` refuses with `NotForSale`). Everything else throws a sentence a
- * screen can render: a sign, an exponent, a thousands separator, a bare ".", more than nine
+ * "no price", and zero is a free edition. Everything else throws a sentence a screen can render: a sign, an exponent, a thousands separator, a bare ".", more than nine
  * fraction digits, or a value past `u64`.
  */
 export function parseSolPrice(text: string): bigint {
@@ -77,11 +75,10 @@ export function formatSol(lamports: bigint): string {
 /**
  * The lowest price above zero, in lamports: `getMinimumBalanceForRentExemption(0)`, read-only.
  *
- * `buy` pays the price into the creator's wallet, and the runtime refuses to leave an empty wallet
- * holding less than this, so `set_offer` refuses any price between zero and it. Read from the
- * cluster on every quote rather than kept here: rent per byte is being lowered in steps
- * (SIMD-0437, https://solana.com/upgrades/reduced-rent), and the program reads the same rate
- * from the Rent sysvar.
+ * A purchase pays the price into the creator's wallet, and the runtime refuses to leave an empty
+ * wallet holding less than this, so no price between zero and it is allowed. Read from the cluster
+ * on every quote rather than kept here: rent per byte is being lowered in steps (SIMD-0437,
+ * https://solana.com/upgrades/reduced-rent).
  */
 export async function minimumPriceLamports(endpoint: string): Promise<bigint> {
   const lamports = await request<unknown>(endpoint, "getMinimumBalanceForRentExemption", [0]);
@@ -91,7 +88,7 @@ export async function minimumPriceLamports(endpoint: string): Promise<bigint> {
 }
 
 /**
- * `lamports` when the program will take it as a price against `minimum` (from
+ * `lamports` when it is a valid price against `minimum` (from
  * `minimumPriceLamports`): zero, or at least the minimum. Otherwise throws a sentence a screen can
  * render.
  */

@@ -17,7 +17,7 @@
     </header>
     <main class="document">
       <h1>Privacy Policy</h1>
-      <p class="date">Updated 29 September 2026</p>
+      <p class="date">Updated 4 October 2026</p>
       <p>This policy covers the Signshot Android app. Signshot has no app accounts, ads, analytics SDKs or automatic crash reporting. We do not sell personal data.</p>
 
       <h2>On your phone</h2>
@@ -29,7 +29,7 @@
 
       <h2>What you make public</h2>
       <p>Publishing is optional. It sends a smaller photo, title and text to Arweave through Turbo and records the edition on Solana. Full-size capture files stay on your phone unless you export or share them.</p>
-      <p>Public records include wallet addresses, edition and album details, prices, royalties, ownership and transactions. Available proofs add capture time, image dimensions and fingerprints, device model, hardware certificates, app and device security details, and your Seeker Genesis Token address to verify the publication and eligibility.</p>
+      <p>Public records include wallet addresses, edition details, prices, royalties, ownership and transactions. Available proofs add capture time, image dimensions and fingerprints, device model, hardware certificates, app and device security details, and your Seeker Genesis Token address to verify the publication and eligibility.</p>
       <p><strong>Published photos and records are public and permanent.</strong> Collecting, buying and sending also create public records. Anyone can copy them and link wallet activity; a Genesis Token can link different wallets. Signshot cannot erase these records.</p>
       <p>Sharing sends your selected photo, print card or publication bundle to the app you choose. The optional .skr stamp adds your Seeker ID name to shared images.</p>
 
@@ -39,7 +39,7 @@
         <li>Solana RPC providers process address lookups and signed transactions for balances, holdings, names, editions and eligibility.</li>
         <li>Turbo receives public photos, metadata, upload signatures and storage payment details. Arweave gateways serve requested photos and metadata.</li>
         <li>Google serves the certificate revocation list used to check proofs locally. Android may also contact its key-provisioning service when creating a hardware proof.</li>
-        <li>Cloudflare serves erashot.app and the app's moderation list.</li>
+        <li>Cloudflare serves erashot.app and the app's moderation list. It also runs the Seeker co-signer at cosign.erashot.app, which receives your wallet address, a sign-in signature and the claim transaction when you collect a Seeker-holders-only edition, and records which Seeker Genesis Token claimed it.</li>
       </ul>
       <p>Network services receive your IP address and request details. Their policies govern their handling and retention. Loading content or checking proofs can contact them even if you never publish.</p>
 

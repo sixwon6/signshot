@@ -12,42 +12,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { type ParamSpec, type Recipe } from "../recipes/model";
+import { type Recipe } from "../recipes/model";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
 import { Pill } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
-
-const decimals = (step: number): number => {
-  const text = String(step);
-  const point = text.indexOf(".");
-  return point < 0 ? 0 : text.length - point - 1;
-};
-
-/** A raw 0..1 track position as a value this parameter will accept, on its own step. */
-export function quantize(spec: ParamSpec, raw: number): number {
-  const stepped = Math.round((raw - spec.min) / spec.step) * spec.step + spec.min;
-  const clamped = Math.min(spec.max, Math.max(spec.min, stepped));
-  return Number(clamped.toFixed(4));
-}
-
-/** The mono readout beside a row. Digits only: the unit is the row's own business. */
-export function readValue(spec: ParamSpec, value: number): string {
-  switch (spec.unit) {
-    case "unit":
-      return String(Math.round(value * 100));
-    case "signed": {
-      const points = Math.round(value * 100);
-      return points > 0 ? `+${points}` : String(points);
-    }
-    case "factor":
-      return value.toFixed(2);
-    case "refPixels":
-      return value.toFixed(decimals(spec.step));
-    case "frame":
-      return (value * 100).toFixed(1);
-  }
-}
 
 /**
  * The one slider shape: rail, fill and thumb, dragged directly; screen readers step it through

@@ -1,7 +1,7 @@
 /**
  * The Wallet screen's two lists. Published: the editions whose guard this wallet holds. Collected:
  * Core assets this wallet owns whose collection belongs to an edition `readEdition` accepts. Copies
- * of anything else (the earlier program's included) are not shown.
+ * of anything else are not shown.
  */
 import { address, getBase64Decoder } from "@solana/kit";
 import {

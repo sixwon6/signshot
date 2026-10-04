@@ -36,7 +36,7 @@ const priceKey = (p: Price | null) =>
 
 /**
  * What this edition asks for a copy now. `supported` is false for an edition this app cannot price
- * (closed, not accepted, or priced in a token), with the reason.
+ * (closed or not accepted), with the reason.
  */
 export async function getOffer(e: CoreMetadata): Promise<{
   supported: boolean; offer: EditionOffer | null; reason?: string;

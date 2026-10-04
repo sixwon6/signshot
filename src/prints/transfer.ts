@@ -51,9 +51,6 @@ export const isTransferWorking = (r: CaptureRecord) => operationInProgress(photo
 const holding = <T>(t: TransferTarget, work: () => Promise<T>) =>
   t.photo ? exclusive(photoLock(t.photo.record), () => exclusive(copyLock(t), work)) : exclusive(copyLock(t), work);
 
-/** Nothing is kept on disk any more; kept for the photo deletion path. */
-export async function forgetTransferAttempt(_d: PublicationDraft) {}
-
 /** Sends confirmed in this app session, so the sheet can say where the copy went. */
 const sent = new Map<string, { recipient: string; signature: string }>();
 

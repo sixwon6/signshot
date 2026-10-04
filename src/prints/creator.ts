@@ -122,10 +122,7 @@ export const isPublicationWorking = (r: CaptureRecord) => publicationInProgress(
 const publishableEdge = (value: number) => Number.isInteger(value) && value > 0 && value <= MAX_PRINT_EDGE;
 const BAD_DRAFT = "Saved edition draft does not match this photo.";
 
-/**
- * Is "Seeker holders only" offered: a co-signer is configured and answers. The wallet's Genesis
- * Token is checked when the draft is made (`createDraft` records Seeker-only only with one).
- */
+/** Is "Seeker holders only" offered: a co-signer is configured and answers. */
 export async function seekerOnlyAvailable(): Promise<boolean> {
   return (await cosignerKey()) !== null;
 }
@@ -366,9 +363,9 @@ export async function createDraft(
       ...(price ? { price } : {}),
       ...(tokenPrice ? { tokenPrice } : {}),
       royaltyBps,
-      // Seeker-only needs the co-signer and this wallet's Genesis Token; without both it is open.
-      seekerOnly: !!cosigner && !!genesisMint,
-      ...(cosigner && genesisMint ? { cosigner } : {}),
+      // Seeker-only needs the co-signer, which checks each collector's Genesis Token; the publisher need not hold one.
+      seekerOnly: !!cosigner,
+      ...(cosigner ? { cosigner } : {}),
       seeds,
       storage: "local",
     };

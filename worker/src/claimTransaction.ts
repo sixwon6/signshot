@@ -90,7 +90,7 @@ const DEFAULT_UNITS_PER_INSTRUCTION = 200_000;
  * (`FEE_ALLOWANCE_LAMPORTS`, publications/candy/transactions.ts). Price × limit is the only way
  * this transaction can cost the wallet more than the reviewed amounts.
  */
-export const MAX_PRIORITY_FEE_LAMPORTS = 100_000n;
+export const MAX_PRIORITY_FEE_LAMPORTS = 300_000n;
 
 export const LIGHTHOUSE_PROGRAM = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 /**

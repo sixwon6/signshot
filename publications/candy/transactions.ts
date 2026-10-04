@@ -51,7 +51,7 @@ export interface Budget { units: number; microLamports: bigint }
  * lamports, the allowance the app already shows in its estimate. Mirrors `FEE_ALLOWANCE_LAMPORTS`
  * in `publications/rpc.ts`; `candy/` imports nothing of the app's, so the Worker's tests can load it.
  */
-export const FEE_ALLOWANCE_LAMPORTS = 50_000n;
+export const FEE_ALLOWANCE_LAMPORTS = 250_000n;
 /** The runtime's ceiling per transaction, and its default per instruction when no limit is set. */
 export const MAX_TRANSACTION_UNITS = 1_400_000n;
 export const DEFAULT_UNITS_PER_INSTRUCTION = 200_000n;

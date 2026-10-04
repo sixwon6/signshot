@@ -11,7 +11,7 @@ import {
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 /** Wallet-added priority/guard costs, visibly included in the estimate rather than called a price. */
-export const FEE_ALLOWANCE_LAMPORTS = 50_000n;
+export const FEE_ALLOWANCE_LAMPORTS = 250_000n;
 
 /**
  * Byte cap for a JSON-RPC body, enforced before `JSON.parse` so a hostile endpoint cannot force a

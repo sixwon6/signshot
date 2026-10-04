@@ -210,7 +210,7 @@ function instructionTests() {
 }
 
 /**
- * The largest publication the app builds: `publish_in_album` with the Genesis Token sealed, a
+ * The largest publication the app builds: `publish` with the Genesis Token sealed, a
  * 24-byte title, the royalty and Seeker-only setting, `set_offer`, the compute budget, and the
  * storage transfer and memo, compiled as `prepareTransaction` compiles it and held to its
  * 1,057-byte mobile wallet budget.
@@ -228,7 +228,7 @@ async function sizeTest() {
   };
   const publication: Instruction[] = [
     await instruction(e, CREATOR, 1, `https://arweave.net/${"D".repeat(43)}`, "e".repeat(64),
-      "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", { mint, token: "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77" },
+      undefined, { mint, token: "GH2ELkRUzqFRFZV6yJfjgE2XvzFz2mohS27Jrk6gji77" },
       { royaltyBps: 1000, seekerOnly: true }),
     await setOfferInstruction(e, 18_446_744_073_709_551_615n),
   ];

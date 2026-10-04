@@ -28,7 +28,6 @@ import { readPhotoMetadata } from "./metadataDocument";
 import { attestationAttributes, readAttestationBundle, type AttestationBundle, type DeviceVerdict } from "./attestation";
 import { genesisAttributes, genesisClaim, publishedGenesisClaim, type GenesisClaim } from "./genesisToken";
 import { collectUrl } from "./links";
-import { albumConformance } from "./albumRules";
 import { safeErrorText } from "../../src/ui/errorText";
 import {
   CORE_PROTOCOL,
@@ -407,8 +406,9 @@ export function checkSealedTerms(sealed: SealedTerms): void {
 
 /**
  * `publish`: creates the edition and print #1. With `album` it becomes `publish_in_album`: same
- * arguments, different discriminator, plus the group as a writable account. Every created account
- * is a PDA, so the wallet is the only signer.
+ * arguments, different discriminator, plus the group as a writable account. The app never passes
+ * one; `scripts/check-program-svm.ts` still does. Every created account is a PDA, so the wallet is
+ * the only signer.
  *
  * A deployment with `programFeatures().genesis` takes two more accounts at the end, both read
  * only: the Genesis Token accounts, or — Anchor's convention for an absent optional account — the
@@ -1013,7 +1013,7 @@ export interface CoreGroup {
   parentGroups: readonly Address[];
   assets: readonly Address[];
   plugins: readonly CorePlugin[];
-  /** A plugin area this reader cannot decode; reported as content by `albumConformance`. */
+  /** A plugin area this reader cannot decode; reported, never fatal. */
   unknownPlugins: boolean;
 }
 
@@ -1227,13 +1227,12 @@ export function decodeCollection(bytes: Uint8Array): CoreCollection {
   };
 }
 
-/** Core `GroupV1`: one album. Structural decoding only; the album rules live in `album.ts`. */
+/** Core `GroupV1`: one album. Structural decoding only. */
 export function decodeGroup(bytes: Uint8Array): CoreGroup {
   const r = reader(bytes);
   if (r.u8() !== KEY_GROUP) throw new Error(NOT_CORE);
   const updateAuthority = r.key();
-  // No length cap: Core has none and a rename must not make an edition unreadable. `albumLabel`
-  // bounds what renders.
+  // No length cap: Core has none and a rename must not make an edition unreadable.
   const name = r.text(bytes.length);
   const uri = r.text(bytes.length);
   const list = () => {
@@ -1490,16 +1489,13 @@ export function sealedGenesisMint(collection: CoreCollection): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * The edition's album: the group account plus the claim that found it. `conforming` reflects the
- * group's mutable content and never invalidates the edition.
+ * The group an older edition's collection was published into, and the claim that found it. The app
+ * shows nothing of it; a member edition reads as a plain one.
  */
 type EditionAlbum = CoreGroup & {
   group: Address;
   /** Recorded, never used to decide membership. */
   pluginAuthority: CorePluginAuthority;
-  conforming: boolean;
-  /** Why not, when `conforming` is false. */
-  reason?: string;
 };
 
 /** Permanent chain evidence, independent of whether any issued print is still live. */
@@ -1554,7 +1550,7 @@ async function verifyPublication(
     if (!groupRaw || groupRaw.owner !== MPL_CORE || groupRaw.executable !== false)
       throw new Error(ALBUM_MESSAGE);
     const group = decodeGroup(groupRaw.bytes);
-    album = { ...named, ...group, ...albumConformance(group) };
+    album = { ...named, ...group };
   }
   const collection = verifyEditionCollection(
     collectionRaw.bytes,

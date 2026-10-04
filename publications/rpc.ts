@@ -414,11 +414,9 @@ function describeSimulationError(
 
 /**
  * Retryable-vs-terminal verdict for a program failure. `ExistingAsset` is terminal on a publication
- * address, offers a new album on an album address, and is retryable while collecting, where the
- * copy number — and so the print address — changes between attempts. A Core code is only read when the failing program is Core,
- * since other programs reuse small numbers.
+ * address and retryable while collecting, where the copy number — and so the print address —
+ * changes between attempts.
  */
-export type ProgramErrorFallback = "publish-without-album" | "new-album";
 type ProgramErrorVerdict = {
   /** The `Custom` code the failure carried, or null when it was not a program error. */
   code: bigint | null;
@@ -430,8 +428,6 @@ type ProgramErrorVerdict = {
   message: string;
   /** May the same transaction be offered again, unchanged? */
   retryable: boolean;
-  /** A different action that would work, when one exists. */
-  fallback?: ProgramErrorFallback;
 };
 
 /**
@@ -465,8 +461,6 @@ const EDITION_ERROR = {
   // Permanent: no refreshed number can pass it, so it is never read as a competing collector.
   ALREADY_COLLECTED: 6012n,
 } as const;
-/** `MplCoreError::GroupVectorFull`, 0x36. Raised by `AddCollectionsToGroupV1` at 256 members. */
-const CORE_GROUP_VECTOR_FULL = 54n;
 /**
  * Metaplex Core's program id. `core/protocol.ts` exports the same address as `MPL_CORE`; it
  * cannot be imported here because that module imports this one, so the two must stay in step.
@@ -540,19 +534,8 @@ export function describeProgramError(
   });
   if (code === null) return generic();
 
-  if (program === MPL_CORE_ID) {
-    if (code !== CORE_GROUP_VECTOR_FULL) return generic();
-    return {
-      code,
-      program,
-      known: true,
-      // Core caps a group at 256 collections. A refused `publish_in_album` leaves no edition, so
-      // the same nonce can still publish without the album.
-      message: "This album is full. It can hold 256 photographs.",
-      retryable: false,
-      fallback: "publish-without-album",
-    };
-  }
+  // A code from Core is Core's own, never looked up as an `era_editions` one.
+  if (program === MPL_CORE_ID) return generic();
   const message = EDITION_MESSAGES[String(code)];
   if (message === undefined) return generic();
   /**
@@ -571,8 +554,8 @@ export function describeProgramError(
       program,
       known: true,
       message: EDITION_MESSAGES[String(EDITION_ERROR.STALE_NUMBER)],
-      // No `fallback`: the recovery is this same operation on a refreshed number, which is exactly
-      // what `retryable` already means. A fallback names a DIFFERENT action.
+      // The recovery is this same operation on a refreshed number, which is exactly what
+      // `retryable` already means.
       retryable: true,
     };
   /**
@@ -588,15 +571,6 @@ export function describeProgramError(
       code === EDITION_ERROR.PAYMENT_REQUIRED ||
       code === EDITION_ERROR.NOT_FOR_SALE))
     return { code, program, known: true, message, retryable: true };
-  if (code === EDITION_ERROR.EXISTING_ASSET && options.operation === "create-album")
-    return {
-      code,
-      program,
-      known: true,
-      message: "An album already exists at this address. Start a new album to continue.",
-      retryable: false,
-      fallback: "new-album",
-    };
   return { code, program, known: true, message, retryable: false };
 }
 /** The `Custom` code of an `InstructionError` tuple, whether it arrived as number or bigint. */
@@ -653,15 +627,12 @@ export const OFFER_ACCOUNT_BYTES = 85;
 /** The smallest Core accounts a Signshot publication can write. */
 const CORE_COLLECTION_MIN_BYTES = 457;
 const CORE_PRINT_MIN_BYTES = 186;
-const CORE_GROUP_MIN_BYTES = 58;
 
 export type PublicationOperation =
   | "publish"
-  | "publish-in-album"
   | "collect"
   | "buy"
   | "set-offer"
-  | "create-album"
   | "transfer";
 
 /**
@@ -671,13 +642,6 @@ export type PublicationOperation =
  */
 export const OPERATION_FLOOR_LAMPORTS: Readonly<Record<PublicationOperation, bigint>> = {
   publish:
-    CORE_CREATE_FEE_LAMPORTS +
-    rentExemption(EDITION_ACCOUNT_BYTES) +
-    rentExemption(CORE_COLLECTION_MIN_BYTES) +
-    rentExemption(CORE_PRINT_MIN_BYTES) +
-    rentExemption(RECEIPT_ACCOUNT_BYTES),
-  // A member collection additionally carries a `Groups` plugin, so it is never cheaper.
-  "publish-in-album":
     CORE_CREATE_FEE_LAMPORTS +
     rentExemption(EDITION_ACCOUNT_BYTES) +
     rentExemption(CORE_COLLECTION_MIN_BYTES) +
@@ -703,8 +667,6 @@ export const OPERATION_FLOOR_LAMPORTS: Readonly<Record<PublicationOperation, big
   // network fee alone, which is under this floor: `EstimateBreakdown.floor` is stated, never
   // enforced, exactly as it is for a publish onto a pre-funded PDA.
   "set-offer": rentExemption(OFFER_ACCOUNT_BYTES),
-  // An album is one Core `GroupV1` PDA and no asset, so Core charges no protocol fee for it.
-  "create-album": rentExemption(CORE_GROUP_MIN_BYTES),
   transfer: 0n,
 };
 

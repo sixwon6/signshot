@@ -28,14 +28,6 @@ import { useStorageTopUp } from "./useStorageTopUp";
 import { terms } from "../../publications/core/protocol";
 import { useDeviceVerdict } from "../seeker/useDeviceVerdict";
 import { normalizeDescription } from "../../publications/core/details";
-import {
-  createAlbum,
-  loadAlbums,
-  prepareAlbum,
-  selectableAlbums,
-  type AlbumRecord,
-  type AlbumSetup,
-} from "./albums";
 import { readPhotoEdit } from "./photoStorage";
 import { parseSolPrice } from "./price";
 import { shortAddress } from "./photoPresentation";
@@ -64,7 +56,6 @@ import {
 import { safeErrorText } from "../ui/errorText";
 import { assertReviewedProgram } from "../../publications/programImage";
 import { useTermsAgreement } from "../moderation/store";
-import { programFallback } from "./programVerdict";
 import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT } from "../solana/cluster";
 import {
   isChangedQuote,
@@ -72,8 +63,8 @@ import {
   isUserCancellation,
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
-import { useSheetOperation, walletOutcome } from "./useSheetOperation";
-import { PrintAlbum, PrintDetails } from "./PrintForm";
+import { useSheetOperation } from "./useSheetOperation";
+import { PrintDetails } from "./PrintForm";
 import { PrintReceipt } from "./PrintReceipt";
 import { PrintDock } from "./PrintDock";
 
@@ -111,10 +102,7 @@ export function PrintSheet({
     setError,
     quote,
     setQuote,
-    showCost,
-    setShowCost,
     run,
-    showCheckFailure,
   } = useSheetOperation<Awaited<ReturnType<typeof prepareSetup>>>();
   // The terms are agreed to once, before anything is published; an upload owed by an edition
   // already on Solana is never held behind them.
@@ -125,13 +113,6 @@ export function PrintSheet({
   // The optional caption. Like the title, it is hashed into the document when the draft is
   // created and cannot change without discarding the draft.
   const [caption, setCaption] = useState("");
-  // The album decides which instruction the wallet approves, so it also freezes with the draft.
-  const [albums, setAlbums] = useState<AlbumRecord[]>([]);
-  const [albumsReason, setAlbumsReason] = useState("");
-  const [albumMode, setAlbumMode] = useState<"none" | "existing" | "new">("none");
-  const [selectedAlbum, setSelectedAlbum] = useState("");
-  const [newAlbum, setNewAlbum] = useState("");
-  const [albumQuote, setAlbumQuote] = useState<AlbumSetup | null>(null);
   // A saved draft this build cannot read. `draft` is null in that case, so this flag is what
   // offers the discard action.
   const [unreadable, setUnreadable] = useState(false);
@@ -153,8 +134,6 @@ export function PrintSheet({
   const [sealable, setSealable] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [published, setPublished] = useState(false);
-  // The action the program's own verdict says would work instead of the failure on screen.
-  const [fallback, setFallback] = useState<"publish-without-album" | "new-album" | null>(null);
   const [access, setAccess] = useState<"fresh" | "saved" | "blocked">(
     "blocked",
   );
@@ -217,20 +196,9 @@ export function PrintSheet({
         setSealable(!!features && canSealGenesis(configuredProgram(cluster)));
         await applyPublicationState(state);
         if (!live) return;
-        // Albums are a separate durable list; an unreadable one disables the control with a
-        // reason rather than taking the whole publishing sheet down with it.
-        try {
-          const saved = await loadAlbums();
-          if (live) setAlbums(saved);
-        } catch (e) {
-          if (live) setAlbumsReason(safeErrorText(e));
-        }
-        if (!live) return;
         if (state.draft) {
           setTitle(state.draft.edition.title);
           setCaption(state.draft.edition.description);
-          setSelectedAlbum(state.draft.album ?? "");
-          setAlbumMode(state.draft.album ? "existing" : "none");
           setSolo(state.draft.edition.supply === 1);
           setCount(String(state.draft.edition.supply));
           setRoyaltyBps(state.draft.royaltyBps);
@@ -289,7 +257,6 @@ export function PrintSheet({
     if (running.current || initializing || !canPublish) return;
     return run(async () => {
       setError("");
-      setFallback(null);
       // The estimate on screen belongs to the check that produced it. Clearing it first means a
       // refreshed approval can never show the amount from the previous, expired one.
       setQuote(null);
@@ -312,7 +279,6 @@ export function PrintSheet({
             owner.address,
             edit,
             moment,
-            selectedAlbum || undefined,
             lamports,
             // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
             // records Seeker-only only with the wallet's Genesis Token to seal.
@@ -326,8 +292,6 @@ export function PrintSheet({
         // A cost check opens the wallet only to learn which account is publishing, so a wallet
         // that never answers has still published nothing.
         const timedOut = isWalletResponseTimeout(e);
-        // The program's verdict may name a recovery, e.g. publishing without a full album.
-        setFallback(programFallback(e) ?? null);
         setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
         setStatus(
           timedOut
@@ -372,7 +336,6 @@ export function PrintSheet({
         const timedOut = isWalletResponseTimeout(e);
         const expired = isExpiredQuote(e);
         const changed = isChangedQuote(e);
-        setFallback(programFallback(e) ?? null);
         setError(
           isUserCancellation(e) || timedOut || expired || changed
             ? ""
@@ -435,118 +398,6 @@ export function PrintSheet({
     onChanged?.();
   }
 
-  /** The publishing wallet for album work: the draft's, or the connected one. */
-  function albumWallet() {
-    return draft?.edition.creator ?? walletAddress;
-  }
-  function adoptAlbum(record: AlbumRecord) {
-    setAlbums((previous) => [
-      ...previous.filter((a) => a.nonce !== record.nonce),
-      record,
-    ]);
-    setSelectedAlbum(record.address);
-    setAlbumMode("existing");
-    setAlbumQuote(null);
-    setNewAlbum("");
-    // The group account was read and is held by this wallet; the transient flag says only that
-    // the transaction which created it was not the reviewed message.
-    if (record.reviewMismatch) {
-      setError(copy.albumReviewMismatch);
-      setStatus("");
-    } else setStatus(`Album “${record.name}” is ready. It will hold this photograph.`);
-  }
-  /** Cost only. Nothing is created, and no wallet is asked to sign by this check. */
-  async function quoteAlbum() {
-    if (busy || !!draft) return;
-    return run(async () => {
-      setError("");
-      // Same rule as the publication estimate: the old amount leaves the screen with its check.
-      setAlbumQuote(null);
-      setStatus("Checking the album cost…");
-      try {
-        const wallet =
-          albumWallet() ??
-          (await session.connectAnd((w) => session.authorizeSession(w))).address;
-        const next = await prepareAlbum(newAlbum, wallet);
-        if (next.step === "ready") adoptAlbum(next.record);
-        else {
-          await checkProgram(next.record.program);
-          setAlbumQuote(next);
-          setStatus("Review the album cost below. Nothing has been created by this check.");
-        }
-      } catch (e) {
-        setAlbumQuote(null);
-        setFallback(programFallback(e) ?? null);
-        showCheckFailure(e, {
-          timedOut: walletTimeout.albumCostCheck,
-          cancelled: "Wallet closed. No album was created.",
-        });
-      }
-    });
-  }
-  async function makeAlbum() {
-    if (busy || albumQuote?.step !== "sign") return;
-    return run(async () => {
-      setError("");
-      try {
-        const wallet = albumQuote.record.creator;
-        await checkProgram(albumQuote.record.program);
-        const record = await createAlbum(wallet, session, albumQuote, (stage) =>
-          setStatus(
-            {
-              wallet: "Review and approve the album in your wallet…",
-              confirming: "Waiting for Solana confirmation…",
-            }[stage],
-          ),
-        );
-        adoptAlbum(record);
-      } catch (e) {
-        setAlbumQuote(null);
-        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
-        setFallback(programFallback(e) ?? null);
-        setError(quiet ? "" : safeErrorText(e));
-        let adopted = false;
-        if (timedOut) {
-          setStatus(walletTimeout.albumChecking);
-          // `prepareAlbum` adopts a group already on chain and refuses to re-quote while the
-          // approved transaction may still land. It opens no wallet.
-          try {
-            const next = await prepareAlbum(
-              albumQuote.record.name,
-              albumQuote.record.creator,
-            );
-            if (next.step === "ready") {
-              adoptAlbum(next.record);
-              adopted = true;
-            } else {
-              // A signable quote means the earlier album transaction cannot land, so the
-              // sheet offers it rather than telling the user to wait for something that is over.
-              setAlbumQuote(next);
-              setStatus(walletTimeout.albumRetry);
-            }
-          } catch {
-            setStatus(walletTimeout.albumPending);
-          }
-        } else
-          setStatus(
-            changed
-              ? changedEstimate.album
-              : expired
-                ? expiredEstimate.album
-                : `${cancelled ? "Wallet closed. " : ""}Any album progress is saved. Check it before trying again.`,
-          );
-        // An adopted album is already in the list, and a re-read here could only put back a
-        // staler answer than the reconcile just gave.
-        if (!adopted)
-          try {
-            setAlbums(await loadAlbums());
-          } catch {
-            // A failed refresh leaves the list as it was; the reason above already says so.
-          }
-      }
-    });
-  }
-
   async function change() {
     return run(async () => {
       try {
@@ -555,13 +406,8 @@ export function PrintSheet({
         setAccess("fresh");
         setPublished(false);
         setQuote(null);
-        // Discarding frees the album selection; the album itself is untouched.
-        setSelectedAlbum("");
-        setAlbumMode("none");
-        setAlbumQuote(null);
         setUnreadable(false);
         setError("");
-        setFallback(null);
         setStatus("");
         onChanged?.();
       } catch (e) {
@@ -595,36 +441,10 @@ export function PrintSheet({
     }
   const priced = priceable && !priceError && priceLamports > 0n;
 
-  // Only confirmed albums held by the publishing wallet; any other album fails
-  // `publish_in_album`. With no wallet known there is nothing to list.
-  const albumOwner = draft?.edition.creator ?? walletAddress;
-  const albumChoices = (albumOwner ? selectableAlbums(albums) : []).filter(
-    (a) => a.creator === albumOwner,
-  );
-  // Two albums can share a label (renames, or a regenerated upload key), so a duplicate name is
-  // shown with its group address.
-  const duplicateAlbumNames = new Set(
-    albumChoices
-      .map((a) => a.name)
-      .filter((name, index, all) => all.indexOf(name) !== index),
-  );
-  const albumChoiceLabel = (album: AlbumRecord) =>
-    duplicateAlbumNames.has(album.name)
-      ? `${album.name} · ${shortAddress(album.address)}`
-      : album.name;
-  const previewAlbum =
-    draft?.albumName ??
-    albumChoices.find((a) => a.address === selectedAlbum)?.name ??
-    "";
-  // A typed but uncreated album name blocks publishing, so the photograph cannot quietly land
-  // outside the album being made.
-  const albumPending = !draft && albumMode === "new" && newAlbum.trim().length > 0;
-
   const valid =
     title.trim().length > 0 &&
     !detailsError &&
     !priceError &&
-    !albumPending &&
     (solo ||
       (/^\d+$/.test(count) && Number(count) >= 2 && Number(count) <= 1000));
   const canPublish =
@@ -692,60 +512,35 @@ export function PrintSheet({
             {/* Fields until a draft exists; then a receipt. "Edit details" discards the draft
                 to return to the fields. */}
             {!draft && (
-              <>
-                <PrintDetails
-                  draft={draft}
-                  busy={busy}
-                  initializing={initializing}
-                  title={title}
-                  setTitle={setTitle}
-                  caption={caption}
-                  setCaption={setCaption}
-                  detailsError={detailsError}
-                  solo={solo}
-                  setSolo={setSolo}
-                  count={count}
-                  setCount={setCount}
-                  priceable={priceable}
-                  priceText={priceText}
-                  setPriceText={setPriceText}
-                  priceError={priceError}
-                  distribution={distribution}
-                  royaltyBps={royaltyBps}
-                  setRoyaltyBps={setRoyaltyBps}
-                  sealable={sealable}
-                  seekerOnly={seekerOnly}
-                  setSeekerOnly={setSeekerOnly}
-                />
-                <PrintAlbum
-                  draft={draft}
-                  busy={busy}
-                  initializing={initializing}
-                  agreement={agreement}
-                  albumMode={albumMode}
-                  setAlbumMode={setAlbumMode}
-                  selectedAlbum={selectedAlbum}
-                  setSelectedAlbum={setSelectedAlbum}
-                  newAlbum={newAlbum}
-                  setNewAlbum={setNewAlbum}
-                  albumQuote={albumQuote}
-                  setAlbumQuote={setAlbumQuote}
-                  albumChoices={albumChoices}
-                  albumChoiceLabel={albumChoiceLabel}
-                  albumOwner={albumOwner}
-                  albumsReason={albumsReason}
-                  showCost={showCost}
-                  setShowCost={setShowCost}
-                  quoteAlbum={quoteAlbum}
-                  makeAlbum={makeAlbum}
-                />
-              </>
+              <PrintDetails
+                draft={draft}
+                busy={busy}
+                initializing={initializing}
+                title={title}
+                setTitle={setTitle}
+                caption={caption}
+                setCaption={setCaption}
+                detailsError={detailsError}
+                solo={solo}
+                setSolo={setSolo}
+                count={count}
+                setCount={setCount}
+                priceable={priceable}
+                priceText={priceText}
+                setPriceText={setPriceText}
+                priceError={priceError}
+                distribution={distribution}
+                royaltyBps={royaltyBps}
+                setRoyaltyBps={setRoyaltyBps}
+                sealable={sealable}
+                seekerOnly={seekerOnly}
+                setSeekerOnly={setSeekerOnly}
+              />
             )}
             <PrintReceipt
               draft={draft}
               quote={quote}
               device={device}
-              previewAlbum={previewAlbum}
               owner={owner}
               ownerLabel={ownerLabel}
               ownerName={ownerName}
@@ -771,13 +566,11 @@ export function PrintSheet({
               status={status}
               busy={busy}
               draft={draft}
-              fallback={fallback}
               published={published}
               valid={valid}
               title={title}
               detailsError={detailsError}
               priceError={priceError}
-              albumPending={albumPending}
               topUp={topUp}
               complete={complete}
               storageCanRetry={storageCanRetry}

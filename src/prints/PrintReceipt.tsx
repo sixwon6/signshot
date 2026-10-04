@@ -24,7 +24,6 @@ export function PrintReceipt({
   draft,
   quote,
   device,
-  previewAlbum,
   owner,
   ownerLabel,
   ownerName,
@@ -34,7 +33,6 @@ export function PrintReceipt({
   draft: PublicationDraft | null;
   quote: Awaited<ReturnType<typeof prepareSetup>> | null;
   device: DeviceCheck | null;
-  previewAlbum: string;
   owner: string | undefined;
   ownerLabel: string;
   ownerName: string | null;
@@ -77,9 +75,6 @@ export function PrintReceipt({
       )}
       {!!draft.edition.description && (
         <Row label={copy.rowMoment} value={draft.edition.description} />
-      )}
-      {!!previewAlbum && (
-        <Row label={copy.rowAlbum} value={previewAlbum} />
       )}
       <Row
         label={copy.rowImage}

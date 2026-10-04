@@ -58,7 +58,6 @@ import {
   moveInstructions,
 } from "./genesisFixture";
 import { normalizeDescription } from "../core/details";
-import { albumUrl, readAlbum, verifyAlbumGroup, createAlbumInstruction } from "../core/album";
 import { inspectTransfer, transferInstructions } from "../core/transfer";
 import { CORE_PROTOCOL, type CoreMetadata } from "../types";
 import { arweaveBytes, request } from "../rpc";
@@ -130,9 +129,8 @@ interface PlannedEdition {
 
 /**
  * What this run publishes, in order: a shared supply-3 run, the sold-out 1/1 whose only print is
- * the creator's own, supply 5 (one publisher plus four friends), two album members, `offer` for the
- * paid case and `genesis` for the sealed Genesis Token publish, whose document names the stand-in's
- * member mint. `royalty-0` seals a royalty of 0, which still writes the plugin; `seeker` is
+ * the creator's own, supply 5 (one publisher plus four friends), `offer` for the paid case and
+ * `genesis` for the sealed Genesis Token publish, whose document names the stand-in's member mint. `royalty-0` seals a royalty of 0, which still writes the plugin; `seeker` is
  * Seeker-only, sealed with the same mint at a royalty of 700 that no default could produce. Every
  * other edition is `OPEN`, so its claims stay one per wallet.
  */
@@ -141,8 +139,6 @@ function editionPlan(): PlannedEdition[] {
     { key: "3", title: "DEVNET Core Test", supply: 3 },
     { key: "1", title: "DEVNET Solo Test", supply: 1 },
     { key: "5", title: "DEVNET Five Test", supply: 5 },
-    { key: "album-a", title: "DEVNET Album One", supply: 2 },
-    { key: "album-b", title: "DEVNET Album Two", supply: 2 },
     { key: "offer", title: "DEVNET Offer Test", supply: 3 },
     { key: "genesis", title: "DEVNET Genesis Test", supply: 1, genesis: true },
     { key: "royalty-0", title: "DEVNET Zero Royalty", supply: 2, sealed: { royaltyBps: 0, seekerOnly: false } },
@@ -285,14 +281,14 @@ export async function lifecycle(c: TestContext) {
   const solo = byKey.get("1")!;
   const five = byKey.get("5")!;
   const sealedTerms = new Map(plan.map((item) => [item.key, item.sealed ?? OPEN]));
-  const publish = (item: CoreMetadata, key: string, album?: string, genesis?: GenesisAccounts) =>
+  const publish = (item: CoreMetadata, key: string, genesis?: GenesisAccounts) =>
     instruction(
       item,
       c.payer.address,
       1,
       journal[`metadata-${key}`],
       journal[`metadataHash-${key}`],
-      album,
+      undefined,
       genesis,
       sealedTerms.get(key),
     );
@@ -699,62 +695,6 @@ export async function lifecycle(c: TestContext) {
     return "Three price changes and one sale left the edition commitment untouched; 3/3 issued";
   });
 
-  // The album acceptance: the album instructions seal a collection into a Core group the creator
-  // owns. The album is a program PDA signed with `invoke_signed`, so the wallet is the only signer.
-  // The nonce is journalled so an interrupted run keeps the same album: `once` may already have
-  // confirmed its creation, and a new nonce would point later publishes at an empty PDA.
-  const albumNonce = journal["album-nonce"] ?? randomBytes(32).toString("hex");
-  const create = await createAlbumInstruction({
-    program: c.program.address,
-    creator: c.payer.address,
-    nonce: albumNonce,
-    name: "DEVNET weekend album",
-  });
-  const groupAddress = String(create.accounts![1].address);
-  journal["album-nonce"] = albumNonce;
-  journal["album-group"] = groupAddress;
-  save();
-  await once("create-album", async () => send(c, [budget, create]));
-  const members = [byKey.get("album-a")!, byKey.get("album-b")!];
-  for (const [item, key] of [
-    [members[0], "album-a"],
-    [members[1], "album-b"],
-  ] as const) {
-    assert.ok(item, "Album member metadata was not prepared");
-    assert.ok(journal[`metadata-${key}`], "Album member upload is missing");
-    await once(`publish-${key}-in-album`, async () =>
-      send(c, [budget, await publish(item, key, groupAddress)]),
-    );
-  }
-  await once("album-lists-two-free-moments", async () => {
-    const read = await readAlbum(c.endpoint, groupAddress, "devnet");
-    assert.equal(read.authority, c.payer.address, "The creator keeps the album authority");
-    assert.equal(read.publicUrl, albumUrl(groupAddress, "devnet"));
-    assert.equal(read.conforming, true, read.reason ?? "The album does not conform");
-    const raw = await account(c.endpoint, groupAddress);
-    assert.ok(raw && raw.owner === MPL_CORE, "The album is not a Core group");
-    const group = verifyAlbumGroup(raw.bytes);
-    assert.deepEqual(
-      [...group.collections].sort(),
-      members.map((m) => m.collection).sort(),
-      "The album does not list exactly its two members",
-    );
-    for (const member of members) {
-      const state = readEdition((await account(c.endpoint, member.edition))!.bytes, c.program.address);
-      assert.equal(state.supply, 2);
-      assert.equal(state.minted, 1, "The publisher's own print #1 is live");
-      const collectionRaw = await account(c.endpoint, member.collection);
-      assert.ok(collectionRaw, "An album member has no Core collection");
-      // The app's reader requires evidence from the group account, not just the collection's
-      // Groups plugin. Pass the membership we read and compared above; missing evidence fails.
-      assert.throws(() => verifyEditionCollection(collectionRaw.bytes, state, member.edition),
-        /album that does not list it/);
-      verifyEditionCollection(collectionRaw.bytes, state, member.edition,
-        { group: read.group, collections: group.collections });
-    }
-    return `Album ${groupAddress} lists two free editions, both readable`;
-  });
-
   // ------------------------------------------------------------------ Seeker Genesis Token
   // The sealed publish. The devnet program build carries this acceptance's test authority in
   // place of Solana Mobile's, and the fixture mints what that authority would have: a member
@@ -818,7 +758,7 @@ export async function lifecycle(c: TestContext) {
     send(c, [budget, await withGenesis(member.address, null)], [c.payer], /InvalidGenesisToken/),
   );
   await once("publish-sealed-genesis", async () =>
-    send(c, [budget, await publish(sealed, "genesis", undefined, { mint: member.address, token: held })]),
+    send(c, [budget, await publish(sealed, "genesis", { mint: member.address, token: held })]),
   );
   await once("sealed-genesis-attribute", async () => {
     const state = readEdition((await account(c.endpoint, sealed.edition))!.bytes, c.program.address);
@@ -863,13 +803,13 @@ export async function lifecycle(c: TestContext) {
   // The same publish with the program id in place of both accounts, which the client never builds.
   // Tried first: once the edition exists, its `init` refuses a second attempt before this rule.
   await once("seeker-only-without-token-refused", async () => {
-    const template = await publish(seeker, "seeker", undefined, { mint: member.address, token: held });
+    const template = await publish(seeker, "seeker", { mint: member.address, token: held });
     const absent = { address: address(c.program.address), role: AccountRole.READONLY };
     return send(c, [budget, { ...template, accounts: [...template.accounts!.slice(0, -2), absent, absent] }],
       [c.payer], /GenesisTokenRequired/);
   });
   await once("publish-seeker-only", async () =>
-    send(c, [budget, await publish(seeker, "seeker", undefined, { mint: member.address, token: held })]),
+    send(c, [budget, await publish(seeker, "seeker", { mint: member.address, token: held })]),
   );
   await once("seeker-only-creator-receipt", async () => {
     const state = readEdition((await account(c.endpoint, seeker.edition))!.bytes, c.program.address);

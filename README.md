@@ -2,15 +2,15 @@
 
 Signshot is a photographer's toolkit for the Solana Seeker phone: its own Camera2/OpenGL still
 camera with manual exposure, white balance and focus; recipes that shape the look at capture time
-and again in Develop; and a photo library with sharing, export, print cards and albums. With the
+and again in Develop; and a photo library with sharing, export and print cards. With the
 Seeker's built-in wallet (Seed Vault, over Mobile Wallet Adapter) a photograph becomes a numbered
 Metaplex Core edition, its image and details on Arweave, that other wallets collect free or buy
 for SOL.
 
 The repository, the Android package `app.seekershot`, the `erashot.app` domain, the
 `era_editions` program and the metadata identifiers `seedshot-attestation/1`,
-`seedshot-genesis/1`, `properties.seedshot`, `erashot-core/1` and `erashot-album/1` keep their
-names: published editions and verified App Links depend on them.
+`seedshot-genesis/1`, `properties.seedshot` and `erashot-core/1` keep their names: published
+editions and verified App Links depend on them.
 
 ## The camera
 
@@ -155,11 +155,11 @@ Readers fetch at most 4 KB and always read mainnet, where the SGT exists; an unr
 wrong-cluster endpoint is "Couldn't check", never "not held".
 
 At publish the app names the SGT it found last time while still held, else the lowest member
-number, or none when the wallet holds none or mainnet is unreachable. On mainnet `publish` and
-`publish_in_album` also take the mint and the creator's token account, or the program id in each
-place (`programs/editions/README.md`, "The Seeker Genesis Token accounts"); the program checks
-both, refuses anything else with `InvalidGenesisToken`, and appends `seeker_genesis_token: <mint>`
-to the collection's locked attributes. A devnet edition carries the document's claim only; the
+number, or none when the wallet holds none or mainnet is unreachable. On mainnet `publish` also
+takes the mint and the creator's token account, or the program id in each place
+(`programs/editions/README.md`, "The Seeker Genesis Token accounts"); the program checks both,
+refuses anything else with `InvalidGenesisToken`, and appends `seeker_genesis_token: <mint>` to
+the collection's locked attributes. A devnet edition carries the document's claim only; the
 devnet program's `--features devnet-genesis` (`programs/editions/DEVNET.md`) swaps Solana
 Mobile's addresses for stand-ins the acceptance session mints. Deployments in
 `LEGACY_WITHOUT_GENESIS` (`publications/deployments.ts`) take neither account.

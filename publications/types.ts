@@ -134,12 +134,6 @@ export interface CoreDraft {
   imagePath: string;
   sourceHash: string;
   /**
-   * The Core `GroupV1` to join (selects `publish_in_album`) and its name when the draft was made,
-   * a local label only. Kept out of the hashed document because the group's name is mutable.
-   */
-  album?: string;
-  albumName?: string;
-  /**
    * Mainnet could not be asked for the wallet's Seeker Genesis Token when the draft was made, so
    * the document names none (`publisherGenesisMint`). The review says so. A local note only.
    */

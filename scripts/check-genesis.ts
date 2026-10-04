@@ -291,18 +291,18 @@ const OPEN: SealedTerms = { royaltyBps: 500, seekerOnly: false };
 const accountList = (ix: Instruction) =>
   ix.accounts!.map((a) => `${a.address}:${a.role === AccountRole.READONLY ? "r" : a.role === AccountRole.WRITABLE ? "w" : "s"}`);
 /** `sealed` null sends none. */
-async function publishIx(program: string, genesis?: GenesisAccounts, album?: string, genesisMint: string | null = MINT,
+async function publishIx(program: string, genesis?: GenesisAccounts, genesisMint: string | null = MINT,
   sealed: SealedTerms | null = programFeatures(program).royaltiesAndSeekerOnly ? OPEN : null) {
   const keys = await addresses(program, e.creator, e.nonce);
   const item: CoreMetadata = { ...e, program, edition: keys.edition, collection: keys.collection, ...(genesisMint ? { genesisMint } : {}) };
   if (!genesisMint) delete item.genesisMint;
-  return instruction(item, e.creator, 1, URI, "a".repeat(64), album, genesis, sealed ?? undefined);
+  return instruction(item, e.creator, 1, URI, "a".repeat(64), undefined, genesis, sealed ?? undefined);
 }
-async function publishAccounts(program: string, genesis?: GenesisAccounts, album?: string, genesisMint: string | null = MINT) {
-  return accountList(await publishIx(program, genesis, album, genesisMint));
+async function publishAccounts(program: string, genesis?: GenesisAccounts, genesisMint: string | null = MINT) {
+  return accountList(await publishIx(program, genesis, genesisMint));
 }
 async function publishThrows(program: string, genesis?: { mint: string; token: string }, genesisMint: string | null = MINT) {
-  try { await publishAccounts(program, genesis, undefined, genesisMint); return false; } catch { return true; }
+  try { await publishAccounts(program, genesis, genesisMint); return false; } catch { return true; }
 }
 async function accountTests() {
   const plain = await publishAccounts(GENESIS_PROGRAM);
@@ -311,9 +311,6 @@ async function accountTests() {
   const sealed = await publishAccounts(GENESIS_PROGRAM, { mint: MINT, token: TOKEN_ACCOUNT });
   ok("a sealed publish carries the mint and the token account last, read only, and nothing else changes",
     sealed.length === 9 && sealed[7] === `${MINT}:r` && sealed[8] === `${TOKEN_ACCOUNT}:r` && sealed.slice(0, 7).join() === plain.slice(0, 7).join());
-  const inAlbum = await publishAccounts(GENESIS_PROGRAM, { mint: MINT, token: TOKEN_ACCOUNT }, OTHER);
-  ok("publish_in_album keeps the album before Core and the two accounts last",
-    inAlbum.length === 10 && inAlbum[5] === `${OTHER}:w` && inAlbum[8] === `${MINT}:r` && inAlbum[9] === `${TOKEN_ACCOUNT}:r`);
   const legacy = await publishAccounts(LEGACY_PROGRAM);
   ok("a deployment without the accounts is sent exactly its seven", legacy.length === 7 && legacy.every((a) => !a.startsWith(LEGACY_PROGRAM)));
   ok("refuses: the accounts for a deployment that cannot seal them", await publishThrows(LEGACY_PROGRAM, { mint: MINT, token: TOKEN_ACCOUNT }));
@@ -332,7 +329,7 @@ const failure = async (p: Promise<unknown>) => {
 };
 async function sealedTests() {
   const data = async (program: string, sealed?: SealedTerms | null, genesis?: GenesisAccounts) =>
-    [...(await publishIx(program, genesis, undefined, MINT, sealed)).data!];
+    [...(await publishIx(program, genesis, MINT, sealed)).data!];
   // The v1 arguments: discriminator, nonce, title, uri, both hashes, supply (185 bytes at an 8-byte title).
   const v1 = 8 + 32 + 4 + e.title.length + 4 + URI.length + 32 + 32 + 2;
   const sealed = await data(GENESIS_PROGRAM, { royaltyBps: 1000, seekerOnly: true }, GENESIS);
@@ -343,30 +340,27 @@ async function sealedTests() {
   ok("the v1 arguments alone on the program before them, sent no terms or 0% and open",
     before.length === v1 && (await data(TIMED_PROGRAM, { royaltyBps: 0, seekerOnly: false })).join() === before.join());
   ok("refuses: no terms for a program that takes them",
-    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, null))) === "Invalid edition creation");
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, MINT, null))) === "Invalid edition creation");
   for (const [name, royaltyBps] of [["over 10%", 1001], ["a fraction", 500.5], ["negative", -1]] as const)
     ok(`refuses: a royalty ${name}`,
-      (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, { royaltyBps, seekerOnly: false }))) === ROYALTY_RANGE);
+      (await failure(publishIx(GENESIS_PROGRAM, undefined, MINT, { royaltyBps, seekerOnly: false }))) === ROYALTY_RANGE);
   ok("refuses: a royalty or Seeker-only for the program before them",
-    (await failure(publishIx(TIMED_PROGRAM, undefined, undefined, MINT, OPEN))) === NO_ROYALTIES &&
-    (await failure(publishIx(TIMED_PROGRAM, undefined, undefined, MINT, { royaltyBps: 0, seekerOnly: true }))) === NO_ROYALTIES);
+    (await failure(publishIx(TIMED_PROGRAM, undefined, MINT, OPEN))) === NO_ROYALTIES &&
+    (await failure(publishIx(TIMED_PROGRAM, undefined, MINT, { royaltyBps: 0, seekerOnly: true }))) === NO_ROYALTIES);
 
   const keys = await addresses(GENESIS_PROGRAM, e.creator, e.nonce);
   const tokenReceipt = await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, MINT);
   const publisherReceipt = async (seekerOnly: boolean, genesis?: GenesisAccounts) =>
-    (await publishIx(GENESIS_PROGRAM, genesis, undefined, MINT, { ...OPEN, seekerOnly })).accounts![4].address;
+    (await publishIx(GENESIS_PROGRAM, genesis, MINT, { ...OPEN, seekerOnly })).accounts![4].address;
   ok("the publisher's receipt is keyed on the sealed mint on a Seeker-only edition, on the wallet otherwise",
     (await publisherReceipt(true, GENESIS)) === tokenReceipt && (await publisherReceipt(false, GENESIS)) === keys.receipt &&
     (await publisherReceipt(false)) === keys.receipt &&
     (await claimReceiptAddress(GENESIS_PROGRAM, keys.edition, e.creator)) === keys.receipt);
   // The program refuses Seeker-only without the creator's Genesis Token (`GenesisTokenRequired`).
   const seekerOnly: SealedTerms = { ...OPEN, seekerOnly: true };
-  ok("refuses: a Seeker-only publish or publish_in_album without the publisher's Genesis Token",
-    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, MINT, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS &&
-    (await failure(publishIx(GENESIS_PROGRAM, undefined, OTHER, MINT, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS &&
-    (await failure(publishIx(GENESIS_PROGRAM, undefined, undefined, null, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS);
-  ok("a Seeker-only publish_in_album with it keys the receipt on the mint",
-    (await publishIx(GENESIS_PROGRAM, GENESIS, OTHER, MINT, seekerOnly)).accounts![4].address === tokenReceipt);
+  ok("refuses: a Seeker-only publish without the publisher's Genesis Token",
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, MINT, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS &&
+    (await failure(publishIx(GENESIS_PROGRAM, undefined, null, seekerOnly))) === SEEKER_ONLY_NEEDS_GENESIS);
 
   const item = async (program: string): Promise<CoreMetadata> => {
     const k = await addresses(program, e.creator, e.nonce);

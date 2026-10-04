@@ -119,17 +119,6 @@ export function ProofSheet({
                 <Row label="Metaplex Core collection" mono>
                   {draft.edition.collection}
                 </Row>
-                {!!draft.album && (
-                  <>
-                    {/* The name is a renameable label; the group address is the evidence. */}
-                    <Row label={copy.albumLabel}>
-                      {draft.albumName ?? copy.albumUnnamed}
-                    </Row>
-                    <Text style={s.value} selectable>
-                      {draft.album}
-                    </Text>
-                  </>
-                )}
                 <Text style={sheetStyles.help}>{copy.standard}</Text>
                 <Row label={copy.attestationLabel}>
                   {deviceValue(draft.edition, device, attestationLine)}

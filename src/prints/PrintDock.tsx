@@ -12,7 +12,7 @@ import { TermsAgreement } from "../moderation/TermsAgreement";
 
 /**
  * What the publish sheet's dock holds: the notice when publishing is unavailable, otherwise the
- * one status line, the program's suggested recovery, and the one action for the current step.
+ * one status line and the one action for the current step.
  */
 export function PrintDock({
   canPublish,
@@ -24,13 +24,11 @@ export function PrintDock({
   status,
   busy,
   draft,
-  fallback,
   published,
   valid,
   title,
   detailsError,
   priceError,
-  albumPending,
   topUp,
   complete,
   storageCanRetry,
@@ -51,13 +49,11 @@ export function PrintDock({
   status: string;
   busy: boolean;
   draft: PublicationDraft | null;
-  fallback: "publish-without-album" | "new-album" | null;
   published: boolean;
   valid: boolean;
   title: string;
   detailsError: string;
   priceError: string;
-  albumPending: boolean;
   topUp: StoragePayment | null;
   complete: boolean;
   storageCanRetry: boolean;
@@ -106,22 +102,6 @@ export function PrintDock({
           {error || draft?.storageError?.message || status}
         </Text>
       )}
-      {/* A full album: discarding the draft frees the album selection, and the
-          photograph's details are kept. */}
-      {fallback === "publish-without-album" && !published && (
-        <>
-          <Text style={sheetStyles.help}>{copy.fallbackWithoutAlbum}</Text>
-          <Pill
-            label={copy.publishWithoutAlbum}
-            variant="secondary"
-            disabled={busy}
-            onPress={() => void change()}
-          />
-        </>
-      )}
-      {fallback === "new-album" && (
-        <Text style={sheetStyles.help}>{copy.fallbackNewAlbum}</Text>
-      )}
       {!valid && !published && !initializing && !error && (
         <Text style={sheetStyles.help}>
           {!title.trim()
@@ -130,8 +110,6 @@ export function PrintDock({
               ? detailsError
               : priceError
                 ? priceError
-                : albumPending
-                ? copy.needAlbum
                 : copy.needCount}
         </Text>
       )}

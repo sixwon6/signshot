@@ -1,16 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import { StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 import type { PublicationDraft } from "./creator";
-import { ALBUM_NAME_MAX_BYTES, type AlbumRecord, type AlbumSetup } from "./albums";
 import { DESCRIPTION_LIMIT } from "../../publications/core/details";
 import { MAX_ROYALTY_BPS } from "../../publications/types";
 import { colors, radius, space } from "../ui/theme";
 import { typeScale as type } from "../ui/type";
-import { Chip, Pill } from "../ui/primitives";
+import { Chip } from "../ui/primitives";
 import { actions, price as priceCopy, publish as copy } from "../ui/copy";
-import type { useTermsAgreement } from "../moderation/store";
 
 /**
  * The publish sheet's fields until a draft exists: title, caption, copies, price and terms. The
@@ -184,161 +181,6 @@ export function PrintDetails({
   );
 }
 
-/** The album choice, frozen with the draft like the details: none, an existing one, or a new one. */
-export function PrintAlbum({
-  draft,
-  busy,
-  initializing,
-  agreement,
-  albumMode,
-  setAlbumMode,
-  selectedAlbum,
-  setSelectedAlbum,
-  newAlbum,
-  setNewAlbum,
-  albumQuote,
-  setAlbumQuote,
-  albumChoices,
-  albumChoiceLabel,
-  albumOwner,
-  albumsReason,
-  showCost,
-  setShowCost,
-  quoteAlbum,
-  makeAlbum,
-}: {
-  draft: PublicationDraft | null;
-  busy: boolean;
-  initializing: boolean;
-  agreement: ReturnType<typeof useTermsAgreement>;
-  albumMode: "none" | "existing" | "new";
-  setAlbumMode: Dispatch<SetStateAction<"none" | "existing" | "new">>;
-  selectedAlbum: string;
-  setSelectedAlbum: Dispatch<SetStateAction<string>>;
-  newAlbum: string;
-  setNewAlbum: Dispatch<SetStateAction<string>>;
-  albumQuote: AlbumSetup | null;
-  setAlbumQuote: Dispatch<SetStateAction<AlbumSetup | null>>;
-  albumChoices: AlbumRecord[];
-  albumChoiceLabel(album: AlbumRecord): string;
-  albumOwner: string | undefined;
-  albumsReason: string;
-  showCost: boolean;
-  setShowCost: Dispatch<SetStateAction<boolean>>;
-  quoteAlbum(): Promise<void>;
-  makeAlbum(): Promise<void>;
-}) {
-  return (
-    <View style={s.group}>
-      <Text style={sheetStyles.label}>{copy.albumLabel}</Text>
-      <View
-        style={s.row}
-        accessibilityRole="radiogroup"
-        accessibilityLabel={copy.albumLabel}
-      >
-        <Chip
-          label={actions.noAlbum}
-          accessibilityRole="radio"
-          selected={albumMode === "none"}
-          disabled={!!draft || busy}
-          onPress={() => {
-            setAlbumMode("none");
-            setSelectedAlbum("");
-            setAlbumQuote(null);
-            setNewAlbum("");
-          }}
-          style={s.flex}
-        />
-        <Chip
-          label={actions.chooseAlbum}
-          accessibilityRole="radio"
-          selected={albumMode === "existing"}
-          disabled={!!draft || busy || albumChoices.length === 0}
-          onPress={() => {
-            setAlbumMode("existing");
-            setAlbumQuote(null);
-            setNewAlbum("");
-          }}
-          style={s.flex}
-        />
-        <Chip
-          label={actions.newAlbum}
-          accessibilityRole="radio"
-          selected={albumMode === "new"}
-          disabled={!!draft || busy}
-          onPress={() => {
-            setAlbumMode("new");
-            setSelectedAlbum("");
-          }}
-          style={s.flex}
-        />
-      </View>
-      {albumMode === "existing" &&
-        (albumChoices.length ? (
-          <View
-            accessibilityRole="radiogroup"
-            accessibilityLabel={actions.chooseAlbum}
-            style={s.albumChoices}
-          >
-            {albumChoices.map((album) => (
-              <Chip
-                key={album.address}
-                label={albumChoiceLabel(album)}
-                accessibilityRole="radio"
-                selected={selectedAlbum === album.address}
-                disabled={!!draft || busy}
-                onPress={() => setSelectedAlbum(album.address)}
-              />
-            ))}
-          </View>
-        ) : (
-          <Text style={sheetStyles.help}>
-            {albumOwner ? copy.albumEmpty : copy.albumNeedsWallet}
-          </Text>
-        ))}
-      {albumMode === "new" && (
-        <>
-          <TextInput
-            style={sheetStyles.input}
-            accessibilityLabel={copy.albumNameLabel}
-            value={newAlbum}
-            onChangeText={(value) => {
-              setNewAlbum(value);
-              setAlbumQuote(null);
-            }}
-            editable={!draft && !busy && !initializing}
-            maxLength={ALBUM_NAME_MAX_BYTES}
-          />
-          {albumQuote?.step === "sign" ? (
-            <>
-              <CostEstimate prepared={albumQuote.prepared} suffix={copy.albumCostSuffix}
-                expanded={showCost} onToggle={() => setShowCost((v) => !v)} />
-              <Pill
-                label={
-                  busy ? actions.creatingAlbum : actions.createAlbum
-                }
-                disabled={busy}
-                onPress={() => void makeAlbum()}
-              />
-            </>
-          ) : (
-            <Pill
-              label={busy ? "Checking…" : actions.checkAlbumCost}
-              variant="secondary"
-              disabled={busy || !newAlbum.trim() || !!draft || agreement.agreed !== true}
-              onPress={() => void quoteAlbum()}
-            />
-          )}
-        </>
-      )}
-      {!!albumsReason && <Text style={sheetStyles.help}>{albumsReason}</Text>}
-      {albumMode !== "none" && (
-        <Text style={sheetStyles.help}>{copy.albumBody}</Text>
-      )}
-    </View>
-  );
-}
-
 /** A labelled text field, in the field colour with a mono label. */
 function Field({
   label,
@@ -372,7 +214,6 @@ const s = StyleSheet.create({
   group: { gap: space.sm },
   row: { flexDirection: "row", gap: space.sm },
   flex: { flex: 1 },
-  albumChoices: { gap: space.sm, alignItems: "flex-start" },
   countRow: {
     flexDirection: "row",
     alignItems: "center",

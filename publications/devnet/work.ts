@@ -105,11 +105,6 @@ export const TEST_COSTS = {
   standIn: 6_000_000,
   /** Bob's stand-in sent to frank: frank's 170-byte token account, 2,074,080, plus the fee. */
   genesisMove: 2_500_000,
-  /** Measured `create_album` (rent-only group plus a one-signature fee). */
-  createAlbum: 1_772_840,
-  /** Measured `publish_in_album`, for the two free album members, plus both additions as above. */
-  publishInAlbum: 13_455_320,
-  albumPublishes: 2,
   /** Measured first `set_offer`: 1,482,480 lamports of rent for the 85-byte account plus the fee. */
   firstSetOffer: 1_487_480,
   /** Every later `set_offer` writes an account that already exists: one signature. */
@@ -170,8 +165,6 @@ export function testReserve(): number {
   return (
     wallets +
     t.publish * t.publishes +
-    t.createAlbum +
-    t.publishInAlbum * t.albumPublishes +
     // set_offer 0.01, set_offer 0, set_offer 0.02: one account creation and two rewrites.
     t.firstSetOffer +
     t.laterSetOffer * 2 +

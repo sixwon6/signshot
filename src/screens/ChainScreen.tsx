@@ -37,7 +37,6 @@ import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT, assertEndpointCluste
 import { request } from "../../publications/rpc";
 import { loadLibrary, type LibraryMode, type LibraryPhoto, type LibraryResult } from "../../publications/core/library";
 import { collectUrl, explorerUrl } from "../../publications/core/protocol";
-import { albumLabel } from "../../publications/core/album";
 import { TRUSTED } from "../../publications/deployments";
 import { readKnownCollections, rememberKnownCollections } from "../prints/knownCollections";
 import { useAppActive } from "../useAppActive";
@@ -125,7 +124,6 @@ export function ChainScreen() {
   // `error` is the sentence for a failure retrying cannot fix; `failed` is every failure.
   const [state, setState] = useState<{ key: string; result?: LibraryResult; error?: string; failed?: boolean; loading?: boolean }>({ key: "" });
   const [selected, setSelected] = useState<string | null>(null);
-  const [album, setAlbum] = useState<string | null>(null);
   const [immersive, setImmersive] = useState(false);
   /** The wallet's own SOL, or null when it has not been read. */
   const [balance, setBalance] = useState<bigint | null>(null);
@@ -152,18 +150,13 @@ export function ChainScreen() {
   const loading = Boolean(wallet && (!current || current.loading));
   const result = current?.result;
   const items = result?.items ?? [];
-  const albums = [...new Map(items.flatMap(item => {
-    const a = item.photo.publication.album;
-    return a && !veilOf(item) ? [[a.group, albumLabel(a)] as const] : [];
-  })).entries()];
-  const filtered = items.filter(item => !album || item.photo.publication.album?.group === album);
   // The copy being sent stays on screen while its sheet is open, even once a re-read drops it.
   const activePhoto = focused && current
     ? items.find(item => item.id === selected) ?? (sending?.item.id === selected ? sending.item : undefined)
     : undefined;
 
   useEffect(() => {
-    setSelected(null); setAlbum(null); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null);
+    setSelected(null); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null);
     // A different wallet clears the last failed connect.
     setConnectFailed(false);
   }, [key]);
@@ -218,8 +211,8 @@ export function ChainScreen() {
   /**
    * Open one collect link. Every route into the sheet goes through here — pasted, scanned or
    * deep-linked — so `parseCollectLink` is the only thing that ever decides what is collectable.
-   * It returns null for text that is not one of ours and throws a readable refusal (an album
-   * link, another network) for text that is.
+   * It returns null for text that is not one of ours and throws a readable refusal (another
+   * network) for text that is.
    */
   const openLink = useCallback((value: string) => {
     setCollectError(null);
@@ -230,7 +223,7 @@ export function ChainScreen() {
       setCollectStage(false);
       setCollectTarget(parsed);
     } catch (e) {
-      // The refusal's own reason: a wrong network or an album link cannot be a retry.
+      // The refusal's own reason: a wrong network cannot be a retry.
       setCollectError({ text: safeErrorText(e, collection.notOurLink) });
       setCollectStage(true);
     }
@@ -302,13 +295,12 @@ export function ChainScreen() {
     Share.share({ message: `${activePhoto.photo.edition.title}\n${collectUrl(activePhoto.photo.edition.edition, cluster)}` })
       .catch(() => say("share", collection.shareFailed));
   };
-  const changeAlbum = (group: string) => { setSelected(null); setAlbum(group); };
   const e = activePhoto?.photo.edition;
   const activeVeil = activePhoto ? veilOf(activePhoto) : null;
   const activeBlocked = !!e && moderation.isBlocked(e.creator);
   /** Only a copy this wallet was read holding can be sent from here. */
   const sendable = activePhoto ? heldCopy(activePhoto, wallet) : null;
-  const activeIndex = activePhoto ? filtered.findIndex(p => p.id === activePhoto.id) : -1;
+  const activeIndex = activePhoto ? items.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
   /** The wallet's value word: the address, or where the connection got to. */
   const walletValue = wallet ? short(wallet)
@@ -351,17 +343,12 @@ export function ChainScreen() {
       <TextKey size="readout" index label={collection.published} on={mode === "published"}
         accessibilityRole="radio" onPress={() => setMode("published")} testID="wallet-view-published" />
     </View>}
-    <FlatList data={filtered} keyExtractor={item => item.id} numColumns={2}
+    <FlatList data={items} keyExtractor={item => item.id} numColumns={2}
       columnWrapperStyle={s.gridRow} keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       contentContainerStyle={s.list}
       refreshControl={<RefreshControl refreshing={loading && Boolean(result)} onRefresh={retry} tintColor={colors.muted} colors={[colors.muted]} />}
       ListHeaderComponent={<>
-        {!!items.length && albums.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
-          {/* Ink, not teal: a selected filter is not a value the person is holding. */}
-          <Chip size="small" fill={colors.ink} label={collection.allAlbums} selected={!album} onPress={() => setAlbum(null)} hitSlop={CHIP_SLOP} />
-          {albums.map(([group, label]) => <Chip key={group} size="small" fill={colors.ink} label={label} accessibilityLabel={`Filter album ${label}`} selected={album === group} onPress={() => setAlbum(group)} hitSlop={CHIP_SLOP} />)}
-        </ScrollView>}
         {/* A count, not just a flag: anyone can mint Core assets to any wallet and grind addresses
             to sort first, so the line says how many the scan's cap hid. It carries the only RETRY
             over a list that still has rows. */}
@@ -398,10 +385,10 @@ export function ChainScreen() {
               : <Image source={{ uri: activePhoto.imageUri }} resizeMode="contain" style={s.immersiveImage} />}
             <View style={[s.immersiveFooter, { paddingBottom: insets.bottom + space.lg }]}>
               <TextKey size="readout" label="‹" accessibilityLabel={collection.previousPhoto}
-                disabled={activeIndex <= 0} onPress={() => setSelected(filtered[activeIndex - 1].id)} />
-              <Text style={s.readout}>{activeIndex + 1} / {filtered.length}</Text>
+                disabled={activeIndex <= 0} onPress={() => setSelected(items[activeIndex - 1].id)} />
+              <Text style={s.readout}>{activeIndex + 1} / {items.length}</Text>
               <TextKey size="readout" label="›" accessibilityLabel={collection.nextPhoto}
-                disabled={activeIndex < 0 || activeIndex >= filtered.length - 1} onPress={() => setSelected(filtered[activeIndex + 1].id)} />
+                disabled={activeIndex < 0 || activeIndex >= items.length - 1} onPress={() => setSelected(items[activeIndex + 1].id)} />
             </View>
           </Screen>
         : <Screen>
@@ -422,10 +409,6 @@ export function ChainScreen() {
                   yours={e.creator === wallet} verbatim={e.creator !== wallet} accessibilityLabel={collection.copyPublisher}
                   onPress={() => void copy("by", e.creator)} />
                 <Fact tag={collection.issuedLabel} value={collection.tally(activePhoto.photo.minted, e.supply)} />
-                {activePhoto.photo.publication.album && !activeVeil && <Fact tag={collection.album}
-                  value={albumLabel(activePhoto.photo.publication.album)}
-                  accessibilityLabel={collection.browseAlbum(albumLabel(activePhoto.photo.publication.album))}
-                  onPress={() => changeAlbum(activePhoto.photo.publication.album!.group)} />}
                 {/* What a copy costs, and on the creator's own publication the way to change it:
                     the price of the copies nobody has taken yet. Keyed by the edition, so a
                     photograph that never came from this phone can still be priced. */}
@@ -525,7 +508,6 @@ const s = StyleSheet.create({
   /** The accent, and its one meaning: this is yours. */
   yours: { color: colors.tealText },
 
-  chips: { gap: space.sm, paddingBottom: space.lg },
 
   notice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm, paddingBottom: space.lg, marginRight: -6 },
 

@@ -94,7 +94,6 @@ const URL_TOKEN = /https?:\/\/[^\s"'<>()[\]{}]+/gi;
 /** Base58 as Solana writes it (no 0, O, I or l). Length is re-checked by `address()`. */
 const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-const ALBUM_LINK = "That is an album link. Open a photograph's link.";
 const NOT_AN_ADDRESS = "This link does not name a Solana address.";
 const networkName = (c: Cluster) => (c === "devnet" ? "devnet" : "mainnet");
 
@@ -135,9 +134,6 @@ function fromUrl(token: string): CollectTarget | null {
   if (!/\/collect\/?$/i.test(withoutFragment.slice(0, mark))) return null;
   const params = query(withoutFragment.slice(mark + 1));
   if (params === null) return null;
-  // An album is a Core `GroupV1`: there is no supply, no numbering and no `collect` instruction
-  // for one. Said plainly rather than answered with "nothing to collect here".
-  if (params.has("album")) throw new Error(ALBUM_LINK);
   const core = params.get("core");
   if (core === undefined) return null;
   if (!BASE58_ADDRESS.test(core)) throw new Error(NOT_AN_ADDRESS);

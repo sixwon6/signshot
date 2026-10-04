@@ -41,12 +41,6 @@ export const actions = {
   viewPhotograph: "View your photograph",
   oneCopy: "One copy",
   multipleCopies: "Multiple copies",
-  noAlbum: "No album",
-  chooseAlbum: "Choose album",
-  newAlbum: "New album",
-  checkAlbumCost: "Check album cost",
-  createAlbum: "Create album",
-  creatingAlbum: "Creating album…",
   viewEdition: "View edition on Solana",
   viewTransaction: "View Solana transaction",
   viewTransactionShort: "View transaction",
@@ -125,16 +119,12 @@ export const walletTimeout = {
   publishPending: "Not on Solana yet. Close the wallet and tap Continue again in a moment.",
   /** The approved transaction's blockhash has expired, so it cannot land. */
   publishRetry: "That transaction expired. Approve the new estimate to publish.",
-  albumRetry: "That album transaction expired. Approve the new estimate to create it.",
-  albumChecking: "Wallet didn’t answer in time. Close it while the album is checked.",
-  albumPending: "Album not on Solana yet. Close the wallet and check the album cost again in a moment.",
   sendChecking: "Wallet didn’t answer in time. Close it while the transfer is checked.",
   sendFound: "The transfer is confirmed.",
   sendPending: "Transfer not confirmed yet. Close the wallet and check its status in a moment.",
   /** Reviews open a wallet only to choose an account: nothing can have been sent. */
   costCheck: "Wallet didn’t answer in time. Close it, then tap Continue again.",
   transferReview: "Wallet didn’t answer in time. Close it, then review the transfer again.",
-  albumCostCheck: "Wallet didn’t answer in time. Close it, then check the album cost again.",
   /** Settings' CONNECT: the wallet may have authorized before it stopped answering. */
   connect: "Wallet didn’t answer in time. Close it, then tap Connect wallet again.",
   /** The same three moments for collecting: checking, found, still pending. */
@@ -156,7 +146,6 @@ export const walletTimeout = {
  */
 export const expiredEstimate = {
   publish: "Estimate expired. Tap Continue again.",
-  album: "Estimate expired. Check the album cost again.",
   transfer: "Estimate expired. Review the transfer again.",
   collect: "Estimate expired. Tap Continue again.",
   offer: "Estimate expired. Tap Continue again.",
@@ -168,7 +157,6 @@ export const expiredEstimate = {
  */
 export const changedEstimate = {
   publish: "The cost changed. Tap Continue and check the new one.",
-  album: "The cost changed. Check the album cost again.",
   transfer: "The cost changed. Review the transfer again.",
   collect: "The cost changed. Tap Continue and check the new one.",
   offer: "The cost changed. Tap Continue and check the new one.",
@@ -334,25 +322,17 @@ export const publish = {
   copiesLabel: "Copies",
   /** The form carries labels, not explanations; `needCount` names the range when it is wrong. */
   totalLabel: "Total copies, including yours",
-  albumLabel: "Album (optional)",
   /** The creator's cut of a resale, in whole percents, and who may collect. */
   royaltyLabel: "Royalty",
   royaltyValue: (bps: number): string => `${bps / 100}%`,
   lessRoyalty: "−",
   moreRoyalty: "+",
   seekerOnlyLabel: "Seeker holders only",
-  albumEmpty: "No albums yet.",
-  albumNeedsWallet: "Connect a wallet to use albums.",
-  albumNameLabel: "New album name",
-  /** The one thing here a person cannot undo, so it keeps a line. */
-  albumBody: "The album can’t be changed after publishing.",
-  albumCostSuffix: "for the album. Separate approval.",
   /** The receipt rows, once a draft exists. Labels only; the values are the draft's. */
   rowCopies: "Copies",
   rowRoyalty: "Royalty",
   rowCollectors: "Collectors",
   rowMoment: "Moment",
-  rowAlbum: "Album",
   rowImage: "Image",
   rowDevice: "Device",
   rowGenesis: "Genesis Token",
@@ -360,8 +340,6 @@ export const publish = {
   rowGenesisUnchecked: "Couldn’t check.",
   rowWallet: "Wallet",
   needTitle: "Add a title to publish.",
-  needAlbum:
-    "Create the album before publishing a photograph into it, or choose No album.",
   needCount: "Choose an edition of 2 to 1000 copies to continue.",
   blockedTitle: "Saved publication needs attention",
   unavailableTitle: "Publishing is unavailable in this build",
@@ -379,16 +357,6 @@ export const publish = {
    */
   reviewMismatch:
     "The transaction your wallet sent is not the one shown in this review. The published edition matches this photograph, but check the transaction in your wallet or an explorer before taking another action.",
-  /** The two fallbacks `describeProgramError` can name. */
-  fallbackWithoutAlbum:
-    "This album is full. Metaplex Core allows 256 collections in one group, and this one has them. You can publish this photograph without an album — the photograph, its title and its edition size are unchanged.",
-  fallbackNewAlbum:
-    "An album already exists at this address. Choose a different name and create a new album; the one that exists is untouched and still holds its photographs.",
-  /** The button beside `fallbackWithoutAlbum`. */
-  publishWithoutAlbum: "Publish without the album",
-  /** The same fact for `create_album`, whose evidence is the group account rather than an edition. */
-  albumReviewMismatch:
-    "The transaction your wallet sent is not the one shown in this album review. The album exists and is held by this wallet, but check the transaction in your wallet or an explorer before taking another action.",
 } as const;
 
 export const proof = {
@@ -398,8 +366,6 @@ export const proof = {
   heading: "Record",
   titleLabel: "Published title",
   momentLabel: "Moment",
-  albumLabel: "Album",
-  albumUnnamed: "Named on the album page",
   publicPhotoLabel: "Public photo",
   standard: "Metaplex Core edition",
   attestationLabel: "Device attestation",
@@ -635,9 +601,6 @@ const figures = (value: number): string => String(value).padStart(3, "0");
 export const collection = {
   collected: "Collected",
   published: "Published",
-  /** The album filter row's first chip. */
-  allAlbums: "All",
-
   /** The wallet line: a tag over the address, and what the wallet holds. */
   wallet: "Wallet",
   sol: "SOL",
@@ -696,8 +659,6 @@ export const collection = {
   byLabel: "By",
   you: "You",
   copyPublisher: "Copy publisher address",
-  album: "Album",
-  browseAlbum: (label: string): string => `Browse album ${label}`,
   issuedLabel: "Issued",
   editionAddress: "Edition address",
   copyEdition: "Copy",

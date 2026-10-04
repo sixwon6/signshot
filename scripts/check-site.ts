@@ -9,8 +9,8 @@
  *     nothing, it says nothing but the name and "Open in Signshot", and the script turns exactly a
  *     link `collectUrl()` builds into an `intent://` for the app's package, and anything else into
  *     no control;
- *   - every erashot.app URL the app builds (terms, privacy, moderation list, collect and album
- *     links, the wallet identity icon) is a file in `site/public`;
+ *   - every erashot.app URL the app builds (terms, privacy, moderation list, collect links, the
+ *     wallet identity icon) is a file in `site/public`;
  *   - terms, Report, Block and the moderation list (`src/moderation/core.ts`): the strict parse,
  *     failing open, the served list hiding nothing, the report email, the terms page's §10.6
  *     clauses, and agreement before a first publish or collect in the app;
@@ -26,7 +26,6 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { address, type Instruction } from "@solana/kit";
 import type { AttestationBundle } from "../publications/core/attestation";
-import { albumUrl } from "../publications/core/album";
 import { addresses, buyInstruction, collectInstruction, collectUrl } from "../publications/core/protocol";
 import type { CoreMetadata } from "../publications/types";
 import { prepareTransaction } from "../publications/rpc";
@@ -181,7 +180,6 @@ const built: [string, string, string][] = [
   ["App Link route", `${collectOrigin}/${collectPath}/`, "collect/index.html"],
   ["mainnet collect link", mainnetLink, "collect/index.html"],
   ["devnet collect link", devnetLink, "collect/index.html"],
-  ["album link", albumUrl(A, "devnet"), "collect/index.html"],
 ];
 const unserved = built.filter(([, link, file]) => servedBy(link) !== resolve(publicDir, file)).map(([name, link]) => `${name} ${link}`);
 ok(`every erashot.app URL the app builds is a file in site/public (${built.length})`, unserved.length === 0 && collectOrigin === "https://erashot.app");

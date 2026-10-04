@@ -5,7 +5,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { address as addressOf, getBase58Decoder } from "@solana/kit";
+import { getBase58Decoder } from "@solana/kit";
 import {
   SeekerCamera,
   type CaptureRecord,
@@ -26,7 +26,6 @@ import {
   arweaveBytes,
   IntegrityError,
   OPERATION_FLOOR_LAMPORTS,
-  type PublicationOperation,
 } from "../../publications/rpc";
 import { ExpiredQuoteError, refreshedQuote } from "./quoteRefresh";
 import {
@@ -96,7 +95,6 @@ import {
   publicationInProgress,
   publicationLockKey,
 } from "./coordinator";
-import { assertAlbumLabel, confirmedAlbum } from "./albums";
 import { safeErrorText } from "../ui/errorText";
 import { attestPublication } from "../seeker/publicationAttestation";
 import {
@@ -138,13 +136,6 @@ const UNTRUSTED =
  */
 const publishableEdge = (value: number) =>
   Number.isInteger(value) && value > 0 && value <= MAX_PRINT_EDGE;
-
-/**
- * Which operation a draft's transaction is. It picks the estimate floor and tells `checkAttempt`
- * how to read `ExistingAsset`, which means different things per operation.
- */
-const operationOf = (d: CoreDraft): PublicationOperation =>
-  d.album ? "publish-in-album" : "publish";
 
 /** Said when a price is asked of a deployment whose program has no `Offer` account. */
 const NO_PRICES = "Prices are not available on this network's program yet.";
@@ -210,7 +201,7 @@ const ATTEMPT_TERMINAL =
   "The previous publishing attempt failed in a way that sending it again cannot fix. Discard this draft to start this photograph again.";
 async function attemptStanding(d: CoreDraft) {
   return d.attempt
-    ? await checkAttempt(RPC_ENDPOINT, d.attempt, { operation: operationOf(d) })
+    ? await checkAttempt(RPC_ENDPOINT, d.attempt, { operation: "publish" })
     : "retryable";
 }
 
@@ -246,12 +237,7 @@ export async function readDraft(r: CaptureRecord): Promise<CoreDraft | null> {
   terms(d.edition.title, d.edition.supply);
   // A draft edited on disk must not smuggle unbounded or bidi-reversed text onto a screen.
   readDescription(d.edition.description);
-  // The album address is the binding; the name is only a renameable label.
-  if (d.album !== undefined) {
-    addressOf(d.album);
-    assertAlbumLabel(d.albumName ?? "");
-  } else if (d.albumName !== undefined)
-    throw new Error("Saved edition draft does not match this photo.");
+  // An older draft may still carry `album` and `albumName`. Nothing reads them: it publishes plain.
   // Digits within u64, and non-zero only where the deployment has `set_offer`. Checked on read, so a
   // hand-edited draft cannot reach a wallet with an instruction the program does not implement.
   if (d.price !== undefined) {
@@ -370,8 +356,8 @@ export async function walletOwesUpload(wallet: string): Promise<boolean> {
 /**
  * Start, or resume, this photograph's edition. An existing draft is returned unchanged.
  *
- * The caption and album freeze here: the caption is hashed into the metadata document, and the
- * album decides which instruction the wallet approves. Changing either means `discardDraft`.
+ * The caption freezes here: it is hashed into the metadata document. Changing it means
+ * `discardDraft`.
  */
 export async function createDraft(
   r: CaptureRecord,
@@ -381,11 +367,9 @@ export async function createDraft(
   edit?: PhotoEdit,
   /** The optional caption, as typed. The document's `description`. */
   description?: string,
-  /** A confirmed album of this creator's, by group address. */
-  album?: string,
   /**
-   * What a buyer pays for a copy, in lamports; absent or `0n` is free. Frozen like the caption and
-   * album, because the publication and its `set_offer` are one approval. Changed afterwards by
+   * What a buyer pays for a copy, in lamports; absent or `0n` is free. Frozen like the caption,
+   * because the publication and its `set_offer` are one approval. Changed afterwards by
    * `discardDraft`, or once published by `offer.ts`.
    */
   priceLamports?: bigint,
@@ -413,8 +397,6 @@ export async function createDraft(
     const price = priceText(program, priceLamports);
     // The publication's own `set_offer` refuses a price between zero and the rent-exempt minimum.
     if (price) checkPriceMinimum(BigInt(price), await minimumPriceLamports(RPC_ENDPOINT));
-    // The program requires the album account to exist, or the approved transaction fails.
-    const chosen = album ? await confirmedAlbum(album, creator) : null;
     const deployed = await account(RPC_ENDPOINT, program);
     if (!deployed?.executable)
       throw new Error("The edition program is not deployed on this network.");
@@ -482,7 +464,6 @@ export async function createDraft(
       metadataId: meta.id,
       imagePath: image.path,
       sourceHash,
-      ...(chosen ? { album: chosen.address, albumName: chosen.name } : {}),
       ...(genesisMint === undefined ? { genesisUnchecked: true as const } : {}),
       // Absent for a free edition, matching drafts saved before prices existed.
       ...(price ? { price } : {}),
@@ -793,8 +774,6 @@ export async function isSigned(d: CoreDraft) {
     s.supply !== e.supply || s.collection !== e.collection ||
     s.nonce !== e.nonce || s.title !== e.title ||
     s.uri !== `https://arweave.net/${d.metadataId}` ||
-    // The album is not in the hashed document; this is its only check against chain evidence.
-    (publication.album?.group ?? undefined) !== d.album ||
     // The program seals only what the document names. A seal is optional; a different one is not.
     (publication.sealedGenesis !== null && publication.sealedGenesis !== e.genesisMint) ||
     // Neither is in the hashed document either; the chain is their only record.
@@ -873,9 +852,8 @@ export async function getPublicationState(r: CaptureRecord): Promise<Publication
 async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
   const current = await readDraft(r);
   if (!current || current.metadataId !== d.metadataId || current.metadata !== d.metadata ||
-    // The album selects the instruction, so a stale copy would approve a different transaction.
-    current.album !== d.album ||
-    // So does the price: it decides whether `set_offer` is in the message at all, and for how much.
+    // The price selects the instruction, so a stale copy would approve a different transaction: it
+    // decides whether `set_offer` is in the message at all, and for how much.
     current.price !== d.price ||
     // And the royalty and Seeker-only setting, which are the publication's last two arguments.
     current.royaltyBps !== d.royaltyBps || current.seekerOnly !== d.seekerOnly)
@@ -909,8 +887,6 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   // Before the document's hash goes into the instruction below.
   await renewStaleAttestation(r, d);
   await resealDocument(r, d);
-  // Checked before the estimate, so a doomed `publish_in_album` never reaches a wallet prompt.
-  if (d.album) await confirmedAlbum(d.album, d.edition.creator);
   // Quote only. Public upload begins only after an approved, confirmed transaction.
   onProgress?.("storage");
   const storage = await checkStorage(d);
@@ -920,8 +896,8 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
     1,
     `https://arweave.net/${d.metadataId}`,
     hash(utf8(d.metadata)),
-    // Absent for a plain publication; present turns the same arguments into `publish_in_album`.
-    d.album,
+    // No group, so always `publish`.
+    undefined,
     await genesisAccounts(d.edition),
     { royaltyBps: d.royaltyBps, seekerOnly: d.seekerOnly },
   );
@@ -936,7 +912,7 @@ export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   // Both floors, because both accounts get created: the publication's, plus rent for the 85-byte
   // `Offer`. Advisory either way — pre-funded PDAs can legitimately make a publish cost less.
   const floor =
-    OPERATION_FLOOR_LAMPORTS[operationOf(d)] +
+    OPERATION_FLOOR_LAMPORTS.publish +
     (ixs.length > 1 ? OPERATION_FLOOR_LAMPORTS["set-offer"] : 0n);
   // Mainnet storage is bought in the same approval (`publications/storage.ts`): it lands only if
   // the edition does, and the simulated estimate already contains it.

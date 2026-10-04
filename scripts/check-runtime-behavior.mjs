@@ -23,37 +23,8 @@ if (!process.argv.includes("--worker")) {
   assert.equal(matchesUploadCertificate(existingSigner + `Signer #2 certificate SHA-256 digest: ${uploadDigest}\n`, uploadDigest), false);
   assert.equal(matchesUploadCertificate("", uploadDigest), false);
   const kit = await import("@solana/kit");
-  const { readAlbumStore } = await import("../src/prints/albumStore.ts");
-  const legacyAlbum = {
-    nonce: "f272830b06c2d244dbbaf650cb8da98a414c98da2ccd6f37fca1eb98ef5bfa0d",
-    address: "7NKvNJ29iaJixyAA8mwvJiLtYheqaVqx3rWUEh1Fgz24",
-    name: "Devnet Phone Album",
-    creator: "BSuFrMcYhSKS5dkprGtC17nVbP4VSFNvZzncnRtkVLpT",
-    program: "BGEM8ZTk2pP2btuorG8EHzfHgQSaudjuZKVw6f74zAjq",
-    createdAt: 1788972025900,
-    attempt: { lastValidBlockHeight: "483514070" },
-    confirmedAt: 1788976148447,
-  };
-  const albumJson = record => JSON.stringify({version: 1, albums: [record]});
-  assert.deepEqual(await readAlbumStore(albumJson(legacyAlbum), "devnet"), [legacyAlbum],
-    "a confirmed historical album must remain usable without invented review evidence");
-  const pendingAlbum = {...legacyAlbum};
-  delete pendingAlbum.confirmedAt;
-  const [restoredPendingAlbum] = await readAlbumStore(albumJson(pendingAlbum), "devnet");
-  assert.deepEqual(restoredPendingAlbum, pendingAlbum,
-    "an older pending attempt must retain its lifetime and remain unconfirmed");
   const { checkReviewedReceipt } = await import("../src/prints/reviewedReceipt.ts");
-  assert.equal(await checkReviewedReceipt("unused", undefined, legacyAlbum.attempt.quoteId), "unchecked");
-  const reviewedAlbum = {...legacyAlbum, attempt: {...legacyAlbum.attempt, quoteId: "a".repeat(64)}};
-  assert.deepEqual(await readAlbumStore(albumJson(reviewedAlbum), "devnet"), [reviewedAlbum]);
-  for (const quoteId of [null, "", "invalid", 123])
-    await assert.rejects(readAlbumStore(albumJson({...legacyAlbum,
-      attempt: {...legacyAlbum.attempt, quoteId}}), "devnet"), /Saved albums/);
-  await assert.rejects(readAlbumStore(albumJson({...legacyAlbum,
-    address: legacyAlbum.creator}), "devnet"), /Saved albums/);
-  await assert.rejects(readAlbumStore(albumJson({...legacyAlbum,
-    attempt: {lastValidBlockHeight: "-1"}}), "devnet"), /lifetime/);
-  await assert.rejects(readAlbumStore(albumJson(legacyAlbum), "mainnet-beta"), /not reviewed/);
+  assert.equal(await checkReviewedReceipt("unused", undefined, undefined), "unchecked");
   const { rpcWithTimeout } = await import("../publications/rpc.ts");
   mock.timers.enable({ apis: ["setTimeout"] });
   let timedOutSignal;
@@ -196,7 +167,7 @@ if (!process.argv.includes("--worker")) {
     assert.deepEqual(await forgetIfRefused(Promise.resolve(["signature"]), forget), ["signature"]);
     assert.equal(forgotten, 1);
     const { readFileSync } = await import("node:fs");
-    for (const flow of ["collect", "creator", "offer", "albums", "transfer"]) {
+    for (const flow of ["collect", "creator", "offer", "transfer"]) {
       const text = readFileSync(new URL(`../src/prints/${flow}.ts`, import.meta.url), "utf8");
       const sends = text.split("wallet.signAndSendTransactions(").length - 1;
       assert.ok(sends >= 1 && text.split("forgetIfRefused(wallet.signAndSendTransactions(").length - 1 === sends,
@@ -482,7 +453,7 @@ if (!process.argv.includes("--worker")) {
     assert.equal(budget.programData, 2_230_551_800);
     assert.equal(budget.programAccount, 833_120);
     assert.equal(budget.fees, 2_460_000, "488 uploads and two 2-signature transactions exceed the old fixed fee budget");
-    assert.equal(budget.total, 2_463_174_440,
+    assert.equal(budget.total, 2_434_490_960,
       "the reserve grew by one publish, the Genesis Token fixture, published_at, and the royalty and Seeker-only rows");
     assert.equal(budget.reserve, testReserve());
     const short = await sessionBudget({ endpoint: "https://api.devnet.solana.com" }, 900);
@@ -1499,7 +1470,7 @@ if (!process.argv.includes("--worker")) {
     assert.match(creator, /metadata\(e, attested\.attestation\.bundle, await sealVerdict\(attested\.attestation\.summary\)\)/,
       "the document names the device only on the verdict judged as it is sealed");
     // The reseal runs where the renewal does: after the attempt is known to be over, before the
-    // album check, the storage quote and the instruction that commits the document's hash.
+    // storage quote and the instruction that commits the document's hash.
     const prepare = creator.slice(creator.indexOf("export async function prepareSetup("));
     const at = (text) => prepare.indexOf(text);
     assert.ok(at("await renewStaleAttestation(r, d);") > at("await attemptStanding(d)") &&

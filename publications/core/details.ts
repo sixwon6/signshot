@@ -16,7 +16,7 @@ export const DESCRIPTION_LIMIT = 280;
 const UNSAFE_RANGES: readonly (readonly [number, number])[] = [
   [0x0000, 0x001f],
   [0x007f, 0x009f],
-  // Soft hyphen (and U+2060-2064 below): invisible characters `validate_album` refuses.
+  // Soft hyphen (and U+2060-2064 below): invisible characters.
   [0x00ad, 0x00ad],
   // ARABIC LETTER MARK, a bidi formatting mark like LRM/RLM (UAX #9).
   [0x061c, 0x061c],

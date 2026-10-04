@@ -638,9 +638,12 @@ async function topUpTests() {
     /d\.storageTopUp = current\.storageTopUp;/.test(creator) &&
     /export const canPayStorage = \(d: CoreDraft\) => paidStorage\(cluster\) && storageTopUpOffered\(d\);/.test(creator));
   const label = /payStorage: \(amount: string\): string => `Pay storage \$\{amount\} SOL`/.test(source("src", "ui", "copy.ts"));
-  for (const screen of [["src", "prints", "PrintSheet.tsx"], ["src", "screens", "ReviewScreen.tsx"]]) {
-    const text = source(...screen);
-    ok(`${screen[screen.length - 1]} offers the top-up as one key with its amount, on the wallet path`,
+  // The publish sheet pays and reads the top-up; its dock renders the key.
+  for (const [name, text] of [
+    ["PrintSheet.tsx", source("src", "prints", "PrintSheet.tsx") + source("src", "prints", "PrintDock.tsx")],
+    ["ReviewScreen.tsx", source("src", "screens", "ReviewScreen.tsx")],
+  ]) {
+    ok(`${name} offers the top-up as one key with its amount, on the wallet path`,
       label && /\{topUp && \(\n\s*<Pill\n\s*label=\{actions\.payStorage\(formatSol\(topUp\.lamports\)\)\}/.test(text) &&
       /await payStorage\(\w+(\.record)?, (draft|d), session, topUp/.test(text) && /useStorageTopUp\(published \? draft : null\)|useStorageTopUp\(newPublished \? d : null\)/.test(text));
   }

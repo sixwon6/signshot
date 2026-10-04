@@ -288,7 +288,7 @@ if (!process.argv.includes("--worker")) {
     assert.doesNotMatch(collectSheet, /priceLamports \+/, "the price is never added to an estimate that holds it");
     assert.match(readFileSync(new URL("../src/prints/CostEstimate.tsx", import.meta.url), "utf8"),
       /const rows = costRows\(prepared, apart\);[\s\S]*costSol\(rows\.cost\)[\s\S]*costSol\(rows\.accounts\)/);
-    assert.match(readFileSync(new URL("../src/prints/PrintSheet.tsx", import.meta.url), "utf8"),
+    assert.match(readFileSync(new URL("../src/prints/PrintReceipt.tsx", import.meta.url), "utf8"),
       /costRows\(quote\.prepared, quote\.storageLamports\)\.accounts/);
   }
   {
@@ -1510,13 +1510,15 @@ if (!process.argv.includes("--worker")) {
     // The royalty and the Seeker-only setting, from the form through the draft into the builder
     // (the node gates cannot run `creator.ts`, so its path is held here as text).
     const sheet = source("../src/prints/PrintSheet.tsx");
+    // The sheet keeps the state and createDraft; its fields and its receipt render from their own files.
+    const form = source("../src/prints/PrintForm.tsx"), receipt = source("../src/prints/PrintReceipt.tsx");
     assert.match(sheet, /setDistribution\(!!features\?\.royaltiesAndSeekerOnly\)/, "the form offers the terms only where the program takes them");
     assert.match(sheet, /createDraft\(\s*record,[^;]*?\blamports,\s*(?:\/\/[^\n]*\n\s*)*distribution \? \{ royaltyBps, seekerOnly: sealable && \(solo \|\| seekerOnly\) \} : undefined,\s*\)/,
       "the form's terms are createDraft's last argument, after the price");
     // Seeker-only only with the creator's Genesis Token to seal, which the program requires (6011).
     assert.match(sheet, /setSealable\(!!features && canSealGenesis\(configuredProgram\(cluster\)\)\)/);
-    assert.match(sheet, /\{!solo && sealable && \(/, "the switch is absent where no Genesis Token can be sealed");
-    assert.match(sheet, /value=\{draft\.seekerOnly \? collectCopy\.seekerOnly : collectCopy\.anyone\}/,
+    assert.match(form, /\{!solo && sealable && \(/, "the switch is absent where no Genesis Token can be sealed");
+    assert.match(receipt, /value=\{draft\.seekerOnly \? collectCopy\.seekerOnly : collectCopy\.anyone\}/,
       "the review states who may collect either way, so an unsealable request reads as Anyone");
     assert.match(creator, /export function canSealGenesis\(program: string\): boolean \{\s*return cluster === "mainnet-beta" && programFeatures\(program\)\.genesis;/);
     assert.match(creator, /const sealsGenesis = [^\n]*\n\s*!!e\.genesisMint && canSealGenesis\(e\.program\);/);
@@ -1530,10 +1532,10 @@ if (!process.argv.includes("--worker")) {
     assert.match(prepare, /const ix = await instruction\((?:(?!\n {2}\);)[\s\S])*?\{ royaltyBps: d\.royaltyBps, seekerOnly: d\.seekerOnly \},\s*\);/,
       "and from the draft into the publish builder's `sealed`");
     assert.match(creator, /current\.royaltyBps !== d\.royaltyBps \|\| current\.seekerOnly !== d\.seekerOnly/, "a stale screen cannot approve other terms");
-    assert.match(sheet, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
-    assert.match(sheet, /Math\.max\(0, bps - 100\)/, "down to 0%");
-    assert.match(sheet, /value=\{copy\.royaltyValue\(draft\.royaltyBps\)\}/, "the review reads the royalty back off the draft");
-    assert.match(sheet, /royaltiesAndSeekerOnly && draft\.edition\.supply > 1 && \(/, "and the rule, where there is a copy to collect");
+    assert.match(form, /Math\.min\(MAX_ROYALTY_BPS, bps \+ 100\)/, "whole percents, up to 10%");
+    assert.match(form, /Math\.max\(0, bps - 100\)/, "down to 0%");
+    assert.match(receipt, /value=\{copy\.royaltyValue\(draft\.royaltyBps\)\}/, "the review reads the royalty back off the draft");
+    assert.match(receipt, /royaltiesAndSeekerOnly && draft\.edition\.supply > 1 && \(/, "and the rule, where there is a copy to collect");
     const collectFlow = source("../src/prints/collect.ts");
     assert.equal(collectFlow.split("await claimedCopy(").length - 1, 2, "the eligibility and the confirmation both read the claim's own receipt");
     assert.match(collectFlow, /claimGenesis\(RPC_ENDPOINT, cluster, c\.seekerOnly, wallet\)/, "the rule comes off the loaded edition");

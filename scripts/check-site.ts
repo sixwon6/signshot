@@ -252,7 +252,8 @@ ok("Report is an email to support with the edition in the subject and the collec
   reportMailto(A, devnetLink) === `mailto:support@erashot.app?subject=Report%20${A}&body=${encodeURIComponent(devnetLink)}`);
 ok("only an agreement to the current terms counts",
   termsAgreed(String(TERMS_VERSION)) && !termsAgreed(String(TERMS_VERSION + 1)) && !termsAgreed(null) && !termsAgreed(""));
-const prints = ["CollectSheet.tsx", "PrintSheet.tsx"].map((file) => source("src", "prints", file));
+// The publish sheet's terms gate is in its dock.
+const prints = ["CollectSheet.tsx", "PrintDock.tsx"].map((file) => source("src", "prints", file));
 ok("the app asks for the terms before a first publish and a first collect",
   prints.every((text) => /(terms|agreement)\.agreed !== true \? \(\s*<TermsAgreement /.test(text)));
 ok("the Collect sheet reports, blocks and veils",

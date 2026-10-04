@@ -32,12 +32,8 @@ import {
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import {
-  isChangedQuote,
-  isExpiredQuote,
-  isUserCancellation,
-  isWalletResponseTimeout,
-} from "../solana/walletErrors";
+import { isUserCancellation } from "../solana/walletErrors";
+import { useSheetOperation, walletOutcome } from "./useSheetOperation";
 
 /** One sheet for print #1 on the photo page and for any copy the WALLET screen holds. */
 export function SendSheet({
@@ -55,26 +51,31 @@ export function SendSheet({
   /** A send from this sheet confirmed. */
   onSent?(): void;
 }) {
-  const insets = useSafeAreaInsets(),
-    running = useRef(false);
-  const request = useRef(0),
-    currentState = useRef<TransferState | null>(null),
-    currentQuote = useRef<TransferQuote | null>(null);
-  const [recipient, setRecipient] = useState(""),
-    [quote, setQuote] = useState<TransferQuote | null>(null);
+  const insets = useSafeAreaInsets();
+  const {
+    running,
+    request,
+    busy,
+    status,
+    setStatus,
+    error,
+    setError,
+    quote,
+    currentQuote,
+    setQuote,
+    clearQuote,
+    showCost,
+    setShowCost,
+    run,
+    showCheckFailure,
+  } = useSheetOperation<TransferQuote>("Checking previous sends…");
+  const currentState = useRef<TransferState | null>(null);
+  const [recipient, setRecipient] = useState("");
   const [newTransfer, setNewTransfer] = useState(false);
-  const [showCost, setShowCost] = useState(false);
   const [state, setState] = useState<Awaited<
     ReturnType<typeof getTransferState>
   > | null>(null);
-  const [busy, setBusy] = useState(false),
-    [status, setStatus] = useState("Checking previous sends…"),
-    [error, setError] = useState("");
 
-  function clearQuote() {
-    currentQuote.current = null;
-    setQuote(null);
-  }
   function applyState(next: TransferState) {
     currentState.current = next;
     setState(next);
@@ -107,143 +108,118 @@ export function SendSheet({
     };
   }, [target.edition.edition, target.number]);
   async function check() {
-    if (running.current) return;
-    const id = ++request.current;
-    clearQuote();
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const next = await getTransferState(target);
-      if (id === request.current) {
-        // A send that timed out in the wallet can confirm on a later check.
-        if (next.status === "sent" && currentState.current?.status !== "sent") onSent?.();
-        applyState(next);
+    return run(async () => {
+      const id = ++request.current;
+      clearQuote();
+      setError("");
+      try {
+        const next = await getTransferState(target);
+        if (id === request.current) {
+          // A send that timed out in the wallet can confirm on a later check.
+          if (next.status === "sent" && currentState.current?.status !== "sent") onSent?.();
+          applyState(next);
+        }
+      } catch (e) {
+        currentState.current = null;
+        setState(null);
+        setError(safeErrorText(e));
       }
-    } catch (e) {
-      currentState.current = null;
-      setState(null);
-      setError(safeErrorText(e));
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
   async function review() {
-    if (running.current || !canReview(currentState.current)) return;
-    clearQuote();
-    running.current = true;
-    setBusy(true);
-    setError("");
-    setStatus("Checking…");
-    try {
-      const owner = await session.connectAnd((wallet) =>
-        session.authorizeSession(wallet),
-      );
-      const next = await prepareTransfer(
-        target,
-        recipient.trim(),
-        owner.address,
-      );
-      currentQuote.current = next;
-      setQuote(next);
-      setStatus("Check the full recipient address.");
-    } catch (e) {
+    if (!canReview(currentState.current)) return;
+    return run(async () => {
       clearQuote();
-      // A review opens the wallet only to learn which account holds the copy, so a wallet that
-      // never answers has still sent nothing.
-      const timedOut = isWalletResponseTimeout(e);
-      if (!isUserCancellation(e)) {
+      setError("");
+      setStatus("Checking…");
+      try {
+        const owner = await session.connectAnd((wallet) =>
+          session.authorizeSession(wallet),
+        );
+        const next = await prepareTransfer(
+          target,
+          recipient.trim(),
+          owner.address,
+        );
+        setQuote(next);
+        setStatus("Check the full recipient address.");
+      } catch (e) {
+        clearQuote();
+        // A review opens the wallet only to learn which account holds the copy, so a wallet that
+        // never answers has still sent nothing.
+        if (!isUserCancellation(e)) {
+          const next = await getTransferState(target).catch(() => null);
+          if (next) applyState(next);
+          else {
+            currentState.current = null;
+            setState(null);
+          }
+        }
+        // Said after the re-read, which would otherwise put its own status over this one.
+        showCheckFailure(e, { timedOut: walletTimeout.transferReview, cancelled: "Wallet closed." });
+      }
+    });
+  }
+  async function send() {
+    if (
+      !quote ||
+      currentQuote.current !== quote ||
+      !canReview(currentState.current)
+    )
+      return;
+    return run(async () => {
+      setError("");
+      try {
+        await sendTransfer(target, session, quote, (phase) =>
+          setStatus(
+            phase === "wallet"
+              ? "Approve this transfer in your wallet…"
+              : "Waiting for Solana confirmation…",
+          ),
+        );
+        clearQuote();
+        onSent?.();
+        const next = await getTransferState(target);
+        applyState(next);
+        setNewTransfer(false);
+      } catch (e) {
+        clearQuote();
+        // Seed Vault broadcasts first and replies only when its success screen is closed, so a
+        // timeout usually means the copy was already sent.
+        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        setError(quiet ? "" : safeErrorText(e));
+        if (timedOut) setStatus(walletTimeout.sendChecking);
+        // The same read "Check transfer status" performs, run by the sheet itself.
         const next = await getTransferState(target).catch(() => null);
         if (next) applyState(next);
         else {
           currentState.current = null;
           setState(null);
         }
-      }
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
-      setStatus(
-        timedOut
-          ? walletTimeout.transferReview
-          : isUserCancellation(e)
-            ? "Wallet closed."
-            : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
-  }
-  async function send() {
-    if (
-      running.current ||
-      !quote ||
-      currentQuote.current !== quote ||
-      !canReview(currentState.current)
-    )
-      return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      await sendTransfer(target, session, quote, (phase) =>
+        setNewTransfer(false);
+        // A fresh read can resolve a send whose initial receipt check failed. Its result
+        // supersedes that error; do not put retry instructions beneath a confirmed transfer.
+        if (next?.status === "sent" && !expired && !changed &&
+            next.attempt?.recipient === quote.recipient) {
+          onSent?.();
+          setError("");
+          if (timedOut) setStatus(walletTimeout.sendFound);
+          return;
+        }
+        setError(quiet ? "" : safeErrorText(e));
         setStatus(
-          phase === "wallet"
-            ? "Approve this transfer in your wallet…"
-            : "Waiting for Solana confirmation…",
-        ),
-      );
-      clearQuote();
-      onSent?.();
-      const next = await getTransferState(target);
-      applyState(next);
-      setNewTransfer(false);
-    } catch (e) {
-      clearQuote();
-      // Seed Vault broadcasts first and replies only when its success screen is closed, so a
-      // timeout usually means the copy was already sent.
-      const timedOut = isWalletResponseTimeout(e);
-      const expired = isExpiredQuote(e);
-      const changed = isChangedQuote(e);
-      setError(
-        isUserCancellation(e) || timedOut || expired || changed
-          ? ""
-          : safeErrorText(e),
-      );
-      if (timedOut) setStatus(walletTimeout.sendChecking);
-      // The same read "Check transfer status" performs, run by the sheet itself.
-      const next = await getTransferState(target).catch(() => null);
-      if (next) applyState(next);
-      else {
-        currentState.current = null;
-        setState(null);
+          timedOut
+            ? next?.status === "sent"
+              ? walletTimeout.sendFound
+              : walletTimeout.sendPending
+            : changed
+              ? changedEstimate.transfer
+              : expired
+                ? expiredEstimate.transfer
+                : `${cancelled ? "Wallet closed. " : ""}Check the transfer status before retrying.`,
+        );
       }
-      setNewTransfer(false);
-      // A fresh read can resolve a send whose initial receipt check failed. Its result
-      // supersedes that error; do not put retry instructions beneath a confirmed transfer.
-      if (next?.status === "sent" && !expired && !changed &&
-          next.attempt?.recipient === quote.recipient) {
-        onSent?.();
-        setError("");
-        if (timedOut) setStatus(walletTimeout.sendFound);
-        return;
-      }
-      setError(isUserCancellation(e) || timedOut || expired || changed ? "" : safeErrorText(e));
-      setStatus(
-        timedOut
-          ? next?.status === "sent"
-            ? walletTimeout.sendFound
-            : walletTimeout.sendPending
-          : changed
-            ? changedEstimate.transfer
-            : expired
-              ? expiredEstimate.transfer
-              : `${isUserCancellation(e) ? "Wallet closed. " : ""}Check the transfer status before retrying.`,
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
   const sent = state?.status === "sent",
     unresolved = state?.status === "unresolved",

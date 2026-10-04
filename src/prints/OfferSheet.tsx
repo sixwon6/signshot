@@ -1,5 +1,6 @@
 import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
+import { Row } from "./SheetRow";
 /**
  * OfferSheet: the creator's price for the remaining copies of one edition.
  *
@@ -8,7 +9,7 @@ import { sheetStyles } from "./sheetStyles";
  * opens the wallet, and a cleared quote can never be approved. The price reaches the creator; the
  * estimate is the fee and offer-account rent the creator pays, so the two are never added.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -40,12 +41,7 @@ import {
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import {
-  isChangedQuote,
-  isExpiredQuote,
-  isUserCancellation,
-  isWalletResponseTimeout,
-} from "../solana/walletErrors";
+import { useSheetOperation, walletOutcome } from "./useSheetOperation";
 
 export function OfferSheet({
   edition,
@@ -59,28 +55,30 @@ export function OfferSheet({
   /** The price changed on chain. The caller re-reads whatever list it is showing. */
   onSaved?(): void;
 }) {
-  const insets = useSafeAreaInsets(),
-    running = useRef(false);
-  // Every async result is tagged with the read that asked for it, so a slow answer for an earlier
-  // edition can never paint over a newer one.
-  const request = useRef(0),
-    currentQuote = useRef<OfferQuote | null>(null);
+  const insets = useSafeAreaInsets();
+  const {
+    running,
+    request,
+    busy,
+    status,
+    setStatus,
+    error,
+    setError,
+    quote,
+    currentQuote,
+    setQuote,
+    clearQuote,
+    showCost,
+    setShowCost,
+    run,
+    showCheckFailure,
+  } = useSheetOperation<OfferQuote>(copy.loading);
   /** What the chain says now: the current offer, and whether this deployment can hold one. */
   const [current, setCurrent] = useState<EditionOffer | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [priceText, setPriceText] = useState("");
-  const [quote, setQuote] = useState<OfferQuote | null>(null);
   /** Set means a `set_offer` confirmed in this sheet; the flow is finished. */
   const [saved, setSaved] = useState<EditionOffer | null>(null);
-  const [showCost, setShowCost] = useState(false);
-  const [busy, setBusy] = useState(false),
-    [status, setStatus] = useState<string>(copy.loading),
-    [error, setError] = useState("");
-
-  function clearQuote() {
-    currentQuote.current = null;
-    setQuote(null);
-  }
 
   /** Read the edition's price. Opens no wallet, so it runs on its own. */
   useEffect(() => {
@@ -130,97 +128,82 @@ export function OfferSheet({
       setStatus("");
       return;
     }
-    running.current = true;
-    setBusy(true);
-    setError("");
-    // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
-    clearQuote();
-    setStatus("");
-    try {
-      const next = await prepareOffer(edition, lamports);
-      currentQuote.current = next;
-      setQuote(next);
-    } catch (e) {
+    return run(async () => {
+      setError("");
+      // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
       clearQuote();
-      // A cost check signs nothing, so nothing can have changed.
-      const timedOut = isWalletResponseTimeout(e);
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e, copy.invalid));
-      setStatus(
-        timedOut
-          ? walletTimeout.offerCostCheck
-          : isUserCancellation(e)
-            ? copy.cancelled
-            : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+      setStatus("");
+      try {
+        const next = await prepareOffer(edition, lamports);
+        setQuote(next);
+      } catch (e) {
+        clearQuote();
+        // A cost check signs nothing, so nothing can have changed.
+        showCheckFailure(e, {
+          timedOut: walletTimeout.offerCostCheck,
+          cancelled: copy.cancelled,
+          fallback: copy.invalid,
+        });
+      }
+    });
   }
 
   /** "Set price": the one tap that opens the wallet to sign. */
   async function send() {
-    if (running.current || !quote || currentQuote.current !== quote) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const next = await sendOffer(edition, quote, session, (phase) =>
-        setStatus(phase === "wallet" ? copy.progressWallet : copy.progressConfirming),
-      );
-      clearQuote();
-      setCurrent(next);
-      setSaved(next);
-      setStatus("");
-      onSaved?.();
-    } catch (e) {
-      clearQuote();
-      // Seed Vault broadcasts first and answers only when its success screen is closed, so a
-      // timeout usually means the price is already set. The re-read below is what decides, never
-      // the error.
-      const timedOut = isWalletResponseTimeout(e);
-      const expired = isExpiredQuote(e);
-      const changed = isChangedQuote(e);
-      if (timedOut) setStatus(walletTimeout.offerChecking);
-      const after = await getOffer(edition).catch(() => null);
-      if (after) {
-        setSupported(after.supported);
-        setCurrent(after.offer);
-      }
-      // A fresh read can resolve an approval whose answer was lost, and then supersedes the error.
-      // Checked as `offer.ts` does: the approved price and a revision past the quoted one, which is
-      // what tells a confirmed change to free from a cancelled one.
-      const landed =
-        !expired &&
-        !changed &&
-        !!after &&
-        (after.offer?.revision ?? 0) > quote.fromRevision &&
-        (after.offer?.priceLamports ?? 0n) === quote.priceLamports;
-      if (landed) {
-        setSaved(after.offer ?? { priceLamports: 0n, revision: 0 });
-        setError("");
-        setStatus(timedOut ? walletTimeout.offerFound : "");
+    if (!quote || currentQuote.current !== quote) return;
+    return run(async () => {
+      setError("");
+      try {
+        const next = await sendOffer(edition, quote, session, (phase) =>
+          setStatus(phase === "wallet" ? copy.progressWallet : copy.progressConfirming),
+        );
+        clearQuote();
+        setCurrent(next);
+        setSaved(next);
+        setStatus("");
         onSaved?.();
-        return;
+      } catch (e) {
+        clearQuote();
+        // Seed Vault broadcasts first and answers only when its success screen is closed, so a
+        // timeout usually means the price is already set. The re-read below is what decides, never
+        // the error.
+        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        if (timedOut) setStatus(walletTimeout.offerChecking);
+        const after = await getOffer(edition).catch(() => null);
+        if (after) {
+          setSupported(after.supported);
+          setCurrent(after.offer);
+        }
+        // A fresh read can resolve an approval whose answer was lost, and then supersedes the
+        // error. Checked as `offer.ts` does: the approved price and a revision past the quoted one,
+        // which is what tells a confirmed change to free from a cancelled one.
+        const landed =
+          !expired &&
+          !changed &&
+          !!after &&
+          (after.offer?.revision ?? 0) > quote.fromRevision &&
+          (after.offer?.priceLamports ?? 0n) === quote.priceLamports;
+        if (landed) {
+          setSaved(after.offer ?? { priceLamports: 0n, revision: 0 });
+          setError("");
+          setStatus(timedOut ? walletTimeout.offerFound : "");
+          onSaved?.();
+          return;
+        }
+        setError(quiet ? "" : safeErrorText(e, copy.invalid));
+        setStatus(
+          timedOut
+            ? walletTimeout.offerPending
+            : changed
+              ? changedEstimate.offer
+              : expired
+                ? expiredEstimate.offer
+                : cancelled
+                  ? copy.cancelled
+                  : "",
+        );
       }
-      setError(
-        isUserCancellation(e) || timedOut || expired || changed ? "" : safeErrorText(e, copy.invalid),
-      );
-      setStatus(
-        timedOut
-          ? walletTimeout.offerPending
-          : changed
-            ? changedEstimate.offer
-            : expired
-              ? expiredEstimate.offer
-              : isUserCancellation(e)
-                ? copy.cancelled
-                : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
 
   const finished = saved !== null;
@@ -331,15 +314,5 @@ export function OfferSheet({
         </View>
       </KeyboardAvoidingView>
     </Modal>
-  );
-}
-
-/** One label/value line of a box. */
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={sheetStyles.rowLine}>
-      <Text style={sheetStyles.label}>{label}</Text>
-      <Text style={sheetStyles.rowValue}>{value}</Text>
-    </View>
   );
 }

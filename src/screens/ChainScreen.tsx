@@ -10,12 +10,11 @@
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { RouteProp } from "@react-navigation/native";
 import { useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { KitMobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-kit";
 import { useMobileWallet } from "@wallet-ui/react-native-kit";
 import type { HomeTabs } from "../navigators/HomeNavigator";
 import { COLLECT_ORIGIN, COLLECT_PATH } from "../navigators/linking";
@@ -24,9 +23,8 @@ import { typeScale } from "../ui/type";
 import { BackButton, Cell, Chip, PhotoFrame, Screen, TextKey } from "../ui/primitives";
 import { actions, collect as collectCopy, collection, moderation as moderationCopy, price as priceCopy } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
-import { liveAuthorize } from "../solana/liveAuthorize";
+import { useWalletSession } from "../solana/useWalletSession";
 import { isUserCancellation } from "../solana/walletErrors";
-import type { WalletSession } from "../solana/walletSession";
 import { CollectSheet } from "../prints/CollectSheet";
 import { OfferSheet } from "../prints/OfferSheet";
 import { SendSheet } from "../prints/SendSheet";
@@ -109,7 +107,7 @@ export function ChainScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<HomeTabs, "Chain">>();
   // A collect link lands here as route params; see `src/navigators/linking.ts`.
   const route = useRoute<RouteProp<HomeTabs, "Chain">>();
-  const { account, chain, connect, connectAnd, identity: appIdentity, store } = useMobileWallet();
+  const { account, connect } = useMobileWallet();
   const wallet = account?.address;
   // Whatever the app already knows about this wallet's `.skr` name. `false` starts no lookup from
   // here: the name is a label on the address, never a reason to reach for the network.
@@ -120,15 +118,8 @@ export function ChainScreen() {
   const veilOf = (item: LibraryPhoto) =>
     moderation.veil(item.photo.edition.edition, item.photo.edition.creator, wallet);
   // The same session object the photo sheets build, so the Collect sheet opens a wallet exactly
-  // the way publishing and sending do (`liveAuthorize` re-reads the auth token at call time).
-  const authorizeSession = useCallback(
-    (w: KitMobileWallet) => liveAuthorize({ store, chain, identity: appIdentity }, w),
-    [store, chain, appIdentity],
-  );
-  const session = useMemo<WalletSession>(
-    () => ({ connectAnd: connectAnd as unknown as WalletSession["connectAnd"], authorizeSession }),
-    [connectAnd, authorizeSession],
-  );
+  // the way publishing and sending do.
+  const session = useWalletSession();
   const [mode, setMode] = useState<LibraryMode>("collected");
   const [refresh, setRefresh] = useState(0);
   // `error` is the sentence for a failure retrying cannot fix; `failed` is every failure.

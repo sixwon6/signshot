@@ -1,15 +1,11 @@
-import { CostEstimate, costSol as sol } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,14 +26,9 @@ import {
 } from "./creator";
 import { useStorageTopUp } from "./useStorageTopUp";
 import { terms } from "../../publications/core/protocol";
-import { deviceName, securityLevelName } from "../../publications/core/attestation";
-import { deviceValue, useDeviceVerdict } from "../seeker/useDeviceVerdict";
+import { useDeviceVerdict } from "../seeker/useDeviceVerdict";
+import { normalizeDescription } from "../../publications/core/details";
 import {
-  DESCRIPTION_LIMIT,
-  normalizeDescription,
-} from "../../publications/core/details";
-import {
-  ALBUM_NAME_MAX_BYTES,
   createAlbum,
   loadAlbums,
   prepareAlbum,
@@ -46,7 +37,7 @@ import {
   type AlbumSetup,
 } from "./albums";
 import { readPhotoEdit } from "./photoStorage";
-import { costRows, formatSol, parseSolPrice } from "./price";
+import { parseSolPrice } from "./price";
 import { shortAddress } from "./photoPresentation";
 import {
   configuredProgram,
@@ -55,13 +46,10 @@ import {
 import {
   DEFAULT_ROYALTY_BPS,
   DEFAULT_SEEKER_ONLY,
-  MAX_ROYALTY_BPS,
 } from "../../publications/types";
 
-import { colors, radius, space } from "../ui/theme";
-import { typeScale as type } from "../ui/type";
+import { space } from "../ui/theme";
 import {
-  Chip,
   NetworkLabel,
   PhotoFrame,
   Pill,
@@ -69,18 +57,13 @@ import {
 import {
   actions,
   changedEstimate,
-  collect as collectCopy,
-  estimate,
   expiredEstimate,
-  onChain,
-  price as priceCopy,
   publish as copy,
   walletTimeout,
 } from "../ui/copy";
 import { safeErrorText } from "../ui/errorText";
 import { assertReviewedProgram } from "../../publications/programImage";
 import { useTermsAgreement } from "../moderation/store";
-import { TermsAgreement } from "../moderation/TermsAgreement";
 import { programFallback } from "./programVerdict";
 import { CLUSTER_NAME as cluster, IS_MAINNET, RPC_ENDPOINT } from "../solana/cluster";
 import {
@@ -89,6 +72,10 @@ import {
   isUserCancellation,
   isWalletResponseTimeout,
 } from "../solana/walletErrors";
+import { useSheetOperation, walletOutcome } from "./useSheetOperation";
+import { PrintAlbum, PrintDetails } from "./PrintForm";
+import { PrintReceipt } from "./PrintReceipt";
+import { PrintDock } from "./PrintDock";
 
 /**
  * Before a wallet signs anything `era_editions` runs: the draft's program, or the one a fresh
@@ -114,8 +101,21 @@ export function PrintSheet({
   onClose(): void;
   onChanged?(): void;
 }) {
-  const insets = useSafeAreaInsets(),
-    running = useRef(false);
+  const insets = useSafeAreaInsets();
+  const {
+    running,
+    busy,
+    status,
+    setStatus,
+    error,
+    setError,
+    quote,
+    setQuote,
+    showCost,
+    setShowCost,
+    run,
+    showCheckFailure,
+  } = useSheetOperation<Awaited<ReturnType<typeof prepareSetup>>>();
   // The terms are agreed to once, before anything is published; an upload owed by an edition
   // already on Solana is never held behind them.
   const agreement = useTermsAgreement();
@@ -136,8 +136,6 @@ export function PrintSheet({
   // offers the discard action.
   const [unreadable, setUnreadable] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
-  // The itemised estimate, one tap away from the single cost line.
-  const [showCost, setShowCost] = useState(false);
   const [count, setCount] = useState("10"),
     [solo, setSolo] = useState(true);
   /** The price of a copy, as typed, in SOL; empty is free. Offered only where `priceable`. */
@@ -153,13 +151,7 @@ export function PrintSheet({
   const [distribution, setDistribution] = useState(false);
   // Seeker-only is sealed with the creator's Genesis Token, which only a mainnet build can send.
   const [sealable, setSealable] = useState(false);
-  const [quote, setQuote] = useState<Awaited<
-    ReturnType<typeof prepareSetup>
-  > | null>(null);
-  const [busy, setBusy] = useState(false),
-    [initializing, setInitializing] = useState(true);
-  const [status, setStatus] = useState(""),
-    [error, setError] = useState("");
+  const [initializing, setInitializing] = useState(true);
   const [published, setPublished] = useState(false);
   // The action the program's own verdict says would work instead of the failure on screen.
   const [fallback, setFallback] = useState<"publish-without-album" | "new-album" | null>(null);
@@ -295,160 +287,152 @@ export function PrintSheet({
 
   async function prepare() {
     if (running.current || initializing || !canPublish) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    setFallback(null);
-    // The estimate on screen belongs to the check that produced it. Clearing it first means a
-    // refreshed approval can never show the amount from the previous, expired one.
-    setQuote(null);
-    setStatus("");
-    try {
-      let current = draft;
-      if (!current) {
-        terms(title.trim(), solo ? 1 : Number(count));
-        // The same gates `createDraft` applies, run before the wallet opens.
-        const moment = normalizeDescription(caption);
-        // Zero or no price publishes free.
-        const lamports = priced ? priceLamports : undefined;
-        const owner = await session.connectAnd((wallet) =>
-          session.authorizeSession(wallet),
+    return run(async () => {
+      setError("");
+      setFallback(null);
+      // The estimate on screen belongs to the check that produced it. Clearing it first means a
+      // refreshed approval can never show the amount from the previous, expired one.
+      setQuote(null);
+      setStatus("");
+      try {
+        let current = draft;
+        if (!current) {
+          terms(title.trim(), solo ? 1 : Number(count));
+          // The same gates `createDraft` applies, run before the wallet opens.
+          const moment = normalizeDescription(caption);
+          // Zero or no price publishes free.
+          const lamports = priced ? priceLamports : undefined;
+          const owner = await session.connectAnd((wallet) =>
+            session.authorizeSession(wallet),
+          );
+          current = await createDraft(
+            record,
+            title.trim(),
+            solo ? 1 : Number(count),
+            owner.address,
+            edit,
+            moment,
+            selectedAlbum || undefined,
+            lamports,
+            // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
+            // records Seeker-only only with the wallet's Genesis Token to seal.
+            distribution ? { royaltyBps, seekerOnly: sealable && (solo || seekerOnly) } : undefined,
+          );
+          setDraft(current);
+          onChanged?.();
+        }
+        await readPublicationStatus(current);
+      } catch (e) {
+        // A cost check opens the wallet only to learn which account is publishing, so a wallet
+        // that never answers has still published nothing.
+        const timedOut = isWalletResponseTimeout(e);
+        // The program's verdict may name a recovery, e.g. publishing without a full album.
+        setFallback(programFallback(e) ?? null);
+        setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
+        setStatus(
+          timedOut
+            ? walletTimeout.costCheck
+            : isUserCancellation(e)
+              ? "Wallet closed. Nothing was sent."
+              : "",
         );
-        current = await createDraft(
-          record,
-          title.trim(),
-          solo ? 1 : Number(count),
-          owner.address,
-          edit,
-          moment,
-          selectedAlbum || undefined,
-          lamports,
-          // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
-          // records Seeker-only only with the wallet's Genesis Token to seal.
-          distribution ? { royaltyBps, seekerOnly: sealable && (solo || seekerOnly) } : undefined,
-        );
-        setDraft(current);
-        onChanged?.();
       }
-      await readPublicationStatus(current);
-    } catch (e) {
-      // A cost check opens the wallet only to learn which account is publishing, so a wallet
-      // that never answers has still published nothing.
-      const timedOut = isWalletResponseTimeout(e);
-      // The program's verdict may name a recovery, e.g. publishing without a full album.
-      setFallback(programFallback(e) ?? null);
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
-      setStatus(
-        timedOut
-          ? walletTimeout.costCheck
-          : isUserCancellation(e)
-            ? "Wallet closed. Nothing was sent."
-            : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
 
   async function publish() {
     if (!draft || !quote || running.current || !canPublish) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      if (quote.step === "sign") await checkProgram(draft.edition.program);
-      const receipt = await sendSetup(record, draft, session, quote, (phase) =>
-        setStatus(
-          {
-            wallet: "Review and approve in your wallet…",
-            confirming: "Waiting for Solana confirmation…",
-            uploading:
-              "Edition confirmed. Uploading the public photo and details…",
-          }[phase],
-        ),
-      );
-      setPublished(true);
-      setQuote(null);
-      // Published either way; a receipt mismatch (the landed transaction was not the reviewed
-      // one) is said instead of the usual status.
-      if (receipt === "mismatched") {
-        setError(copy.reviewMismatch);
-        setStatus("");
-      } else setStatus("");
-      onChanged?.();
-    } catch (e) {
-      setQuote(null);
-      // A timeout is not a failure: Seed Vault broadcasts first and replies only when its success
-      // screen is closed, so the edition is usually already published.
-      const timedOut = isWalletResponseTimeout(e);
-      const expired = isExpiredQuote(e);
-      const changed = isChangedQuote(e);
-      setFallback(programFallback(e) ?? null);
-      setError(
-        isUserCancellation(e) || timedOut || expired || changed
-          ? ""
-          : safeErrorText(e),
-      );
-      if (timedOut) setStatus(walletTimeout.publishChecking);
-      const current = await getPublicationState(record).catch(() => null);
-      if (current) await applyPublicationState(current);
-      else {
-        setAccess("blocked");
-        setPublished(false);
+    return run(async () => {
+      setError("");
+      try {
+        if (quote.step === "sign") await checkProgram(draft.edition.program);
+        const receipt = await sendSetup(record, draft, session, quote, (phase) =>
+          setStatus(
+            {
+              wallet: "Review and approve in your wallet…",
+              confirming: "Waiting for Solana confirmation…",
+              uploading:
+                "Edition confirmed. Uploading the public photo and details…",
+            }[phase],
+          ),
+        );
+        setPublished(true);
+        setQuote(null);
+        // Published either way; a receipt mismatch (the landed transaction was not the reviewed
+        // one) is said instead of the usual status.
+        if (receipt === "mismatched") {
+          setError(copy.reviewMismatch);
+          setStatus("");
+        } else setStatus("");
+        onChanged?.();
+      } catch (e) {
+        setQuote(null);
+        // A timeout is not a failure: Seed Vault broadcasts first and replies only when its success
+        // screen is closed, so the edition is usually already published.
+        const timedOut = isWalletResponseTimeout(e);
+        const expired = isExpiredQuote(e);
+        const changed = isChangedQuote(e);
+        setFallback(programFallback(e) ?? null);
+        setError(
+          isUserCancellation(e) || timedOut || expired || changed
+            ? ""
+            : safeErrorText(e),
+        );
+        if (timedOut) setStatus(walletTimeout.publishChecking);
+        const current = await getPublicationState(record).catch(() => null);
+        if (current) await applyPublicationState(current);
+        else {
+          setAccess("blocked");
+          setPublished(false);
+        }
+        if (timedOut) {
+          // The status and the button have to agree: a fresh signable estimate means the earlier
+          // transaction cannot land, and saying it might would contradict the button.
+          const step = await statusAfterTimeout(current?.draft ?? draft);
+          setStatus(
+            step === "ready"
+              ? walletTimeout.publishFound
+              : step === "sign"
+                ? walletTimeout.publishRetry
+                : walletTimeout.publishPending,
+          );
+        } else
+          setStatus(
+            changed
+              ? changedEstimate.publish
+              : expired
+                ? expiredEstimate.publish
+                : `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Check publication status before trying again.`,
+          );
+        onChanged?.();
       }
-      if (timedOut) {
-        // The status and the button have to agree: a fresh signable estimate means the earlier
-        // transaction cannot land, and saying it might would contradict the button.
-        const step = await statusAfterTimeout(current?.draft ?? draft);
-        setStatus(
-          step === "ready"
-            ? walletTimeout.publishFound
-            : step === "sign"
-              ? walletTimeout.publishRetry
-              : walletTimeout.publishPending,
-        );
-      } else
-        setStatus(
-          changed
-            ? changedEstimate.publish
-            : expired
-              ? expiredEstimate.publish
-              : `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Check publication status before trying again.`,
-        );
-      onChanged?.();
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
 
   async function payForStorage() {
     if (!draft || !topUp || running.current) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      await payStorage(record, draft, session, topUp, (phase) =>
-        setStatus(
-          {
-            wallet: "Review and approve in your wallet…",
-            confirming: "Waiting for Solana confirmation…",
-            uploading: "Uploading the public photo and details…",
-          }[phase],
-        ),
-      );
-      setStatus("");
-    } catch (e) {
-      setError(isUserCancellation(e) ? "" : safeErrorText(e));
-      setStatus("");
-    } finally {
-      const current = await getPublicationState(record).catch(() => null);
-      if (current) await applyPublicationState(current);
-      running.current = false;
-      setBusy(false);
-      onChanged?.();
-    }
+    await run(async () => {
+      setError("");
+      try {
+        await payStorage(record, draft, session, topUp, (phase) =>
+          setStatus(
+            {
+              wallet: "Review and approve in your wallet…",
+              confirming: "Waiting for Solana confirmation…",
+              uploading: "Uploading the public photo and details…",
+            }[phase],
+          ),
+        );
+        setStatus("");
+      } catch (e) {
+        setError(isUserCancellation(e) ? "" : safeErrorText(e));
+        setStatus("");
+      } finally {
+        const current = await getPublicationState(record).catch(() => null);
+        if (current) await applyPublicationState(current);
+      }
+    });
+    onChanged?.();
   }
 
   /** The publishing wallet for album work: the draft's, or the connected one. */
@@ -473,138 +457,117 @@ export function PrintSheet({
   }
   /** Cost only. Nothing is created, and no wallet is asked to sign by this check. */
   async function quoteAlbum() {
-    if (running.current || busy || !!draft) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    // Same rule as the publication estimate: the old amount leaves the screen with its check.
-    setAlbumQuote(null);
-    setStatus("Checking the album cost…");
-    try {
-      const wallet =
-        albumWallet() ??
-        (await session.connectAnd((w) => session.authorizeSession(w))).address;
-      const next = await prepareAlbum(newAlbum, wallet);
-      if (next.step === "ready") adoptAlbum(next.record);
-      else {
-        await checkProgram(next.record.program);
-        setAlbumQuote(next);
-        setStatus("Review the album cost below. Nothing has been created by this check.");
-      }
-    } catch (e) {
+    if (busy || !!draft) return;
+    return run(async () => {
+      setError("");
+      // Same rule as the publication estimate: the old amount leaves the screen with its check.
       setAlbumQuote(null);
-      const timedOut = isWalletResponseTimeout(e);
-      setFallback(programFallback(e) ?? null);
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
-      setStatus(
-        timedOut
-          ? walletTimeout.albumCostCheck
-          : isUserCancellation(e)
-            ? "Wallet closed. No album was created."
-            : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+      setStatus("Checking the album cost…");
+      try {
+        const wallet =
+          albumWallet() ??
+          (await session.connectAnd((w) => session.authorizeSession(w))).address;
+        const next = await prepareAlbum(newAlbum, wallet);
+        if (next.step === "ready") adoptAlbum(next.record);
+        else {
+          await checkProgram(next.record.program);
+          setAlbumQuote(next);
+          setStatus("Review the album cost below. Nothing has been created by this check.");
+        }
+      } catch (e) {
+        setAlbumQuote(null);
+        setFallback(programFallback(e) ?? null);
+        showCheckFailure(e, {
+          timedOut: walletTimeout.albumCostCheck,
+          cancelled: "Wallet closed. No album was created.",
+        });
+      }
+    });
   }
   async function makeAlbum() {
-    if (running.current || busy || albumQuote?.step !== "sign") return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const wallet = albumQuote.record.creator;
-      await checkProgram(albumQuote.record.program);
-      const record = await createAlbum(wallet, session, albumQuote, (stage) =>
-        setStatus(
-          {
-            wallet: "Review and approve the album in your wallet…",
-            confirming: "Waiting for Solana confirmation…",
-          }[stage],
-        ),
-      );
-      adoptAlbum(record);
-    } catch (e) {
-      setAlbumQuote(null);
-      const timedOut = isWalletResponseTimeout(e);
-      const expired = isExpiredQuote(e);
-      const changed = isChangedQuote(e);
-      setFallback(programFallback(e) ?? null);
-      setError(
-        isUserCancellation(e) || timedOut || expired || changed
-          ? ""
-          : safeErrorText(e),
-      );
-      let adopted = false;
-      if (timedOut) {
-        setStatus(walletTimeout.albumChecking);
-        // `prepareAlbum` adopts a group already on chain and refuses to re-quote while the
-        // approved transaction may still land. It opens no wallet.
-        try {
-          const next = await prepareAlbum(
-            albumQuote.record.name,
-            albumQuote.record.creator,
-          );
-          if (next.step === "ready") {
-            adoptAlbum(next.record);
-            adopted = true;
-          } else {
-            // A signable quote means the earlier album transaction cannot land, so the
-            // sheet offers it rather than telling the user to wait for something that is over.
-            setAlbumQuote(next);
-            setStatus(walletTimeout.albumRetry);
-          }
-        } catch {
-          setStatus(walletTimeout.albumPending);
-        }
-      } else
-        setStatus(
-          changed
-            ? changedEstimate.album
-            : expired
-              ? expiredEstimate.album
-              : `${isUserCancellation(e) ? "Wallet closed. " : ""}Any album progress is saved. Check it before trying again.`,
+    if (busy || albumQuote?.step !== "sign") return;
+    return run(async () => {
+      setError("");
+      try {
+        const wallet = albumQuote.record.creator;
+        await checkProgram(albumQuote.record.program);
+        const record = await createAlbum(wallet, session, albumQuote, (stage) =>
+          setStatus(
+            {
+              wallet: "Review and approve the album in your wallet…",
+              confirming: "Waiting for Solana confirmation…",
+            }[stage],
+          ),
         );
-      // An adopted album is already in the list, and a re-read here could only put back a
-      // staler answer than the reconcile just gave.
-      if (!adopted)
-        try {
-          setAlbums(await loadAlbums());
-        } catch {
-          // A failed refresh leaves the list as it was; the reason above already says so.
-        }
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+        adoptAlbum(record);
+      } catch (e) {
+        setAlbumQuote(null);
+        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        setFallback(programFallback(e) ?? null);
+        setError(quiet ? "" : safeErrorText(e));
+        let adopted = false;
+        if (timedOut) {
+          setStatus(walletTimeout.albumChecking);
+          // `prepareAlbum` adopts a group already on chain and refuses to re-quote while the
+          // approved transaction may still land. It opens no wallet.
+          try {
+            const next = await prepareAlbum(
+              albumQuote.record.name,
+              albumQuote.record.creator,
+            );
+            if (next.step === "ready") {
+              adoptAlbum(next.record);
+              adopted = true;
+            } else {
+              // A signable quote means the earlier album transaction cannot land, so the
+              // sheet offers it rather than telling the user to wait for something that is over.
+              setAlbumQuote(next);
+              setStatus(walletTimeout.albumRetry);
+            }
+          } catch {
+            setStatus(walletTimeout.albumPending);
+          }
+        } else
+          setStatus(
+            changed
+              ? changedEstimate.album
+              : expired
+                ? expiredEstimate.album
+                : `${cancelled ? "Wallet closed. " : ""}Any album progress is saved. Check it before trying again.`,
+          );
+        // An adopted album is already in the list, and a re-read here could only put back a
+        // staler answer than the reconcile just gave.
+        if (!adopted)
+          try {
+            setAlbums(await loadAlbums());
+          } catch {
+            // A failed refresh leaves the list as it was; the reason above already says so.
+          }
+      }
+    });
   }
 
   async function change() {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    try {
-      await discardDraft(record);
-      setDraft(null);
-      setAccess("fresh");
-      setPublished(false);
-      setQuote(null);
-      // Discarding frees the album selection; the album itself is untouched.
-      setSelectedAlbum("");
-      setAlbumMode("none");
-      setAlbumQuote(null);
-      setUnreadable(false);
-      setError("");
-      setFallback(null);
-      setStatus("");
-      onChanged?.();
-    } catch (e) {
-      setError(safeErrorText(e));
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    return run(async () => {
+      try {
+        await discardDraft(record);
+        setDraft(null);
+        setAccess("fresh");
+        setPublished(false);
+        setQuote(null);
+        // Discarding frees the album selection; the album itself is untouched.
+        setSelectedAlbum("");
+        setAlbumMode("none");
+        setAlbumQuote(null);
+        setUnreadable(false);
+        setError("");
+        setFallback(null);
+        setStatus("");
+        onChanged?.();
+      } catch (e) {
+        setError(safeErrorText(e));
+      }
+    });
   }
 
   // A saved draft is previewed from the validated draft, not the text field, so the screen shows
@@ -631,8 +594,6 @@ export function PrintSheet({
       priceError = safeErrorText(e);
     }
   const priced = priceable && !priceError && priceLamports > 0n;
-  /** The price the draft itself committed to, read back like every other receipt row. */
-  const draftPrice = draftPriceLamports(draft);
 
   // Only confirmed albums held by the publishing wallet; any other album fails
   // `publish_in_album`. With no wallet known there is nothing to list.
@@ -732,327 +693,65 @@ export function PrintSheet({
                 to return to the fields. */}
             {!draft && (
               <>
-                <Field
-                  label={copy.titleLabel}
-                  value={title}
-                  onChangeText={setTitle}
-                  editable={!draft && !busy && !initializing}
-                  maxLength={24}
+                <PrintDetails
+                  draft={draft}
+                  busy={busy}
+                  initializing={initializing}
+                  title={title}
+                  setTitle={setTitle}
+                  caption={caption}
+                  setCaption={setCaption}
+                  detailsError={detailsError}
+                  solo={solo}
+                  setSolo={setSolo}
+                  count={count}
+                  setCount={setCount}
+                  priceable={priceable}
+                  priceText={priceText}
+                  setPriceText={setPriceText}
+                  priceError={priceError}
+                  distribution={distribution}
+                  royaltyBps={royaltyBps}
+                  setRoyaltyBps={setRoyaltyBps}
+                  sealable={sealable}
+                  seekerOnly={seekerOnly}
+                  setSeekerOnly={setSeekerOnly}
                 />
-                <Field
-                  label={copy.momentLabel}
-                  value={caption}
-                  onChangeText={setCaption}
-                  editable={!draft && !busy && !initializing}
-                  maxLength={DESCRIPTION_LIMIT}
+                <PrintAlbum
+                  draft={draft}
+                  busy={busy}
+                  initializing={initializing}
+                  agreement={agreement}
+                  albumMode={albumMode}
+                  setAlbumMode={setAlbumMode}
+                  selectedAlbum={selectedAlbum}
+                  setSelectedAlbum={setSelectedAlbum}
+                  newAlbum={newAlbum}
+                  setNewAlbum={setNewAlbum}
+                  albumQuote={albumQuote}
+                  setAlbumQuote={setAlbumQuote}
+                  albumChoices={albumChoices}
+                  albumChoiceLabel={albumChoiceLabel}
+                  albumOwner={albumOwner}
+                  albumsReason={albumsReason}
+                  showCost={showCost}
+                  setShowCost={setShowCost}
+                  quoteAlbum={quoteAlbum}
+                  makeAlbum={makeAlbum}
                 />
-                {!!detailsError && <Text style={sheetStyles.error}>{detailsError}</Text>}
-                <View style={s.group}>
-                  <Text style={sheetStyles.label}>{copy.copiesLabel}</Text>
-                  <View
-                    style={s.row}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={copy.copiesLabel}
-                  >
-                    <Chip
-                      label={actions.oneCopy}
-                      accessibilityRole="radio"
-                      selected={solo}
-                      disabled={!!draft || busy}
-                      onPress={() => setSolo(true)}
-                      style={s.flex}
-                    />
-                    <Chip
-                      label={actions.multipleCopies}
-                      accessibilityRole="radio"
-                      selected={!solo}
-                      disabled={!!draft || busy}
-                      onPress={() => setSolo(false)}
-                      style={s.flex}
-                    />
-                  </View>
-                  {!solo && (
-                    <>
-                      <View style={s.countRow}>
-                        <Text style={[sheetStyles.label, s.countLabel]}>
-                          {copy.totalLabel}
-                        </Text>
-                        <TextInput
-                          style={s.count}
-                          accessibilityLabel={copy.totalLabel}
-                          value={count}
-                          onChangeText={setCount}
-                          editable={!draft && !busy}
-                          keyboardType="number-pad"
-                          maxLength={4}
-                        />
-                      </View>
-                    </>
-                  )}
-                </View>
-                {/* The price of a copy: absent, never disabled, where it cannot apply. */}
-                {priceable && (
-                  <View style={s.group}>
-                    <Text style={sheetStyles.label}>{priceCopy.publishLabel}</Text>
-                    <TextInput
-                      style={sheetStyles.input}
-                      accessibilityLabel={priceCopy.publishLabel}
-                      value={priceText}
-                      onChangeText={setPriceText}
-                      editable={!busy && !initializing}
-                      keyboardType="decimal-pad"
-                      placeholder={priceCopy.publishPlaceholder}
-                      placeholderTextColor={colors.muted}
-                      maxLength={24}
-                    />
-                    {!!priceError && <Text style={sheetStyles.error}>{priceError}</Text>}
-                  </View>
-                )}
-                {/* The royalty and who may collect. Absent, never disabled, on a deployment that
-                    takes neither; who may collect only where there is a copy to collect and a
-                    Genesis Token can be sealed. */}
-                {distribution && (
-                  <View style={s.group}>
-                    <View style={s.countRow}>
-                      <Text style={[sheetStyles.label, s.countLabel]}>{copy.royaltyLabel}</Text>
-                      <View style={s.stepper}>
-                        <Chip
-                          label={copy.lessRoyalty}
-                          size="small"
-                          disabled={busy || royaltyBps <= 0}
-                          onPress={() => setRoyaltyBps((bps) => Math.max(0, bps - 100))}
-                          style={s.step}
-                        />
-                        <Text style={s.stepValue}>{copy.royaltyValue(royaltyBps)}</Text>
-                        <Chip
-                          label={copy.moreRoyalty}
-                          size="small"
-                          disabled={busy || royaltyBps >= MAX_ROYALTY_BPS}
-                          onPress={() => setRoyaltyBps((bps) => Math.min(MAX_ROYALTY_BPS, bps + 100))}
-                          style={s.step}
-                        />
-                      </View>
-                    </View>
-                    {!solo && sealable && (
-                      <View style={s.countRow}>
-                        <Text style={[sheetStyles.label, s.countLabel]}>{copy.seekerOnlyLabel}</Text>
-                        <Switch
-                          value={seekerOnly}
-                          onValueChange={setSeekerOnly}
-                          disabled={busy}
-                          trackColor={{ true: colors.teal, false: colors.line }}
-                          thumbColor={colors.ink}
-                        />
-                      </View>
-                    )}
-                  </View>
-                )}
-                <View style={s.group}>
-                  <Text style={sheetStyles.label}>{copy.albumLabel}</Text>
-                  <View
-                    style={s.row}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={copy.albumLabel}
-                  >
-                    <Chip
-                      label={actions.noAlbum}
-                      accessibilityRole="radio"
-                      selected={albumMode === "none"}
-                      disabled={!!draft || busy}
-                      onPress={() => {
-                        setAlbumMode("none");
-                        setSelectedAlbum("");
-                        setAlbumQuote(null);
-                        setNewAlbum("");
-                      }}
-                      style={s.flex}
-                    />
-                    <Chip
-                      label={actions.chooseAlbum}
-                      accessibilityRole="radio"
-                      selected={albumMode === "existing"}
-                      disabled={!!draft || busy || albumChoices.length === 0}
-                      onPress={() => {
-                        setAlbumMode("existing");
-                        setAlbumQuote(null);
-                        setNewAlbum("");
-                      }}
-                      style={s.flex}
-                    />
-                    <Chip
-                      label={actions.newAlbum}
-                      accessibilityRole="radio"
-                      selected={albumMode === "new"}
-                      disabled={!!draft || busy}
-                      onPress={() => {
-                        setAlbumMode("new");
-                        setSelectedAlbum("");
-                      }}
-                      style={s.flex}
-                    />
-                  </View>
-                  {albumMode === "existing" &&
-                    (albumChoices.length ? (
-                      <View
-                        accessibilityRole="radiogroup"
-                        accessibilityLabel={actions.chooseAlbum}
-                        style={s.albumChoices}
-                      >
-                        {albumChoices.map((album) => (
-                          <Chip
-                            key={album.address}
-                            label={albumChoiceLabel(album)}
-                            accessibilityRole="radio"
-                            selected={selectedAlbum === album.address}
-                            disabled={!!draft || busy}
-                            onPress={() => setSelectedAlbum(album.address)}
-                          />
-                        ))}
-                      </View>
-                    ) : (
-                      <Text style={sheetStyles.help}>
-                        {albumOwner ? copy.albumEmpty : copy.albumNeedsWallet}
-                      </Text>
-                    ))}
-                  {albumMode === "new" && (
-                    <>
-                      <TextInput
-                        style={sheetStyles.input}
-                        accessibilityLabel={copy.albumNameLabel}
-                        value={newAlbum}
-                        onChangeText={(value) => {
-                          setNewAlbum(value);
-                          setAlbumQuote(null);
-                        }}
-                        editable={!draft && !busy && !initializing}
-                        maxLength={ALBUM_NAME_MAX_BYTES}
-                      />
-                      {albumQuote?.step === "sign" ? (
-                        <>
-                          <CostEstimate prepared={albumQuote.prepared} suffix={copy.albumCostSuffix}
-                            expanded={showCost} onToggle={() => setShowCost((v) => !v)} />
-                          <Pill
-                            label={
-                              busy ? actions.creatingAlbum : actions.createAlbum
-                            }
-                            disabled={busy}
-                            onPress={() => void makeAlbum()}
-                          />
-                        </>
-                      ) : (
-                        <Pill
-                          label={busy ? "Checking…" : actions.checkAlbumCost}
-                          variant="secondary"
-                          disabled={busy || !newAlbum.trim() || !!draft || agreement.agreed !== true}
-                          onPress={() => void quoteAlbum()}
-                        />
-                      )}
-                    </>
-                  )}
-                  {!!albumsReason && <Text style={sheetStyles.help}>{albumsReason}</Text>}
-                  {albumMode !== "none" && (
-                    <Text style={sheetStyles.help}>{copy.albumBody}</Text>
-                  )}
-                </View>
               </>
             )}
-            {/* The receipt rows come from the validated draft, never the text fields, so they
-                match the hashed document exactly. */}
-            {draft ? (
-              <View style={s.receipt}>
-                {quote?.step === "sign" && (
-                  <View style={s.total}>
-                    <Text style={s.totalValue}>
-                      {sol(quote.prepared.estimatedLamports)} SOL
-                    </Text>
-                    <Text style={sheetStyles.label}>{estimate.label}</Text>
-                  </View>
-                )}
-                <Row label={copy.rowCopies} value={String(draft.edition.supply)} />
-                {/* The price is a buyer's, not the publisher's: it is stated beside the copies and
-                    never added into the estimate below. */}
-                {draftPrice !== null && (
-                  <Row
-                    label={priceCopy.label}
-                    value={
-                      draftPrice > 0n
-                        ? priceCopy.value(formatSol(draftPrice))
-                        : priceCopy.free
-                    }
-                  />
-                )}
-                {/* Sealed at publish beside the price, where the deployment takes them. */}
-                {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && (
-                  <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
-                )}
-                {/* Always stated: the switch may ask for Seeker-only on a wallet with no token to seal. */}
-                {programFeatures(draft.edition.program).royaltiesAndSeekerOnly && draft.edition.supply > 1 && (
-                  <Row label={copy.rowCollectors}
-                    value={draft.seekerOnly ? collectCopy.seekerOnly : collectCopy.anyone} />
-                )}
-                {!!draft.edition.description && (
-                  <Row label={copy.rowMoment} value={draft.edition.description} />
-                )}
-                {!!previewAlbum && (
-                  <Row label={copy.rowAlbum} value={previewAlbum} />
-                )}
-                <Row
-                  label={copy.rowImage}
-                  value={`${draft.edition.width} × ${draft.edition.height}`}
-                />
-                {/* Derived from the certificate sealed in the document, never typed; always
-                    shown, so a phone that produced no evidence says so here. */}
-                <Row
-                  label={copy.rowDevice}
-                  value={deviceValue(draft.edition, device, (a) => `${deviceName(a)} · ${securityLevelName(a)}`)}
-                />
-                {/* The mint the document names, found on mainnet when the draft was made. */}
-                {draft.edition.genesisMint ? (
-                  <Row label={copy.rowGenesis} value={shortAddress(draft.edition.genesisMint)} />
-                ) : draft.genesisUnchecked ? (
-                  <Row label={copy.rowGenesis} value={copy.rowGenesisUnchecked} />
-                ) : null}
-                <WalletRow
-                  owner={owner}
-                  ownerLabel={ownerLabel}
-                  ownerName={ownerName}
-                  expanded={showWallet}
-                  onToggle={() => setShowWallet((value) => !value)}
-                />
-                {quote?.step === "sign" && (
-                  <>
-                    <View style={sheetStyles.rule} />
-                    <Row
-                      label={estimate.networkFee}
-                      value={`${sol(quote.prepared.estimateBreakdown.networkFee)} SOL`}
-                    />
-                    {/* The simulated balance delta contains the network fee and the storage
-                        transfer; each is stated on its own row rather than twice. */}
-                    <Row
-                      label={estimate.accountCost}
-                      value={`${sol(costRows(quote.prepared, quote.storageLamports).accounts)} SOL`}
-                    />
-                    {quote.storageLamports > 0n && (
-                      <Row label={estimate.storage} value={`${sol(quote.storageLamports)} SOL`} />
-                    )}
-                    <Row
-                      label={estimate.allowance}
-                      value={`${sol(quote.prepared.estimateBreakdown.allowance)} SOL`}
-                    />
-                  </>
-                )}
-              </View>
-            ) : (
-              <View style={s.receipt}>
-                <WalletRow
-                  owner={owner}
-                  ownerLabel={ownerLabel}
-                  ownerName={ownerName}
-                  expanded={showWallet}
-                  onToggle={() => setShowWallet((value) => !value)}
-                />
-              </View>
-            )}
+            <PrintReceipt
+              draft={draft}
+              quote={quote}
+              device={device}
+              previewAlbum={previewAlbum}
+              owner={owner}
+              ownerLabel={ownerLabel}
+              ownerName={ownerName}
+              showWallet={showWallet}
+              onToggleWallet={() => setShowWallet((value) => !value)}
+            />
             {!published && draft && !busy && (
               <Pill
                 label={actions.changeDraft}
@@ -1062,113 +761,34 @@ export function PrintSheet({
             )}
           </ScrollView>
           <View style={[sheetStyles.dock, { paddingBottom: insets.bottom + space.lg }]}>
-            {!canPublish && !initializing ? (
-              <>
-                <Text style={s.noticeTitle}>
-                  {access === "blocked"
-                    ? copy.blockedTitle
-                    : copy.unavailableTitle}
-                </Text>
-                <Text style={sheetStyles.help}>
-                  {access === "blocked"
-                    ? unreadable
-                      ? error || copy.unreadableBody
-                      : error || status || copy.blockedBody
-                    : (availability.reason ?? copy.unavailableBody)}
-                </Text>
-                {unreadable && (
-                  <Pill
-                    label={actions.discardUnreadable}
-                    disabled={busy}
-                    onPress={() => void change()}
-                  />
-                )}
-                <Pill
-                  label={actions.backToPhotograph}
-                  variant="secondary"
-                  onPress={onClose}
-                />
-              </>
-            ) : (
-              <>
-                {!!(error || draft?.storageError?.message || status) && (
-                  <Text
-                    style={error || draft?.storageError ? sheetStyles.error : sheetStyles.help}
-                    accessibilityLiveRegion="polite"
-                  >
-                    {error || draft?.storageError?.message || status}
-                  </Text>
-                )}
-                {/* A full album: discarding the draft frees the album selection, and the
-                    photograph's details are kept. */}
-                {fallback === "publish-without-album" && !published && (
-                  <>
-                    <Text style={sheetStyles.help}>{copy.fallbackWithoutAlbum}</Text>
-                    <Pill
-                      label={copy.publishWithoutAlbum}
-                      variant="secondary"
-                      disabled={busy}
-                      onPress={() => void change()}
-                    />
-                  </>
-                )}
-                {fallback === "new-album" && (
-                  <Text style={sheetStyles.help}>{copy.fallbackNewAlbum}</Text>
-                )}
-                {!valid && !published && !initializing && !error && (
-                  <Text style={sheetStyles.help}>
-                    {!title.trim()
-                      ? copy.needTitle
-                      : detailsError
-                        ? detailsError
-                        : priceError
-                          ? priceError
-                          : albumPending
-                          ? copy.needAlbum
-                          : copy.needCount}
-                  </Text>
-                )}
-                {topUp && (
-                  <Pill
-                    label={actions.payStorage(formatSol(topUp.lamports))}
-                    disabled={busy}
-                    onPress={() => void payForStorage()}
-                  />
-                )}
-                {complete || (published && !storageCanRetry) ? (
-                  <Pill label={actions.viewPhotograph} onPress={onClose} />
-                ) : !published && agreement.agreed !== true ? (
-                  <TermsAgreement agreed={agreement.agreed} onAgree={() => void agreement.agree()} />
-                ) : quote ? (
-                  <Pill
-                    label={
-                      busy
-                        ? "Publishing…"
-                        : quote.step === "ready"
-                          ? draft?.storageError?.kind === "quota"
-                            ? actions.checkUpload
-                            : actions.completeUpload
-                          : actions.confirmPublish
-                    }
-                    accessibilityHint={onChain.publish}
-                    disabled={busy || !canPublish}
-                    onPress={() => void publish()}
-                  />
-                ) : (
-                  <Pill
-                    label={
-                      busy
-                        ? "Preparing…"
-                        : initializing
-                          ? "Loading photograph…"
-                          : actions.continueToPublish
-                    }
-                    disabled={busy || initializing || !valid || !canPublish}
-                    onPress={() => void prepare()}
-                  />
-                )}
-              </>
-            )}
+            <PrintDock
+              canPublish={canPublish}
+              initializing={initializing}
+              access={access}
+              unreadable={unreadable}
+              availability={availability}
+              error={error}
+              status={status}
+              busy={busy}
+              draft={draft}
+              fallback={fallback}
+              published={published}
+              valid={valid}
+              title={title}
+              detailsError={detailsError}
+              priceError={priceError}
+              albumPending={albumPending}
+              topUp={topUp}
+              complete={complete}
+              storageCanRetry={storageCanRetry}
+              agreement={agreement}
+              quote={quote}
+              onClose={onClose}
+              change={change}
+              payForStorage={payForStorage}
+              publish={publish}
+              prepare={prepare}
+            />
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -1176,155 +796,8 @@ export function PrintSheet({
   );
 }
 
-/** One receipt row: a mono label on the left, its value on the right. */
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={sheetStyles.rowLine}>
-      <Text style={s.rowLabel}>{label}</Text>
-      <Text style={sheetStyles.rowValue} selectable>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-/**
- * The wallet row: the address, with the `.skr` name beside it when known. Tapping shows the full
- * address. Never uppercased: base58 is case-sensitive.
- */
-function WalletRow({
-  owner,
-  ownerLabel,
-  ownerName,
-  expanded,
-  onToggle,
-}: {
-  owner: string | undefined;
-  ownerLabel: string;
-  ownerName: string | null;
-  expanded: boolean;
-  onToggle(): void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        expanded ? "Hide full wallet address" : "Show full wallet address"
-      }
-      accessibilityState={{ expanded }}
-      disabled={!owner}
-      onPress={onToggle}
-      style={s.walletToggle}
-    >
-      <View style={sheetStyles.rowLine}>
-        <Text style={s.rowLabel}>{copy.rowWallet}</Text>
-        <Text style={owner ? sheetStyles.rowValue : s.rowValueMuted}>{ownerLabel}</Text>
-      </View>
-      {!!ownerName && <Text style={s.rowNote}>{ownerName}</Text>}
-      {owner && expanded && (
-        <Text style={s.address} selectable>
-          {owner}
-        </Text>
-      )}
-    </Pressable>
-  );
-}
-
-/** A labelled text field, in the field colour with a mono label. */
-function Field({
-  label,
-  value,
-  onChangeText,
-  editable,
-  maxLength,
-}: {
-  label: string;
-  value: string;
-  onChangeText(value: string): void;
-  editable: boolean;
-  maxLength: number;
-}) {
-  return (
-    <View style={sheetStyles.field}>
-      <Text style={sheetStyles.label}>{label}</Text>
-      <TextInput
-        style={sheetStyles.input}
-        accessibilityLabel={label}
-        value={value}
-        onChangeText={onChangeText}
-        editable={editable}
-        maxLength={maxLength}
-      />
-    </View>
-  );
-}
-
-/**
- * The price a saved draft committed to, in lamports, or null when it carries none. Stored as a
- * decimal string because a draft is JSON; an unreadable one is treated as no price rather than
- * taken down to a crash, since the amount is a receipt line and not what the wallet signs.
- */
-function draftPriceLamports(draft: PublicationDraft | null): bigint | null {
-  if (!draft?.price) return draft?.price === "0" ? 0n : null;
-  try {
-    return BigInt(draft.price);
-  } catch {
-    return null;
-  }
-}
-
 /** A small `Pill`'s height: the row the back action gets to itself, above the photo strip. */
 const HEADER_ROW = 46;
 const s = StyleSheet.create({
   sheet: { ...sheetStyles.sheet, marginTop: "20%" },
-  group: { gap: space.sm },
-  row: { flexDirection: "row", gap: space.sm },
-  flex: { flex: 1 },
-  albumChoices: { gap: space.sm, alignItems: "flex-start" },
-  countRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: space.md,
-  },
-  countLabel: { flex: 1 },
-  stepper: { flexDirection: "row", alignItems: "center", gap: space.sm },
-  step: { width: 44 },
-  stepValue: { ...type.readout, color: colors.ink, minWidth: 48, textAlign: "center" },
-  count: {
-    ...type.readout,
-    color: colors.ink,
-    backgroundColor: colors.field,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: radius.small,
-    width: 96,
-    height: 48,
-    textAlign: "center",
-  },
-  receipt: {
-    padding: space.lg - 4,
-    gap: space.sm,
-    backgroundColor: colors.field,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: radius.small,
-  },
-  total: { gap: space.xs, paddingBottom: space.sm },
-  totalValue: { ...type.display, color: colors.ink },
-  rowLabel: { ...type.label, color: colors.muted, paddingTop: 2 },
-  rowValueMuted: {
-    ...type.readout,
-    textTransform: "none",
-    letterSpacing: 0,
-    fontSize: 14,
-    lineHeight: 19,
-    color: colors.muted,
-    flexShrink: 1,
-    textAlign: "right",
-  },
-  rowNote: { ...type.body, fontSize: 13, lineHeight: 19, color: colors.muted, textAlign: "right" },
-  walletToggle: { gap: space.xs },
-  address: { ...type.imprint, textTransform: "none", color: colors.muted, textAlign: "right" },
-  noticeTitle: { ...type.body, color: colors.ink },
 });

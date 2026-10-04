@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -26,10 +25,9 @@ import {
 } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useMobileWallet } from "@wallet-ui/react-native-kit";
-import type { KitMobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-kit";
 import * as Sharing from "expo-sharing";
 import { StatusBar } from "expo-status-bar";
-import { liveAuthorize } from "../solana/liveAuthorize";
+import { useWalletSession } from "../solana/useWalletSession";
 import type { HomeTabs } from "../navigators/HomeNavigator";
 import {
   SeekerCamera,
@@ -37,7 +35,6 @@ import {
   type CaptureRecord,
   type PhotoEdit,
 } from "../../modules/seeker-camera";
-import type { WalletSession } from "../solana/walletSession";
 import { useSeekerIdentity } from "../seeker/useSeekerIdentity";
 import { useShareStampPref } from "../seeker/shareStampPref";
 import {
@@ -137,27 +134,10 @@ export function ReviewScreen() {
   } | null>(null);
   const request = useRef(0),
     operation = useRef(false);
-  const {
-    account,
-    chain,
-    connectAnd,
-    identity: appIdentity,
-    store,
-  } = useMobileWallet();
+  const { account } = useMobileWallet();
   const identity = useSeekerIdentity(),
     stampPref = useShareStampPref();
-  const authorizeSession = useCallback(
-    (wallet: KitMobileWallet) =>
-      liveAuthorize({ store, chain, identity: appIdentity }, wallet),
-    [store, chain, appIdentity],
-  );
-  const session = useMemo<WalletSession>(
-    () => ({
-      connectAnd: connectAnd as unknown as WalletSession["connectAnd"],
-      authorizeSession,
-    }),
-    [connectAnd, authorizeSession],
-  );
+  const session = useWalletSession();
   const detail = photos.find((p) => p.record.baseName === openBaseName);
   /**
    * A capture the camera just handed over. The list stays out of sight until its photograph

@@ -1,5 +1,6 @@
 import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
+import { Row } from "./SheetRow";
 /**
  * CollectSheet: taking one numbered copy of somebody else's edition into this wallet.
  *
@@ -43,13 +44,8 @@ import { collectUrl, explorerUrl } from "../../publications/core/protocol";
 import { reportMailto } from "../moderation/core";
 import { useModeration, useTermsAgreement } from "../moderation/store";
 import { TermsAgreement } from "../moderation/TermsAgreement";
-
-import {
-  isChangedQuote,
-  isExpiredQuote,
-  isUserCancellation,
-  isWalletResponseTimeout,
-} from "../solana/walletErrors";
+import { isUserCancellation } from "../solana/walletErrors";
+import { useSheetOperation, walletOutcome } from "./useSheetOperation";
 
 export function CollectSheet({
   target,
@@ -64,35 +60,37 @@ export function CollectSheet({
   onClose(): void;
   onCollected?(): void;
 }) {
-  const insets = useSafeAreaInsets(),
-    running = useRef(false);
+  const insets = useSafeAreaInsets();
   const moderation = useModeration(),
     terms = useTermsAgreement();
-  // Every async result is tagged with the request that asked for it, so a slow read for an
-  // earlier target can never paint over a newer one.
-  const request = useRef(0),
-    currentQuote = useRef<CollectQuote | null>(null),
-    currentCollectable = useRef<Collectable | null>(null);
+  const {
+    running,
+    request,
+    busy,
+    status,
+    setStatus,
+    error,
+    setError,
+    quote,
+    currentQuote,
+    setQuote,
+    clearQuote,
+    showCost,
+    setShowCost,
+    run,
+    showCheckFailure,
+  } = useSheetOperation<CollectQuote>();
+  const currentCollectable = useRef<Collectable | null>(null);
   const [collectable, setCollectable] = useState<Collectable | null>(null);
   const [state, setState] = useState<CollectState | null>(null);
-  const [quote, setQuote] = useState<CollectQuote | null>(null);
   // The wallet this sheet is acting for: the connected one, or the one Connect just authorized.
   const [wallet, setWallet] = useState(walletAddress ?? "");
   // The copy number a confirmed collect returned. Present means the flow is finished.
   const [collected, setCollected] = useState<number | null>(null);
-  const [showCost, setShowCost] = useState(false);
-  const [busy, setBusy] = useState(false),
-    [status, setStatus] = useState(""),
-    [error, setError] = useState("");
 
   // A link for another chain is refused before anything is read: on the wrong cluster the address
   // could name an unrelated account.
   const wrongNetwork = target.cluster !== cluster;
-
-  function clearQuote() {
-    currentQuote.current = null;
-    setQuote(null);
-  }
 
   /**
    * Re-read the edition after a refusal. A refused review or buy is most often the offer moving
@@ -152,26 +150,23 @@ export function CollectSheet({
   /** Re-read this wallet's eligibility. Opens no wallet, so it is safe to run on any tap. */
   async function check() {
     const current = currentCollectable.current;
-    if (running.current || !current || !wallet) return;
-    const id = ++request.current;
-    running.current = true;
-    setBusy(true);
-    clearQuote();
-    setError("");
-    setStatus(copy.checking);
-    try {
-      const next = await getCollectState(current, wallet);
-      if (id !== request.current) return;
-      setState(next);
-      setStatus(next.reason ?? "");
-    } catch (e) {
-      setState(null);
-      setStatus("");
-      setError(safeErrorText(e));
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    if (!current || !wallet) return;
+    return run(async () => {
+      const id = ++request.current;
+      clearQuote();
+      setError("");
+      setStatus(copy.checking);
+      try {
+        const next = await getCollectState(current, wallet);
+        if (id !== request.current) return;
+        setState(next);
+        setStatus(next.reason ?? "");
+      } catch (e) {
+        setState(null);
+        setStatus("");
+        setError(safeErrorText(e));
+      }
+    });
   }
 
   /**
@@ -179,22 +174,16 @@ export function CollectSheet({
    * re-runs on the new address and reads eligibility for it.
    */
   async function connect() {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      const owner = await session.connectAnd((w) => session.authorizeSession(w));
-      setWallet(owner.address);
-    } catch (e) {
-      const timedOut = isWalletResponseTimeout(e);
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
-      setStatus(timedOut ? walletTimeout.connect : isUserCancellation(e) ? copy.cancelled : "");
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    return run(async () => {
+      setError("");
+      setStatus("");
+      try {
+        const owner = await session.connectAnd((w) => session.authorizeSession(w));
+        setWallet(owner.address);
+      } catch (e) {
+        showCheckFailure(e, { timedOut: walletTimeout.connect, cancelled: copy.cancelled });
+      }
+    });
   }
 
   /** "Continue": simulate the collect and show what it would cost. Nothing is signed here. */
@@ -205,91 +194,78 @@ export function CollectSheet({
       setStatus(copy.working);
       return;
     }
-    running.current = true;
-    setBusy(true);
-    setError("");
-    // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
-    clearQuote();
-    setStatus("");
-    try {
-      const next = await prepareCollect(current, wallet);
-      currentQuote.current = next;
-      setQuote(next);
-    } catch (e) {
+    return run(async () => {
+      setError("");
+      // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
       clearQuote();
-      // A cost check signs nothing; eligibility may have moved, so it is re-read.
-      const timedOut = isWalletResponseTimeout(e);
-      setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
-      setStatus(
-        timedOut ? walletTimeout.collectCostCheck : isUserCancellation(e) ? copy.cancelled : "",
-      );
-      if (!isUserCancellation(e)) {
-        const latest = (await reload()) ?? current;
-        const next = await getCollectState(latest, wallet).catch(() => null);
-        if (next) setState(next);
+      setStatus("");
+      try {
+        const next = await prepareCollect(current, wallet);
+        setQuote(next);
+      } catch (e) {
+        clearQuote();
+        // A cost check signs nothing; eligibility may have moved, so it is re-read.
+        showCheckFailure(e, { timedOut: walletTimeout.collectCostCheck, cancelled: copy.cancelled });
+        if (!isUserCancellation(e)) {
+          const latest = (await reload()) ?? current;
+          const next = await getCollectState(latest, wallet).catch(() => null);
+          if (next) setState(next);
+        }
       }
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
 
   /** "Collect": the one tap that opens the wallet to sign. */
   async function send() {
     const current = currentCollectable.current;
-    if (running.current || !current || !quote || currentQuote.current !== quote || !wallet) return;
-    running.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const receipt = await sendCollect(current, quote, session, (phase) =>
-        setStatus(phase === "wallet" ? copy.progressWallet : copy.progressConfirming),
-      );
-      clearQuote();
-      setCollected(receipt.number);
-      setStatus("");
-      onCollected?.();
-      // The count issued so far now includes this copy.
-      void reload();
-    } catch (e) {
-      clearQuote();
-      // Seed Vault broadcasts first and answers only when its success screen is closed, so a
-      // timeout usually means the copy has already been collected. The state read below is what
-      // decides, never the error.
-      const timedOut = isWalletResponseTimeout(e);
-      const expired = isExpiredQuote(e);
-      const changed = isChangedQuote(e);
-      if (timedOut) setStatus(walletTimeout.collectChecking);
-      const latest = isUserCancellation(e) ? current : ((await reload()) ?? current);
-      const next = await getCollectState(latest, wallet).catch(() => null);
-      if (next) setState(next);
-      // A fresh read can resolve a collect whose own receipt check failed. Its verdict supersedes
-      // the error: never leave retry instructions under a copy that is confirmed.
-      if (next?.eligibility === "already" && next.number !== undefined && !expired && !changed) {
-        setCollected(next.number);
-        setError("");
-        setStatus(timedOut ? walletTimeout.collectFound : "");
+    if (!current || !quote || currentQuote.current !== quote || !wallet) return;
+    return run(async () => {
+      setError("");
+      try {
+        const receipt = await sendCollect(current, quote, session, (phase) =>
+          setStatus(phase === "wallet" ? copy.progressWallet : copy.progressConfirming),
+        );
+        clearQuote();
+        setCollected(receipt.number);
+        setStatus("");
         onCollected?.();
-        return;
+        // The count issued so far now includes this copy.
+        void reload();
+      } catch (e) {
+        clearQuote();
+        // Seed Vault broadcasts first and answers only when its success screen is closed, so a
+        // timeout usually means the copy has already been collected. The state read below is what
+        // decides, never the error.
+        const { cancelled, timedOut, expired, changed, quiet } = walletOutcome(e);
+        if (timedOut) setStatus(walletTimeout.collectChecking);
+        const latest = cancelled ? current : ((await reload()) ?? current);
+        const next = await getCollectState(latest, wallet).catch(() => null);
+        if (next) setState(next);
+        // A fresh read can resolve a collect whose own receipt check failed. Its verdict supersedes
+        // the error: never leave retry instructions under a copy that is confirmed.
+        if (next?.eligibility === "already" && next.number !== undefined && !expired && !changed) {
+          setCollected(next.number);
+          setError("");
+          setStatus(timedOut ? walletTimeout.collectFound : "");
+          onCollected?.();
+          return;
+        }
+        setError(quiet ? "" : safeErrorText(e));
+        setStatus(
+          timedOut
+            ? walletTimeout.collectPending
+            : changed
+              ? changedEstimate.collect
+              : expired
+                ? expiredEstimate.collect
+                : cancelled
+                  ? next?.eligibility === "collect" || next?.eligibility === "soldOut"
+                    ? copy.cancelled
+                    : copy.cancelledPending
+                  : "",
+        );
       }
-      setError(isUserCancellation(e) || timedOut || expired || changed ? "" : safeErrorText(e));
-      setStatus(
-        timedOut
-          ? walletTimeout.collectPending
-          : changed
-            ? changedEstimate.collect
-            : expired
-              ? expiredEstimate.collect
-              : isUserCancellation(e)
-                ? next?.eligibility === "collect" || next?.eligibility === "soldOut"
-                  ? copy.cancelled
-                  : copy.cancelledPending
-                : "",
-      );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    });
   }
 
   const e = collectable?.edition;
@@ -530,16 +506,6 @@ export function CollectSheet({
         </View>
       </View>
     </Modal>
-  );
-}
-
-/** One label/value line of the record box. */
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={sheetStyles.rowLine}>
-      <Text style={sheetStyles.label}>{label}</Text>
-      <Text style={sheetStyles.rowValue}>{value}</Text>
-    </View>
   );
 }
 

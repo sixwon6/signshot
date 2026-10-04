@@ -6,6 +6,7 @@
   "exclude": [
     "node_modules",
     "scripts",
-    "site/dist"
+    "site/dist",
+    "worker"
   ]
 }

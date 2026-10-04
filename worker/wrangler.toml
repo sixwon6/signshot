@@ -1,0 +1,40 @@
+name = "signshot-cosigner"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Secrets, set with `wrangler secret put <NAME>` (never in this file):
+#   COSIGNER_SECRET_KEY  solana-keygen JSON (64-byte array) of the ACTIVE Third Party Signer key
+#   COSIGNER_SECRET_KEYS optional: JSON array of further ACCEPTED keys (rotation overlap)
+#   NONCE_HMAC_SECRET    32+ characters, e.g. `openssl rand -hex 32` (shorter: every request is refused)
+#   MAINNET_RPC_URL      Helius mainnet URL with its api-key
+
+[vars]
+SIWS_DOMAIN = "erashot.app"
+SIWS_URI = "https://erashot.app"
+DEVNET_RPC_URL = "https://api.devnet.solana.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "signshot-claims"
+database_id = "71398e46-0a99-4b44-90e9-487d436fdf68"
+migrations_dir = "migrations"
+
+# Per client network (an IPv4 address or an IPv6 /64) and route, on /health, /challenge and /claim.
+# namespace_id is any integer unique within the account.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+# One constant key: a cap on the whole Worker, whoever asks.
+[[ratelimits]]
+name = "GLOBAL_LIMITER"
+namespace_id = "1002"
+simple = { limit = 600, period = 60 }
+
+# Hourly: drop spent nonces past their expiry.
+[triggers]
+crons = ["17 * * * *"]
+
+[observability]
+enabled = true

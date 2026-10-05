@@ -12,11 +12,11 @@ routes = [{ pattern = "cosign.erashot.app", custom_domain = true }]
 #   COSIGNER_SECRET_KEYS optional: JSON array of further ACCEPTED keys (rotation overlap)
 #   NONCE_HMAC_SECRET    32+ characters, e.g. `openssl rand -hex 32` (shorter: every request is refused)
 #   MAINNET_RPC_URL      Helius mainnet URL with its api-key
+#   DEVNET_RPC_URL       Helius devnet URL with its api-key (the public devnet endpoint refuses Workers)
 
 [vars]
 SIWS_DOMAIN = "erashot.app"
 SIWS_URI = "https://erashot.app"
-DEVNET_RPC_URL = "https://api.devnet.solana.com"
 
 [[d1_databases]]
 binding = "DB"

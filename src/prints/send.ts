@@ -38,7 +38,7 @@ import { classifyClaimFailure, type ClaimFailure } from "../../publications/cand
 import { NEEDS_SOL, request } from "../../publications/rpc";
 import { RPC_ENDPOINT } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
-import type { SignInResult } from "../solana/liveAuthorize";
+import { signInWith, type SignInResult } from "../solana/liveAuthorize";
 
 // ---------------------------------------------------------------------------------------------
 // This phone's keypairs
@@ -244,8 +244,9 @@ export const priorityLamports = (budgets: Budget[]) =>
 const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 /**
- * One wallet session: authorize (or sign in with `signIn`), check it is `expected`, have the wallet
- * sign every transaction in ONE request, then `finish` each. Nothing is sent here.
+ * One wallet session: authorize, check it is `expected`, sign in with `signIn` when a co-signer
+ * asked for it, have the wallet sign every transaction in ONE request, then `finish` each. Nothing
+ * is sent here.
  */
 export async function signWithWallet(
   session: WalletSession,
@@ -254,14 +255,9 @@ export async function signWithWallet(
   signIn?: Record<string, unknown>,
 ): Promise<{ transactions: Transaction[]; signInResult?: SignInResult }> {
   return session.connectAnd(async (wallet) => {
-    let signInResult: SignInResult | undefined;
-    let account: { address: string };
-    if (signIn) {
-      const result = await session.signIn(wallet, signIn);
-      account = result.account;
-      signInResult = result.signInResult;
-    } else account = await session.authorizeSession(wallet);
+    const account = await session.authorizeSession(wallet);
     if (account.address !== expected) throw new Error(`Choose the wallet ${short(expected)} in your wallet app.`);
+    const signInResult = signIn ? await signInWith(wallet, account, signIn) : undefined;
     const signed = await wallet.signTransactions({ transactions: prepared.map((p) => p.transaction) });
     if (!Array.isArray(signed) || signed.length !== prepared.length)
       throw new Error("The wallet did not return every transaction. Nothing was sent.");

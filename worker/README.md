@@ -17,7 +17,7 @@ All requests and responses are JSON. Errors come back as `{ "error": code }`, pl
 
 **`GET /health`** returns `{ version, signer, accepted }`. `signer` is the active co-signer key, the one new editions should name; `accepted` lists every key the Worker will co-sign with.
 
-**`POST /challenge`** takes `{ wallet }` and returns the SIWS payload for MWA's `sign_in_payload`:
+**`POST /challenge`** takes `{ wallet }` and returns the SIWS payload, whose message the app has the wallet sign with MWA's `sign_messages`:
 
 ```json
 { "domain": "erashot.app", "statement": "Sign in to claim a Seeker edition", "uri": "https://erashot.app",
@@ -35,7 +35,7 @@ The nonce lasts 10 minutes and can be spent once.
   "transaction": "<base64 wire transaction, already signed by the wallet and the app's keypairs>" }
 ```
 
-`signInOutput` is MWA's `sign_in_result`, passed through unchanged.
+`signInOutput` has the shape of MWA's `sign_in_result`: base64 `address`, `signed_message` and `signature`.
 
 The signing order is fixed. The wallet signs first, with MWA `signTransactions`; it may rewrite the compute-unit price and reorder the accounts. The app then adds its local keypairs' signatures, and this Worker signs last.
 
@@ -168,7 +168,8 @@ wrangler secret put MAINNET_RPC_URL       # https://mainnet.helius-rpc.com/?api-
 
 - `MAINNET_RPC_URL` must be Helius, because the recipe's `getTokenAccountsByOwnerV2` is a Helius method. The Worker never logs or returns it.
 - `NONCE_HMAC_SECRET` must be at least 32 characters. Shorter, and every request answers `500 misconfigured`.
-- `wrangler.toml` sets the vars `SIWS_DOMAIN`, `SIWS_URI` and `DEVNET_RPC_URL`. It also sets two rate limits:
+- `DEVNET_RPC_URL` is the same Helius key's devnet URL, also a secret. The public devnet endpoint refuses requests from Workers.
+- `wrangler.toml` sets the vars `SIWS_DOMAIN` and `SIWS_URI`. It also sets two rate limits:
   - 20 requests a minute per client network and route, on `/health`, `/challenge` and `/claim` (an IPv6 /64 counts as one client);
   - 600 requests a minute for the whole Worker.
 - `wrangler.toml` serves the Worker only on the custom domain `cosign.erashot.app` (`workers_dev = false`, `preview_urls = false`).

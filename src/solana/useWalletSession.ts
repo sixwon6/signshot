@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useMobileWallet } from "@wallet-ui/react-native-kit";
 import type { KitMobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-kit";
-import { liveAuthorize, liveSignIn } from "./liveAuthorize";
+import { liveAuthorize } from "./liveAuthorize";
 import type { WalletSession } from "./walletSession";
 
 /**
@@ -15,17 +15,11 @@ export function useWalletSession(): WalletSession {
       liveAuthorize({ store, chain, identity: appIdentity }, wallet),
     [store, chain, appIdentity],
   );
-  const signIn = useCallback(
-    (wallet: KitMobileWallet, payload: Record<string, unknown>) =>
-      liveSignIn({ store, chain, identity: appIdentity }, wallet, payload),
-    [store, chain, appIdentity],
-  );
   return useMemo<WalletSession>(
     () => ({
       connectAnd: connectAnd as unknown as WalletSession["connectAnd"],
       authorizeSession,
-      signIn,
     }),
-    [connectAnd, authorizeSession, signIn],
+    [connectAnd, authorizeSession],
   );
 }

@@ -122,7 +122,11 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
     return await claim(await readBody(request), env, deps);
   } catch (e) {
     if (e instanceof HttpError) return e.response;
-    if (e instanceof RpcError) return fail(502, "rpc-unavailable");
+    if (e instanceof RpcError) {
+      // Only the method: the endpoint carries a key.
+      console.error("rpc", e.method);
+      return fail(502, "rpc-unavailable");
+    }
     // Only the error's class: a message could quote a URL.
     console.error("unhandled", e instanceof Error ? e.name : typeof e);
     return fail(500, "internal");

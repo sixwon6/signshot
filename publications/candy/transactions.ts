@@ -47,9 +47,10 @@ export interface Lifetime { blockhash: Blockhash; lastValidBlockHeight: bigint }
 export interface Budget { units: number; microLamports: bigint }
 
 /**
- * What the wallet may add in priority fee: the reviewed price at the returned limit plus 50,000
- * lamports, the allowance the app already shows in its estimate. Mirrors `FEE_ALLOWANCE_LAMPORTS`
- * in `publications/rpc.ts`; `candy/` imports nothing of the app's, so the Worker's tests can load it.
+ * What the wallet may add in priority fee: 250,000 lamports above the reviewed fee (the reviewed
+ * price at the reviewed limit), the allowance the app already shows in its estimate. Mirrors
+ * `FEE_ALLOWANCE_LAMPORTS` in `publications/rpc.ts`; `candy/` imports nothing of the app's, so the
+ * Worker's tests can load it.
  */
 export const FEE_ALLOWANCE_LAMPORTS = 250_000n;
 /** The runtime's ceiling per transaction, and its default per instruction when no limit is set. */
@@ -130,8 +131,9 @@ const leHex = (hex: string) => BigInt(`0x${(hex.match(/../g) ?? []).reverse().jo
  * with the same signer and writable role) and, apart from compute budget, the same instructions
  * in the same order with the same accounts and data. The wallet may only reorder accounts and set
  * at most one SetComputeUnitLimit (at most 1,400,000) and one SetComputeUnitPrice, and the
- * priority fee they make, `ceil(limit × price / 1,000,000)`, may not exceed the reviewed price at
- * that limit plus the allowance. With no limit instruction the runtime's default applies: 200,000
+ * priority fee they make, `ceil(limit × price / 1,000,000)`, may not exceed the reviewed fee (the
+ * reviewed price at the original's own limit) plus the allowance: a wallet that raises the limit
+ * gets no more room for it. With no limit instruction the runtime's default applies: 200,000
  * units per non-budget instruction, capped at 1,400,000. Otherwise a short reason.
  */
 export function sameMeaning(original: MessageBytes, returned: MessageBytes,
@@ -158,6 +160,8 @@ export function sameMeaning(original: MessageBytes, returned: MessageBytes,
   const defaultLimit = DEFAULT_UNITS_PER_INSTRUCTION * BigInt(rb.length);
   const units = limit ?? (defaultLimit > MAX_TRANSACTION_UNITS ? MAX_TRANSACTION_UNITS : defaultLimit);
   if (units > MAX_TRANSACTION_UNITS) return "compute unit limit";
-  if (priorityFee(units, price ?? 0n) >priorityFee(units, fee.reviewedMicroLamports) + fee.feeAllowanceLamports) return "priority fee over the allowance";
+  const reviewedLimit = a.instructions.find((ix) => ix.program === COMPUTE_BUDGET_PROGRAM && ix.data.length === 10 && ix.data.startsWith("02"));
+  const reviewedUnits = reviewedLimit ? leHex(reviewedLimit.data.slice(2)) : units;
+  if (priorityFee(units, price ?? 0n) > priorityFee(reviewedUnits, fee.reviewedMicroLamports) + fee.feeAllowanceLamports) return "priority fee over the allowance";
   return null;
 }

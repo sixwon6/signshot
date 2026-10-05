@@ -111,7 +111,7 @@ import {
   type Price,
 } from "../publications/candy/edition";
 import { decodeGuardData, encodeGuardData } from "../publications/candy/guards";
-import { COMPUTE_BUDGET_PROGRAM, prepareForWallet, sameMeaning, type DraftTransaction } from "../publications/candy/transactions";
+import { COMPUTE_BUDGET_PROGRAM, FEE_ALLOWANCE_LAMPORTS, prepareForWallet, sameMeaning, type DraftTransaction } from "../publications/candy/transactions";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -191,8 +191,6 @@ interface Outcome {
   size: number; signers: number; accountKeys: Address[];
 }
 const LIMIT = 1_232;
-/** `publications/rpc.ts` refuses a transaction over this many bytes before asking the wallet. */
-const APP_BUDGET = 1_057;
 
 /** As the app sends: SetComputeUnitLimit + SetComputeUnitPrice (price 0 keeps lamport accounting exact; the size is the same). */
 async function send(payer: TransactionSigner, instructions: Instruction[]): Promise<Outcome> {
@@ -653,7 +651,7 @@ async function main() {
       const rewritten = await walletSigns(prepared.transaction, w);
       ok("a rewritten message (new price, reordered accounts) differs in bytes and means the same",
         hexOf(new Uint8Array(rewritten.messageBytes)) !== hexOf(new Uint8Array(prepared.transaction.messageBytes)) &&
-        sameMeaning(prepared.transaction.messageBytes, rewritten.messageBytes, { reviewedMicroLamports: BUDGET.microLamports, feeAllowanceLamports: 50_000n }) === null);
+        sameMeaning(prepared.transaction.messageBytes, rewritten.messageBytes, { reviewedMicroLamports: BUDGET.microLamports, feeAllowanceLamports: FEE_ALLOWANCE_LAMPORTS }) === null);
     }
 
     // 1. checkTerms.
@@ -817,6 +815,11 @@ async function main() {
       ok("the publisher changes the price to 0.08 SOL; the next collector pays exactly that", changed.ok && cb.outcome.ok &&
         (await balance(paid.publisher.address)) - before2 === newPrice, changed.ok ? cb.outcome : changed);
       note(`price change: ${changed.size} B, ${changed.units} CU`);
+      // Candy Guard's update cannot grow an account holding more than its new size needs; the client empties the guard first.
+      const freed = await setPrice(paid, { kind: "free" });
+      await host.call("airdrop", { address: hexOf(keyBytes(paid.candyGuard)), lamports: "5000000" });
+      const regrown = await setPrice(paid, { kind: "sol", lamports: newPrice });
+      ok("lamports sent to the guard, then free -> 0.08 SOL: the excess returns and the change lands", freed.ok && regrown.ok, freed.ok ? regrown : freed);
 
       const cost = await costOf(paid);
       const exact = await wallet(cost.total);
@@ -990,7 +993,7 @@ async function main() {
       const t = terms(1000, { kind: "free" });
       t.title = "T".repeat(24);
       const arweave = await publish({ ...t, uri: `https://arweave.net/${"u".repeat(43)}` });
-      note(`24-byte title + an Arweave URI (63 B): ${sizes(arweave)} B against the app's ${APP_BUDGET}-byte budget in publications/rpc.ts; each URI byte adds 2 bytes to transaction 1`);
+      note(`24-byte title + an Arweave URI (63 B): ${sizes(arweave)} B against the ${LIMIT}-byte packet limit; each URI byte adds 2 bytes to transaction 1`);
     }
 
     // 7. The lock, from the client's own publish.
@@ -1256,16 +1259,16 @@ async function main() {
       const o = await sendTx(finished);
       ok("wallet returns a different compute-unit limit and price, accounts reordered: accepted, and it lands", o.ok, o);
 
-      // The priority fee the wallet may set: the reviewed price at its limit + 50,000 lamports.
+      // The priority fee the wallet may set: the reviewed price at its limit + FEE_ALLOWANCE_LAMPORTS (250,000).
       const withPrice = (micro: bigint, units?: number): Mutation => (m) => ({ ...m, instructions: m.instructions.map((ix) =>
         m.staticAccounts[ix.programAddressIndex] !== COMPUTE_BUDGET_PROGRAM ? ix
           : ix.data?.[0] === 3 ? { ...ix, data: priceData(micro) }
           : ix.data?.[0] === 2 && units !== undefined ? { ...ix, data: new Uint8Array([2, ...u32le(units)]) } : ix) });
       const within = await claim(e, await wallet(), { mutate: withPrice(100_000n) });
-      ok(`wallet raises the price to 100,000 micro-lamports at 400,000 units (40,000 lamports, within the 50,000 allowance): lands; the collector pays ${within.spent - within.cost.total} more`,
+      ok(`wallet raises the price to 100,000 micro-lamports at 400,000 units (40,000 lamports, within the 250,000 allowance): lands; the collector pays ${within.spent - within.cost.total} more`,
         within.outcome.ok && within.spent - within.cost.total === 40_000n, within.outcome);
       for (const [label, mutate, pattern] of [
-        ["200,000 micro-lamports at 400,000 units (80,000 lamports)", withPrice(200_000n), /priority fee/],
+        ["700,000 micro-lamports at 400,000 units (280,000 lamports)", withPrice(700_000n), /priority fee/],
         ["the third review's 25,000,000,000 micro-lamports at 400,000 units (10 SOL)", withPrice(25_000_000_000n), /priority fee/],
         ["u64-max price at 1,400,000 units", withPrice(0xffff_ffff_ffff_ffffn, 1_400_000), /priority fee/],
         ["a limit of 1,400,001 units", withPrice(0n, 1_400_001), /compute unit limit/],
@@ -1331,7 +1334,7 @@ async function main() {
         return { ...m, staticAccounts: order.map((i) => m.staticAccounts[i]),
           instructions: m.instructions.map((ix) => ({ ...ix, programAddressIndex: at.get(ix.programAddressIndex)!, accountIndices: ix.accountIndices?.map((i) => at.get(i)!) })) };
       };
-      const fee = { reviewedMicroLamports: BUDGET.microLamports, feeAllowanceLamports: 50_000n };
+      const fee = { reviewedMicroLamports: BUDGET.microLamports, feeAllowanceLamports: FEE_ALLOWANCE_LAMPORTS };
       const cases: [string, (m: Compiled) => Compiled, boolean][] = [
         ["unchanged", (m) => m, true],
         ["only the price (x1000)", (m) => ({ ...m, instructions: m.instructions.map((ix) => isB(m, ix, 3) ? { ...ix, data: priceData(7_000n) } : ix) }), true],

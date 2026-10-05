@@ -140,6 +140,13 @@ export async function editionGuards(publisher: Address, price: Price, cosigner: 
 
 /** The guard copy 1 is minted under: Edition only, so the publisher opens no counter. */
 const COPY_ONE_GUARDS: GuardData = { default: { edition: { editionStartOffset: 0 } }, groups: [] };
+/**
+ * Written just before every guard set that may be larger than the one in place. Candy Guard's
+ * `update` fails when the account already holds more lamports than its new, larger size needs
+ * (anyone can send it some, and a rent reduction leaves every older guard that way); shrinking
+ * first returns the excess to the payer, and the guard then grows from exactly its minimum.
+ */
+const NO_GUARDS: GuardData = { default: {}, groups: [] };
 
 export interface PublishInput {
   /** The wallet's address: it pays, and signs first (see `transactions.ts`). */
@@ -199,6 +206,7 @@ export async function publishTransactions(input: PublishInput) {
       candyMachine: candyMachine.address, candyGuard, collection: collection.address, guards: COPY_ONE_GUARDS,
       payer: publisher, minter: publisher, asset: copy,
     }),
+    updateCandyGuardInstruction({ candyGuard, authority: publisher, payer: publisher, guards: NO_GUARDS }),
     updateCandyGuardInstruction({ candyGuard, authority: publisher, payer: publisher, guards }),
     setCandyMachineAuthorityInstruction({ candyMachine: candyMachine.address, authority: publisher, newAuthority: NO_AUTHORITY }),
     updateCollectionInstruction({ collection: collection.address, authority: publisher, payer: publisher, newUpdateAuthority: NO_AUTHORITY }),
@@ -611,6 +619,7 @@ export async function setPriceDraft(input: { publisher: Address; edition: Pick<E
     feePayer: input.publisher,
     transactions: [{ instructions: [
       ...(input.price.kind === "token" ? [await createTokenAccountInstruction(publisher, input.publisher, input.price.mint)] : []),
+      updateCandyGuardInstruction({ candyGuard: input.edition.candyGuard, authority: publisher, payer: publisher, guards: NO_GUARDS }),
       updateCandyGuardInstruction({ candyGuard: input.edition.candyGuard, authority: publisher, payer: publisher, guards }),
     ], localSigners: [] }],
   };

@@ -23,8 +23,8 @@ intro = [
     text('SOLANA MOBILE / CLOCK IN 2026', 22, 150, 938, color='9BA0A8', start=0.95, font='IBMPlexMono-Regular.ttf'),
 ]
 outro = [
-    text('Make the photograph.', 80, 144, 330, start=0.1),
-    text('Share a copy worth keeping.', 80, 144, 435, start=0.5),
+    text('A camera for every day.', 80, 144, 330, start=0.1),
+    text('Editions for the photos you choose.', 80, 144, 435, start=0.5),
     text('Signshot', 44, 150, 850, color='7FF0DF', start=1.1),
     text('A creative camera for Seeker', 27, 150, 920, color='9BA0A8', start=1.1, font='Manrope-Regular.ttf'),
 ]

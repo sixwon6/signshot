@@ -69,9 +69,11 @@ from Photos, not on the one the shutter just made.
   the price on the Wallet screen: `Continue`, then `Set price`. The edition keeps its kind (open or
   Seeker-only).
 - **Close.** `Close sale`, reviewed and then confirmed, withdraws the guard and returns its rent;
-  the sheet says "Closing ends the sale. It cannot be reopened." The candy machine's rent cannot be
-  recovered. The collection and the copies stay on chain, but the app then reads the edition as
-  "This edition is closed" and no longer lists it or its copies on the Wallet screen.
+  the sheet says "Closing ends the sale." The candy machine's rent cannot be recovered. The
+  collection and the copies stay on chain, but the app then reads the edition as "This edition is
+  closed" and no longer lists it or its copies on the Wallet screen. The app offers no way to
+  reopen a sale; on chain, whoever holds the candy machine's key (its seed stays in the
+  publisher's draft on the phone) can open a new guard at the same address.
 - **Send.** `Send` transfers a copy (copy 1 from the photo page, any held copy from the Wallet
   screen) to another wallet with Core `TransferV1`. A transfer is not a sale and "A transfer can’t
   be undone."
@@ -219,6 +221,15 @@ message with `sign_messages`. On Seed Vault Wallet that is a Verify sheet and th
 each with its own confirmation. The Worker co-signs once per SGT per edition. The claim names the owner's token, not the phone that
 took the photograph.
 
+## Seeker ID
+
+Settings, under `On your Seeker`, shows the connected wallet's `Seeker Genesis Token` (HELD or NOT
+HELD) and its `Seeker ID`, the wallet's `.skr` name, both read from mainnet whatever cluster the
+build publishes on. The name is resolved from the address as Solana Mobile's resolver does
+(`src/seeker/skrName.ts`, https://docs.solanamobile.com/solana-mobile-stack/skr-domain), and stands
+in place of the address on the Settings wallet card and on the publisher's own photo page. With
+`Add my .skr name` on (Settings, `Sharing`), the QR card the publisher shares carries the name.
+
 ## The co-signer Worker
 
 `worker/` (see `worker/README.md`) is a Cloudflare Worker served only at
@@ -252,8 +263,8 @@ deployed by Wrangler direct upload.
   does the app add its keypairs' signatures, simulate the signed bytes and send.
 - **Fee cap.** The reviewed priority fee is at most 50,000 lamports per transaction (the median of
   recent fees, at least 5,000 µlamports per unit). A wallet's compute-budget rewrite may add at most
-  250,000 lamports above the reviewed price at its limit, with the limit at most 1,400,000 units
-  (Seed Vault Wallet sets about 80,000 on a publish). The Worker refuses a claim whose priority fee
+  250,000 lamports above the reviewed fee, whatever limit it sets (at most 1,400,000 units; Seed
+  Vault Wallet sets about 80,000 on a publish). The Worker refuses a claim whose priority fee
   exceeds 300,000 lamports.
 - **Release gate.** `npm run release:check` refuses a local env file a production bundle would
   load, a non-mainnet cluster without `--allow-cluster devnet`, a mainnet build without its own RPC
@@ -366,9 +377,26 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
   devnet through the `DEVNET_RPC_URL` secret; no claim has reached it since. Still unknown: whether
   Seed Vault adds Lighthouse instructions when it signs a claim (`WALLET_ADDED_PROGRAMS_ALLOWED` in
   `worker/src/claimTransaction.ts` is empty, so they are refused today).
+- **The QR card on the phone:** it now reads `N COPIES` (`ONE COPY`) and, with `Add my .skr name`
+  on, carries the publisher's `.skr` name under the count. Look at the card in the share sheet
+  with the switch on and off.
 - **Right after a publish** the Wallet screen's Published list showed the new edition as unread for
   about a minute, until a gateway served its files. Find which read was late.
-- **`scripts/check-candy-svm.ts`** still expects the 50,000 lamport fee allowance.
+- **A claim that pays and mints nothing.** The publisher keeps the guard, and a Bot Tax guard set
+  while a claim is in flight makes the failed mint succeed as a transaction: the one-shot payer's
+  funding goes to the candy machine and no copy is made. The claim needs an instruction after
+  `mint_v1` that fails unless the copy exists (and the Worker's layout with it).
+- **After a wallet failure the sheets still speak as if the wallet had broadcast.** The wallet only
+  signs now: a failure before the app sends means nothing was sent, and a failure while sending is
+  decided by a fresh chain read. `send.ts` should say which phase failed; the four sheets' catch
+  blocks and the `walletTimeout` copy follow from that. Program errors on publish, `Set price`,
+  `Close sale`, `Send` and `Pay storage` still reach the screen as raw JSON.
+- **Storage after the fact.** The Arweave ids go on chain before the bytes exist anywhere but the
+  phone, and the items can only be rebuilt with the upload key in the Keystore: a lost phone or
+  cleared data before the upload leaves the edition pointing at nothing, and on mainnet a Turbo
+  refusal is first seen after publishing. Upload after the wallet signs and before the app sends.
+  The document itself is fetched unhashed (only the image is checked against the candy machine),
+  and a refused storage payment is never offered again.
 - **Mainnet build:** `EXPO_PUBLIC_SOLANA_RPC_URL` at a key-free HTTPS URL, a keyless proxy or a
   provider's key-free frontend URL, since the APK carries it in plain text (`release:check` refuses
   a public endpoint, a query string, credentials and another network). It must serve every method
@@ -383,10 +411,11 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
 - **dApp Store listing:** the mainnet build above; a publisher wallet with about 0.2 SOL; terms URL
   https://erashot.app/terms/; the opaque 512×512 icon in `dapp-store/icon-512.png`, a 1200×600
   banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a name of 25 characters or fewer and a
-  subtitle of 50 or fewer.
+  short description of 30 or fewer; privacy URL https://erashot.app/privacy.
 - **Submission:** `SUBMISSION_DRAFT.md`: push, connect GitHub on Align (or make the repository
   public), a public direct link to the APK, a captioned demo video (the judges read its
-  transcript).
+  transcript) and the pitch deck (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of
+  the repository).
 
 ## Licence
 

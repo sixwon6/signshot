@@ -1,6 +1,6 @@
-This is Signshot, a creative camera for the Solana Seeker. A clean, simple camera for daily life, and a way to memorialize your moments on the blockchain.
+This is Signshot, a creative camera for the Solana Seeker. A clean, simple camera for daily life, and a way to publish your moments on the blockchain.
 
-It’s a point-and-shoot, with ISO, shutter, colour and focus controls when I want them. The camera comes with a few looks. I’ll pick Disposable. Tap to focus, drag up to brighten, and shoot. What I see in the viewfinder is what I get.
+It’s a point-and-shoot, with ISO, shutter, color and focus controls when I want them. The camera comes with a few looks. I’ll pick Disposable. Tap to focus, drag up to brighten, and shoot. What I see in the viewfinder is what I get.
 
 The photo opens right away. It’s kept in Signshot, and Save puts a copy in my phone’s gallery. None of this needs a wallet.
 
@@ -14,6 +14,6 @@ The publication is also signed by a hardware key inside this Seeker. The Record 
 
 To pass it on, I share a card with a QR code, or copy the link. Now a second wallet. I paste the link in Signshot: the photo, copy two of five, and the price. Continue shows the total. Buy, approve, and copy two belongs to this wallet. The price went straight to the creator.
 
-Camera, wallet and a hardware signature, all in one phone: that’s why Signshot is built for Seeker. On mainnet, an edition can also be kept for Seeker Genesis Token holders only.
+Camera, wallet and a hardware signature, all in one phone: that’s why Signshot is built for Seeker. An edition can also be kept for Seeker Genesis Token holders only.
 
 A camera for every day. Editions for the photos you choose. Signshot.

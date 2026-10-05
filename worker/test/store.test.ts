@@ -4,7 +4,7 @@ import { consumeNonce, findClaim, insertClaim, pruneNonces, replaceClaim, type N
 
 const claim = (id: string, over: Partial<NewClaim> = {}): NewClaim => ({
   cluster: "devnet", edition: "E", sgt_mint: "S", wallet: `W-${id}`, asset: `A-${id}`, blockhash: `B-${id}`, last_valid_height: 100, message: `M-${id}`,
-  claim_id: id, created_at: 1, ...over,
+  signature: `T-${id}`, claim_id: id, created_at: 1, ...over,
 });
 
 describe("claims table", () => {

@@ -16,11 +16,14 @@
  *   1. `getEpochInfo` at "confirmed" must report a block height PAST the stored bound (a
  *      confirmed height is real; a lagging node can only report a lower one, which holds the row
  *      longer, never shorter). Otherwise the transaction may still land: refuse.
- *   2. only then the copy's address is read at "confirmed" with `minContextSlot` = the slot that
- *      answered step 1, so no node behind that point can answer "no account" for a copy that
- *      landed. A Core-owned account there, or a 1-byte account (Core's burn leaves a 1-byte
- *      tombstone, which Core's permissionless fee sweep can leave System-owned), means the claim
- *      landed: the row is marked `confirmed` and the SGT has had its copy.
+ *   2. only then the transaction's own status is read (`getSignatureStatuses`, searching history)
+ *      and the copy's address at "confirmed", both answered no earlier than the slot that answered
+ *      step 1, so no node behind that point can answer "not there" for a claim that landed.
+ *      Either one says it landed: the transaction found without an error, or a Core-owned or
+ *      1-byte account at the copy's address (Core's burn leaves a 1-byte tombstone, which Core's
+ *      permissionless fee sweep can leave System-owned). The status covers a copy since burned,
+ *      swept and emptied by its keypair's holder; the account covers a node that has dropped the
+ *      transaction from its history. The row is then marked `confirmed`: the SGT has had its copy.
  *   3. otherwise the row is taken over by a compare-and-swap on `claim_id`, and only the request
  *      that wins the swap signs.
  * Nothing can land between steps 1 and 2. It holds only because a claim never carries a durable
@@ -49,6 +52,8 @@ export interface ClaimRow {
   last_valid_height: number;
   /** Hex sha256 of the message bytes as received. */
   message: string;
+  /** The transaction's id: the wallet's signature, base58. Null on rows older than the column. */
+  signature: string | null;
   claim_id: string;
   status: "pending" | "confirmed";
   created_at: number;
@@ -70,19 +75,21 @@ export const findClaim = (db: D1Database, cluster: Cluster, edition: string, sgt
 /** Take the empty slot. `false` when another request holds it. */
 export async function insertClaim(db: D1Database, c: NewClaim): Promise<boolean> {
   const r = await db.prepare(
-    `INSERT INTO claims (cluster, edition, sgt_mint, wallet, asset, blockhash, last_valid_height, message, claim_id, status, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', ?10) ON CONFLICT DO NOTHING`,
-  ).bind(c.cluster, c.edition, c.sgt_mint, c.wallet, c.asset, c.blockhash, c.last_valid_height, c.message, c.claim_id, c.created_at).run();
+    `INSERT INTO claims (cluster, edition, sgt_mint, wallet, asset, blockhash, last_valid_height, message, claim_id, status, created_at, signature)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', ?10, ?11) ON CONFLICT DO NOTHING`,
+  ).bind(c.cluster, c.edition, c.sgt_mint, c.wallet, c.asset, c.blockhash, c.last_valid_height, c.message, c.claim_id, c.created_at,
+    c.signature).run();
   return r.meta.changes === 1;
 }
 
 /** Take over a released pending row, only if it is still the one that was checked. */
 export async function replaceClaim(db: D1Database, previousClaimId: string, c: NewClaim): Promise<boolean> {
   const r = await db.prepare(
-    `UPDATE claims SET wallet = ?4, asset = ?5, blockhash = ?6, last_valid_height = ?7, message = ?8, claim_id = ?9, created_at = ?10
+    `UPDATE claims SET wallet = ?4, asset = ?5, blockhash = ?6, last_valid_height = ?7, message = ?8, claim_id = ?9, created_at = ?10,
+       signature = ?12
      WHERE cluster = ?1 AND edition = ?2 AND sgt_mint = ?3 AND status = 'pending' AND claim_id = ?11`,
   ).bind(c.cluster, c.edition, c.sgt_mint, c.wallet, c.asset, c.blockhash, c.last_valid_height, c.message, c.claim_id, c.created_at,
-    previousClaimId).run();
+    previousClaimId, c.signature).run();
   return r.meta.changes === 1;
 }
 

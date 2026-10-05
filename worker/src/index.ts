@@ -19,7 +19,7 @@ import { assertCluster, GENESIS_HASH, object, rpc, RpcError, type Cluster, type 
 import { issueChallenge, verifySignIn, type SignInResult, type SiwsConfig } from "./siws";
 import { confirmClaim, consumeNonce, findClaim, insertClaim, pruneNonces, replaceClaim, type ClaimRow, type NewClaim } from "./store";
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 export interface Env {
   DB: D1Database;
@@ -205,6 +205,8 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
   const base = {
     cluster, edition, wallet, asset: tx.asset, blockhash: tx.blockhash, last_valid_height: lastValidHeight,
     message: await sha256Hex(tx.message), claim_id: crypto.randomUUID(), created_at: now,
+    // The fee payer's signature, which the transaction check verified: the transaction's id.
+    signature: getBase58Decoder().decode(wire.subarray(tx.signaturesStart, tx.signaturesStart + 64)),
   };
   let refusal: "genesis-used" | "genesis-pending" = "genesis-used";
   let sgtMint: string | null = null;
@@ -243,8 +245,8 @@ async function hold(env: Env, deps: Deps, claim: NewClaim, clusterUrl: string): 
 
 /**
  * Whether a pending claim's transaction landed, may still land, or never will (store.ts). The
- * confirmed block height must be past the stored bound before the copy's address is read, and
- * that read is pinned to the slot that answered.
+ * confirmed block height must be past the stored bound before the transaction and the copy's
+ * address are read, and neither read may be answered from before the slot that answered.
  */
 async function pendingStanding(fetchImpl: Fetch, url: string, row: ClaimRow): Promise<"landed" | "may-land" | "expired"> {
   await assertCluster(fetchImpl, url, row.cluster);
@@ -252,7 +254,28 @@ async function pendingStanding(fetchImpl: Fetch, url: string, row: ClaimRow): Pr
   const height = epoch?.blockHeight, slot = epoch?.absoluteSlot;
   if (typeof height !== "number" || typeof slot !== "number") throw new RpcError("getEpochInfo");
   if (height <= row.last_valid_height) return "may-land";
+  if (row.signature && (await transactionLanded(fetchImpl, url, row.signature, slot))) return "landed";
   return (await copyLanded(fetchImpl, url, row.asset, slot)) ? "landed" : "expired";
+}
+
+/**
+ * Whether the claim's transaction is on chain without an error. It stays true whatever happens
+ * to the copy afterwards: a burned copy's tombstone, once Core's fee sweep hands it to the System
+ * Program, can be assigned away and emptied by whoever holds the copy's keypair.
+ */
+async function transactionLanded(fetchImpl: Fetch, url: string, signature: string, minContextSlot: number): Promise<boolean> {
+  const result = object(await rpc<unknown>(fetchImpl, url, "getSignatureStatuses", [
+    [signature], { searchTransactionHistory: true, minContextSlot },
+  ]));
+  const at = object(result?.context)?.slot;
+  const value = result?.value;
+  // Older nodes ignore minContextSlot on this method: one behind the slot that saw the height pass is refused here.
+  if (typeof at !== "number" || !Array.isArray(value) || value.length !== 1 || at < minContextSlot)
+    throw new RpcError("getSignatureStatuses");
+  if (value[0] === null) return false;
+  const status = object(value[0]);
+  if (!status || !("err" in status)) throw new RpcError("getSignatureStatuses");
+  return status.err === null;
 }
 
 /**

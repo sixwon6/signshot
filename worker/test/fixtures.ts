@@ -374,6 +374,8 @@ export class Blockhashes extends Set<string> {
 export interface Chain {
   genesis: string;
   accounts: Map<string, AccountEntry>;
+  /** Transactions on chain, by id, as `getSignatureStatuses` reports them. */
+  landed: Map<string, { err: unknown }>;
   validBlockhashes: Blockhashes;
   /** The processed bank's block height. */
   height: number;
@@ -423,7 +425,7 @@ export function tokenAccountRow(owner: string, mint: string, amount: "0" | "1", 
 }
 
 function newChain(genesis: string): Chain {
-  const chain: Chain = { genesis, accounts: new Map(), validBlockhashes: undefined as never, height: 300_000_000, lag: 2 };
+  const chain: Chain = { genesis, accounts: new Map(), landed: new Map(), validBlockhashes: undefined as never, height: 300_000_000, lag: 2 };
   chain.validBlockhashes = new Blockhashes(() => chain);
   return chain;
 }
@@ -443,7 +445,8 @@ export function fakeRpc(): FakeRpc {
       const reply = (result: unknown) => Response.json({ jsonrpc: "2.0", id: 1, result });
       // The bank a request reads: its commitment ("finalized" lags further), and its min context slot.
       const config = (params.find((p) => p && typeof p === "object" && !Array.isArray(p)) ?? {}) as { commitment?: string; minContextSlot?: number };
-      const commitment = config.commitment ?? "finalized";
+      // getSignatureStatuses answers from the processed bank unless told otherwise.
+      const commitment = config.commitment ?? (method === "getSignatureStatuses" ? "processed" : "finalized");
       const height = chain.height - (commitment === "processed" ? 0 : commitment === "confirmed" ? chain.lag : chain.lag + 30);
       const slot = height + SLOT_OFFSET;
       if (config.minContextSlot !== undefined && config.minContextSlot > slot)
@@ -462,6 +465,14 @@ export function fakeRpc(): FakeRpc {
           const e = chain.accounts.get(params[0]) ?? null;
           return reply({ context: ctx, value: e && accountJson(e) });
         }
+        case "getSignatureStatuses":
+          return reply({
+            context: ctx,
+            value: (params[0] as string[]).map((id) => {
+              const status = chain.landed.get(id);
+              return status ? { slot, confirmations: null, err: status.err, confirmationStatus: "finalized" } : null;
+            }),
+          });
         case "getMultipleAccounts": {
           const keys = params[0] as string[];
           return reply({ context: ctx, value: keys.map((k) => { const e = chain.accounts.get(k) ?? null; return e && accountJson(e); }) });

@@ -1,6 +1,6 @@
 import { env as cfEnv } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getBase58Encoder, getBase64Encoder, type Address, type Instruction } from "@solana/kit";
+import { getBase58Decoder, getBase58Encoder, getBase64Encoder, type Address, type Instruction } from "@solana/kit";
 import { CANDY_GUARD_PROGRAM, CANDY_MACHINE_PROGRAM, COMPUTE_BUDGET_PROGRAM, MPL_CORE, SYSTEM_PROGRAM, candyGuardOf, parseTransaction } from "../src/claimTransaction";
 import { TOKEN_2022_PROGRAM } from "../src/genesis";
 import { handle, VERSION, type Deps, type Env } from "../src/index";
@@ -377,6 +377,21 @@ describe("genesis token", () => {
       advance(w.rpc.chains[DEVNET_URL]);
       w.rpc.chains[DEVNET_URL].accounts.set(tx.asset, { owner, data: new Uint8Array([0]) });
       expect((await claim(w, holder, e, (await claimTx(w, holder, e)).wire)).body.error).toBe("genesis-used");
+    }
+  });
+
+  it("counts a landed transaction whose copy is gone from its address, and releases one that landed with an error", async () => {
+    for (const [err, outcome] of [[null, "genesis-used"], [{ InstructionError: [1, { Custom: 1 }] }, undefined]] as const) {
+      const w = await world();
+      const holder = await newKey();
+      const e = await edition(w);
+      await sgt(w, 7n, [holder]);
+      const tx = await claimTx(w, holder, e);
+      expect((await claim(w, holder, e, tx.wire)).status).toBe(200);
+      advance(w.rpc.chains[DEVNET_URL]);
+      // Burned, swept and emptied: nothing at the copy's address. The transaction's id is its first signature.
+      w.rpc.chains[DEVNET_URL].landed.set(getBase58Decoder().decode(tx.wire.subarray(1, 65)), { err });
+      expect((await claim(w, holder, e, (await claimTx(w, holder, e)).wire)).body.error).toBe(outcome);
     }
   });
 

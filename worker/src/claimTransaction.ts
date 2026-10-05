@@ -85,8 +85,8 @@ export const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
 /** Without SetComputeUnitLimit the runtime grants 200k units per non-ComputeBudget instruction. */
 const DEFAULT_UNITS_PER_INSTRUCTION = 200_000;
 /**
- * The most priority fee (price × limit, in lamports) a claim may carry: 0.0001 SOL. The app reviews
- * at most 50,000 lamports (src/prints/send.ts) and lets a wallet's rewrite add at most 50,000 more
+ * The most priority fee (price × limit, in lamports) a claim may carry: 0.0003 SOL. The app reviews
+ * at most 50,000 lamports (src/prints/send.ts) and lets a wallet's rewrite add at most 250,000 more
  * (`FEE_ALLOWANCE_LAMPORTS`, publications/candy/transactions.ts). Price × limit is the only way
  * this transaction can cost the wallet more than the reviewed amounts.
  */

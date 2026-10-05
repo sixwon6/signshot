@@ -142,13 +142,13 @@ Each row stores a bound on the block height through which its transaction can la
 A later claim that finds a pending row releases it only if the old transaction can no longer land. The Worker checks two things, in this order:
 
 1. The confirmed block height (`getEpochInfo` at "confirmed") is past the stored bound. A lagging node can only make the row wait longer.
-2. The copy's address is read at "confirmed", with `minContextSlot` = the slot that answered step 1. It counts as landed if it holds a Core-owned account, or a 1-byte account (the tombstone Core's burn leaves, which Core's fee sweep can leave System-owned). A burned copy still counts as the SGT's claim.
+2. The transaction's own status (`getSignatureStatuses`, searching history; the row stores its id) and the copy's address at "confirmed", neither answered from before the slot that answered step 1. It counts as landed if the transaction is found without an error, or if the address holds a Core-owned account or a 1-byte account (the tombstone Core's burn leaves, which Core's fee sweep can leave System-owned). A burned copy still counts as the SGT's claim, also once its tombstone has been swept and emptied.
 
-If the copy is there, the row is marked `confirmed`. If it isn't, the later claim takes the row over through a compare-and-swap.
+If either says it landed, the row is marked `confirmed`. If neither does, the later claim takes the row over through a compare-and-swap.
 
 The old blockhash's validity at "confirmed" is never the test: the confirmed bank lags, so a seconds-old blockhash would read as invalid and one SGT could get several co-signed copies.
 
-This is sound only because a claim never carries a durable nonce: the only System instructions allowed are the layout's Transfer, CreateAccount and Allocate. The cost is that a failed or unsent claim holds its SGT for 150 blocks plus the confirmed lag, about 60–90 seconds. Retrying the identical claim (the same message bytes, by the same wallet) is signed again. A different message that reuses the asset is not a retry.
+This is sound only because a claim never carries a durable nonce: the only System instructions allowed are the layout's Transfer, CreateAccount and Allocate. The cost is that a failed or unsent claim holds its SGT for 150 blocks plus the confirmed lag, about 60–90 seconds. The identical claim (the same message bytes, by the same wallet) sent again with a fresh sign-in is signed again; the app does not do this, it builds a new claim and waits out the hold. A different message that reuses the asset is not a retry.
 
 The app broadcasts the transaction itself and reports nothing back, so this chain check is the only source of truth about whether a claim landed.
 
@@ -164,6 +164,7 @@ Spent nonces sit in `used_nonces` until their expiry, and an hourly cron prunes 
 wrangler secret put COSIGNER_SECRET_KEY   # solana-keygen JSON (64-byte array) of the Third Party Signer key
 wrangler secret put NONCE_HMAC_SECRET     # openssl rand -hex 32
 wrangler secret put MAINNET_RPC_URL       # https://mainnet.helius-rpc.com/?api-key=…
+wrangler secret put DEVNET_RPC_URL        # https://devnet.helius-rpc.com/?api-key=…
 ```
 
 - `MAINNET_RPC_URL` must be Helius, because the recipe's `getTokenAccountsByOwnerV2` is a Helius method. The Worker never logs or returns it.
@@ -198,7 +199,7 @@ The D1 database `signshot-claims` exists; its `database_id` is in `wrangler.toml
 
 ```sh
 wrangler d1 migrations apply signshot-claims --remote
-wrangler secret put …                     # the three secrets above
+wrangler secret put …                     # the four secrets above
 wrangler deploy
 ```
 

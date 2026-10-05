@@ -115,8 +115,9 @@ describe("compute budget", () => {
     const free = prices(p).free;
     expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitLimit(1_400_000), unitPrice(1_000_000n)); }), p)).toBe("priority-fee-cap");
     // No limit: the runtime's 200k units per instruction (3 here) is what the price multiplies.
-    expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitPrice(200_000n)); }), p)).toBe("priority-fee-cap");
-    expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitPrice(150_000n)); }), p)).toBe("accepted");
+    const noLimitCap = (MAX_PRIORITY_FEE_LAMPORTS * 1_000_000n) / 600_000n;
+    expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitPrice(noLimitCap + 1n)); }), p)).toBe("priority-fee-cap");
+    expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitPrice(noLimitCap)); }), p)).toBe("accepted");
     expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitLimit(1_400_001)); }), p)).toBe("compute-budget");
     expect(await refusal(await variant(p, free, (ixs) => { ixs.unshift(unitPrice(1n), unitPrice(2n)); }), p)).toBe("compute-budget");
     expect(await refusal(await variant(p, free, (ixs) => {

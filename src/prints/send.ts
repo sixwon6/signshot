@@ -142,7 +142,8 @@ function describe(err: unknown, logs: readonly string[]): string {
 
 /** A transaction the network refused (in simulation, or on chain), with what the classifier needs. */
 export class TransactionFailure extends Error {
-  constructor(readonly err: unknown, readonly logs: string[], readonly accountKeys: Address[]) {
+  /** `landed`: the transaction is on chain with this error, so its signatures are spent. */
+  constructor(readonly err: unknown, readonly logs: string[], readonly accountKeys: Address[], readonly landed = false) {
     super(describe(err, logs));
     this.name = "TransactionFailure";
   }
@@ -165,7 +166,7 @@ const keysOf = (tx: Transaction): Address[] =>
 
 /** A wallet's packet limit for one transaction. */
 const MAX_WIRE_BYTES = 1232;
-/** The most a reviewed priority fee may be; the wallet's allowance comes on top (co-signer cap 100,000). */
+/** The most a reviewed priority fee may be; the wallet's allowance comes on top (co-signer cap 300,000). */
 const MAX_REVIEWED_PRIORITY_LAMPORTS = 50_000n;
 const MIN_UNIT_PRICE = 5_000n;
 const MAX_UNITS = 1_400_000;
@@ -285,7 +286,7 @@ const settled = (s: Status) => !!s && (s.confirmationStatus === "confirmed" || s
 async function landedFailure(signature: string, err: unknown, tx: Transaction): Promise<TransactionFailure> {
   const found = await request<{ meta?: { logMessages?: string[] } } | null>(RPC_ENDPOINT, "getTransaction",
     [signature, { commitment: "confirmed", encoding: "base64", maxSupportedTransactionVersion: 0 }]).catch(() => null);
-  return new TransactionFailure(err, found?.meta?.logMessages ?? [], keysOf(tx));
+  return new TransactionFailure(err, found?.meta?.logMessages ?? [], keysOf(tx), true);
 }
 
 /** Where a signed transaction stands: landed, failed on chain, may still land, or cannot any more. */

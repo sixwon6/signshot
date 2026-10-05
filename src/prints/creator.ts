@@ -98,6 +98,7 @@ import {
   signatureStanding,
   toWire,
   withLifetime,
+  TransactionFailure,
 } from "./send";
 
 /** ANS-104 tags are public and unhashed, so each upload carries only its media type. */
@@ -645,7 +646,8 @@ export async function getPublicationState(r: CaptureRecord): Promise<Publication
   try {
     d = await readDraft(r);
   } catch {
-    return { status: "local", draft: null };
+    // A saved draft this build cannot read: not a fresh photograph. The sheet offers to discard it.
+    return { status: "unavailable", draft: null };
   }
   if (!d) return { status: "local", draft: null };
   try {
@@ -821,8 +823,18 @@ export async function sendSetup(
         await save(r, d);
       }
       onProgress?.("confirming");
-      if (first) await sendAndConfirm(first, lastValid);
-      await sendAndConfirm(second, lastValid);
+      try {
+        if (first) await sendAndConfirm(first, lastValid);
+        await sendAndConfirm(second, lastValid);
+      } catch (e) {
+        // On chain with an error: the saved pair can never land, and keeping it would re-send it
+        // on every Continue until its blockhash expired.
+        if (e instanceof TransactionFailure && e.landed) {
+          delete d.signed;
+          await save(r, d);
+        }
+        throw e;
+      }
       stage = await chainStage(d);
       if (stage !== "published") throw new Error("The edition is not visible yet. Check again in a moment.");
     }

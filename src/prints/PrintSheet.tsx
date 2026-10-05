@@ -17,6 +17,7 @@ import {
   prepareSetup,
   sendSetup,
   discardDraft,
+  draftPrice,
   getPrintsAvailability,
   getPublicationState,
   payStorage,
@@ -29,7 +30,7 @@ import { terms } from "../../publications/core/document";
 import { useDeviceVerdict } from "../seeker/useDeviceVerdict";
 import { normalizeDescription } from "../../publications/core/details";
 import { readPhotoEdit } from "./photoStorage";
-import { parseSolPrice, parseUnits } from "./price";
+import { formatSol, formatUnits, parseSolPrice, parseUnits } from "./price";
 import { loadPriceToken, priceOf, type PriceToken } from "./priceToken";
 import { shortAddress } from "./photoPresentation";
 import {
@@ -158,17 +159,20 @@ export function PrintSheet({
     let live = true;
     void (async () => {
       try {
-        const [state, selected, available] = await Promise.all([
+        // The co-signer's answer comes with the rest: `Continue` must not run before the form knows
+        // whether it shows the Seeker-only switch.
+        const [state, selected, available, canSeal] = await Promise.all([
           getPublicationState(record),
           readPhotoEdit(record),
           getPrintsAvailability(),
+          seekerOnlyAvailable(),
         ]);
         if (!live) return;
         setEdit(selected);
         setAvailability(available);
         setOffers(true);
         setDistribution(true);
-        void seekerOnlyAvailable().then((ok) => { if (live) setSealable(ok); });
+        setSealable(canSeal);
         void loadPriceToken().then((t) => { if (live) setToken(t); }, () => undefined);
         await applyPublicationState(state);
         if (!live) return;
@@ -179,6 +183,13 @@ export function PrintSheet({
           setCount(String(state.draft.edition.supply));
           setRoyaltyBps(state.draft.royaltyBps);
           setSeekerOnly(state.draft.seekerOnly);
+          // The price too, or `Edit details` on a priced draft would publish it free.
+          const price = draftPrice(state.draft);
+          const known = price.kind === "token" ? await loadPriceToken().catch(() => null) : null;
+          if (!live) return;
+          setPriceUnit(price.kind === "token" ? "token" : "sol");
+          setPriceText(price.kind === "sol" ? formatSol(price.lamports)
+            : price.kind === "token" && known ? formatUnits(price.amount, known.decimals) : "");
         }
         if (state.reason) setStatus(state.reason);
       } catch (e) {
@@ -323,9 +334,13 @@ export function PrintSheet({
                 ? walletTimeout.publishRetry
                 : walletTimeout.publishPending,
           );
+        } else if (current?.reason) {
+          // Where the chain says the publication stands (the first of two landed) is what to act on.
+          setError("");
+          setStatus(current.reason);
         } else
           setStatus(
-            `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Check publication status before trying again.`,
+            `${isUserCancellation(e) ? "Wallet closed. " : ""}Your progress is saved. Continue to check it before trying again.`,
           );
         onChanged?.();
       }

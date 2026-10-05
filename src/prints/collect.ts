@@ -51,7 +51,7 @@ import {
   signWithWallet,
   withLifetime,
 } from "./send";
-import { cosignClaim, cosignerChallenge, cosignerKey } from "../seeker/cosigner";
+import { cosignClaim, cosignerAccepts, cosignerChallenge } from "../seeker/cosigner";
 import { associatedTokenAddress, TOKEN_PROGRAM } from "../../publications/candy/programs";
 import { loadPriceToken, tokenValue } from "./priceToken";
 import { publisherGenesisMint } from "../seeker/publisherGenesis";
@@ -247,9 +247,9 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
       if (status === "blocked") return { eligibility: "unavailable", reason: BLOCKED };
     } else {
       // The co-signer decides; this only spares a wallet with no token the sign-in.
-      const key = await cosignerKey();
-      if (!key) return { eligibility: "unavailable", reason: "The Seeker co-signer cannot be reached. Try again shortly." };
-      if (key !== e.cosigner) return { eligibility: "unavailable", reason: "This edition names a co-signer this app does not use." };
+      const accepted = e.cosigner ? await cosignerAccepts(e.cosigner) : false;
+      if (accepted === null) return { eligibility: "unavailable", reason: "The Seeker co-signer cannot be reached. Try again shortly." };
+      if (!accepted) return { eligibility: "unavailable", reason: "This edition names a co-signer this app does not use." };
       if ((await publisherGenesisMint(wallet)) === null) return { eligibility: "needsGenesis", ...mine, reason: words.needsGenesis };
     }
     if (e.soldOut) return { eligibility: "soldOut", ...mine, reason: words.soldOut };
@@ -343,7 +343,9 @@ export async function prepareCollect(c: Collectable, wallet: string): Promise<Co
   const cost = await claimCost(verdict, rent);
   if (!canAfford(await balance(wallet), cost, await rent(0))) throw new Error(NEEDS_SOL);
   if (verdict.price.kind === "token") {
-    await loadPriceToken().catch(() => null);
+    // Amounts below are worded in this build's price token, so the edition must be priced in it.
+    const token = await loadPriceToken().catch(() => null);
+    if (verdict.price.mint !== token?.mint) throw new Error("This edition is priced in a token this app does not use.");
     const held = await tokenBalance(collector, verdict.price.mint);
     if (held < cost.tokens) throw new Error(`This wallet holds ${tokenValue(held)}. A copy costs ${tokenValue(cost.tokens)}.`);
   }

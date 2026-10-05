@@ -477,6 +477,8 @@ export const price = {
   /** The creator's own sheet. Two taps, like everything else that spends. */
   heading: "Set a price",
   headingSet: "Price set",
+  headingClosed: "Sale closed",
+  closedValue: "Closed",
   currentLabel: "Current price",
   newLabel: "New price in SOL",
   /** States, one sentence each and never a claim of failure. */

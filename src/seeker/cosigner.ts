@@ -33,20 +33,30 @@ async function call<T>(path: string, init?: { body: unknown }, timeoutMs = 20_00
   }
 }
 
-let cachedKey: Address | null = null;
-/** The co-signer's public key, or null when none is configured or it cannot be reached now. */
-export async function cosignerKey(): Promise<Address | null> {
-  if (cachedKey) return cachedKey;
+let cached: { active: Address; accepted: Address[] } | null = null;
+async function cosignerKeys() {
+  if (cached) return cached;
   if (!cosignerConfigured()) return null;
   try {
-    const { status, body } = await call<{ signer?: unknown }>("/health", undefined, 10_000);
+    const { status, body } = await call<{ signer?: unknown; accepted?: unknown }>("/health", undefined, 5_000);
     if (status !== 200 || typeof body?.signer !== "string") return null;
-    cachedKey = address(body.signer);
-    return cachedKey;
+    const active = address(body.signer);
+    const accepted = Array.isArray(body.accepted) ? body.accepted.filter((k): k is string => typeof k === "string").map((k) => address(k)) : [];
+    cached = { active, accepted: accepted.includes(active) ? accepted : [active, ...accepted] };
+    return cached;
   } catch {
     return null;
   }
 }
+
+/** The key new editions name, or null when no co-signer is configured or it cannot be reached now. */
+export const cosignerKey = async (): Promise<Address | null> => (await cosignerKeys())?.active ?? null;
+
+/**
+ * Whether the co-signer signs for `key`: the active key or one kept from before a rotation. Null
+ * when it cannot be asked.
+ */
+export const cosignerAccepts = async (key: Address): Promise<boolean | null> => (await cosignerKeys())?.accepted.includes(key) ?? null;
 
 /** The Sign-in-with-Solana input for `wallet`, passed to the wallet untouched. */
 export async function cosignerChallenge(wallet: string): Promise<Record<string, unknown>> {

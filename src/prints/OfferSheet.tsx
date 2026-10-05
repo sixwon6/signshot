@@ -80,6 +80,8 @@ export function OfferSheet({
   const [supported, setSupported] = useState<boolean | null>(null);
   const [priceText, setPriceText] = useState("");
   const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
+  // The sale was closed in this sheet: the heading and the row say so, not "Price set" and "Free".
+  const [closed, setClosed] = useState(false);
   const token = priceToken();
   /** Set means a price change confirmed in this sheet; the flow is finished. */
   const [saved, setSaved] = useState<EditionOffer | null>(null);
@@ -190,7 +192,7 @@ export function OfferSheet({
         setStatus("");
         if (quote.action === "close") {
           setSupported(false);
-          setStatus("Sale closed.");
+          setClosed(true);
         }
         onSaved?.();
       } catch (e) {
@@ -212,6 +214,7 @@ export function OfferSheet({
           (quote.action === "close" ? !after.supported : after.supported && samePrice(after.offer, quote.price));
         if (landed) {
           setSaved(after.offer ?? { kind: "free" });
+          setClosed(quote.action === "close");
           setError("");
           setStatus(timedOut ? walletTimeout.offerFound : "");
           onSaved?.();
@@ -259,15 +262,13 @@ export function OfferSheet({
             showsVerticalScrollIndicator={false}
           >
             <NetworkLabel label={devnet ? copy.networkTest : copy.network} />
-            <Text style={sheetStyles.title}>{finished ? copy.headingSet : copy.heading}</Text>
+            <Text style={sheetStyles.title}>{closed ? copy.headingClosed : finished ? copy.headingSet : copy.heading}</Text>
             {/* Which edition this price belongs to, in its own words. */}
             <Text style={sheetStyles.readout}>{edition.title}</Text>
             <View style={sheetStyles.box}>
               <Row
                 label={copy.currentLabel}
-                value={
-                  priceValue(shown)
-                }
+                value={closed ? copy.closedValue : priceValue(shown)}
               />
             </View>
             {supported && !finished && (
@@ -308,7 +309,7 @@ export function OfferSheet({
                 />
                 <CostEstimate prepared={quote.prepared} expanded={showCost}
                   onToggle={() => setShowCost((v) => !v)} />
-                {quote.action === "close" && <Text style={sheetStyles.body}>Closing ends the sale. It cannot be reopened.</Text>}
+                {quote.action === "close" && <Text style={sheetStyles.body}>Closing ends the sale.</Text>}
               </View>
             )}
           </ScrollView>

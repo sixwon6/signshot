@@ -376,6 +376,13 @@ export function ReviewScreen() {
     const url = entry.publication.view?.publicUrl;
     if (!d || !url) return;
     const qr = qrMatrix(url);
+    // Settings' `Add my .skr name`: the publisher's own name on the card, never anyone else's.
+    const stamp = photoShareStamp({
+      publication: entry.publication,
+      enabled: stampPref.enabled,
+      wallet: identity.wallet,
+      name: identity.skrName,
+    });
     const uri = await SeekerCamera.sharePrintCard(
       entry.record.baseName,
       d.sourceHash,
@@ -383,6 +390,7 @@ export function ReviewScreen() {
       d.edition.supply,
       qr.modules,
       qr.size,
+      stamp?.text ?? null,
     );
     await Sharing.shareAsync(uri, {
       mimeType: "image/png",

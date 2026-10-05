@@ -2,7 +2,7 @@ import { hasUnsafeText } from "../../publications/core/details";
 import type { PhotoPublication } from "./photoPresentation";
 
 /**
- * The `.skr` name to burn into a shared print, for the publishing wallet only. Anyone can register
+ * The `.skr` name to put on a shared photograph or its QR card, for the publishing wallet only. Anyone can register
  * a `.skr` name, so a name containing unsafe (e.g. bidi) characters is not stamped; the photograph
  * still shares. `ShareStamp.kt` rejects the same code points natively.
  */

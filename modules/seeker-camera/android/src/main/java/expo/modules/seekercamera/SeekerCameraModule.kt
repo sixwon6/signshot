@@ -225,13 +225,13 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    AsyncFunction("sharePrintCard") { baseName: String, sourceHash: String, title: String, count: Int, modules: String, size: Int, promise: Promise ->
+    AsyncFunction("sharePrintCard") { baseName: String, sourceHash: String, title: String, count: Int, modules: String, size: Int, by: String?, promise: Promise ->
       if (!BASE_NAME.matches(baseName) || !Regex("[a-f0-9]{64}").matches(sourceHash)) { promise.reject(CodedException("invalid print source")); return@AsyncFunction }
       val ctx = appContext.reactContext ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
       val dir = capturesDir() ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
       EXPORT_EXECUTOR.execute {
         try {
-          val out = PrintCard.write(ctx, File(dir, "$baseName-print-$sourceHash.jpg"), title, count, modules, size, "$baseName-$sourceHash")
+          val out = PrintCard.write(ctx, File(dir, "$baseName-print-$sourceHash.jpg"), title, count, modules, size, "$baseName-$sourceHash", by)
           promise.resolve("file://${out.absolutePath}")
         } catch (e: Throwable) { promise.reject(CodedException(e.message ?: "card export failed")) }
       }

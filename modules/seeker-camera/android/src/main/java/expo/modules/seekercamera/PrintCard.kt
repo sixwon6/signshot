@@ -2,15 +2,24 @@ package expo.modules.seekercamera
 
 import android.content.Context
 import android.graphics.*
+import android.text.TextPaint
+import android.text.TextUtils
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
-/** A shareable 9:16 invitation. The QR has an unbroken four-module quiet zone. */
+/**
+ * A shareable 9:16 invitation. The QR has an unbroken four-module quiet zone. `by` is the
+ * publisher's `.skr` name, drawn under the count when given and held to the stamp's rules.
+ */
 internal object PrintCard {
-  fun write(ctx: Context, source: File, title: String, count: Int, modules: String, size: Int, name: String): File {
+  /** The text column's width: from the left margin to just short of the QR's quiet zone. */
+  private const val TEXT_WIDTH = 580f
+
+  fun write(ctx: Context, source: File, title: String, count: Int, modules: String, size: Int, name: String, by: String?): File {
     require(size in 21..177 && modules.length == size * size && modules.all { it == '0' || it == '1' })
     require(title.toByteArray(Charsets.UTF_8).size <= 24 && count in 1..1000)
+    val publisher = by?.let { ShareStamp.assertStampText(it) }
     val photo = BitmapFactory.decodeFile(source.absolutePath) ?: throw IOException("missing print image")
     val card = Bitmap.createBitmap(1080, 1920, Bitmap.Config.ARGB_8888)
     try {
@@ -22,7 +31,10 @@ internal object PrintCard {
       val w = photo.width * scale; val h = photo.height * scale
       canvas.drawBitmap(photo, null, RectF((1080-w)/2, 170+(1090-h)/2, (1080+w)/2, 170+(1090+h)/2), Paint(Paint.FILTER_BITMAP_FLAG))
       p.textSize = 52f; canvas.drawText(title, 70f, 1350f, p)
-      p.textSize = 30f; canvas.drawText(if (count == 1) "ONE PRINT" else "$count DIGITAL PRINTS", 70f, 1410f, p)
+      p.textSize = 30f; canvas.drawText(if (count == 1) "ONE COPY" else "$count COPIES", 70f, 1410f, p)
+      // A name can run to 64 characters; one past the column ends in an ellipsis, short of the QR.
+      if (publisher != null)
+        canvas.drawText(TextUtils.ellipsize(publisher, TextPaint(p), TEXT_WIDTH, TextUtils.TruncateAt.END).toString(), 70f, 1470f, p)
       canvas.drawText(if (count == 1) "SCAN TO VIEW" else "SCAN TO COLLECT", 70f, 1570f, p)
       val unit = 340 / (size + 8)
       val left = 670; val top = 1480

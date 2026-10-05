@@ -153,7 +153,8 @@ interface SeekerCameraModuleType {
    * written at the estimate step, so discarding a draft must remove it.
    */
   deletePrintImage(baseName: string, sha256: string): Promise<boolean>;
-  sharePrintCard(baseName: string, sourceHash: string, title: string, count: number, modules: string, size: number): Promise<string>;
+  /** The edition's QR card as a PNG under `cacheDir/share`; `by` is the publisher's `.skr` name to print on it, or null. */
+  sharePrintCard(baseName: string, sourceHash: string, title: string, count: number, modules: string, size: number, by: string | null): Promise<string>;
   /**
    * Copies the styled frame into `Pictures/Signshot` as `<base>.jpg` and resolves its `content://`
    * URI. Idempotent by content. Call through {@link saveToGallery}.

@@ -97,7 +97,7 @@ A stranger with a fresh keypair, a made-up edition and a random blockhash costs 
 **ComputeBudget**
 - At most one SetComputeUnitLimit and one SetComputeUnitPrice, with any values, at any position.
 - The limit is at most 1,400,000.
-- price × limit (or × 200,000 per instruction, if no limit is set) must come to at most `MAX_PRIORITY_FEE_LAMPORTS` = 100,000 lamports (0.0001 SOL). The app reviews at most 50,000 lamports of priority fee and lets the wallet add at most 50,000 more.
+- price × limit (or × 200,000 per instruction, if no limit is set) must come to at most `MAX_PRIORITY_FEE_LAMPORTS` = 300,000 lamports (0.0003 SOL). The app reviews at most 50,000 lamports of priority fee and lets the wallet add at most 250,000 more.
 - This product is the only way the transaction can cost the wallet more than it reviewed.
 
 **Wallet-added programs**

@@ -132,8 +132,9 @@ machine's.
 The image and the document are ANS-104 data items signed on the phone by a per-wallet upload key
 (`src/arweave/`). Their ids are known before publishing, so the document's `https://arweave.net/<id>`
 is in the candy machine and the collection from the start. They are posted to ar.io Turbo once
-both publishing transactions confirm, then read back from `arweave.net/raw/` (Turbo's gateway as
-the fallback) against their hashes, for up to 30 seconds. An interrupted upload resumes with
+both publishing transactions confirm, and the upload is done when Turbo holds both: an item's id is
+derived from its signed content. Readers fetch from `arweave.net/raw/` (Turbo's gateway as the
+fallback) against the hashes. An interrupted upload resumes with
 `Complete public upload`; `Export backup` saves the publication bundle while the bytes exist only
 on the phone.
 
@@ -211,10 +212,11 @@ the publishing wallet.", "Not a Seeker Genesis Token." or "Couldn’t check.". R
 4 KB of the mint, and an endpoint that is unreachable or not mainnet is "Couldn’t check.", never
 "not held". Nothing on chain records the token.
 
-**Seeker-only editions** need the publisher's SGT: the switch is offered for multiple copies when
-the co-signer answers, and the draft records Seeker-only only when the publishing wallet's SGT was
-found. A claim signs in with Sign-in-with-Solana in the same wallet session that signs the claim,
-and the Worker co-signs once per SGT per edition. The claim names the owner's token, not the phone that
+**Seeker-only editions**: the switch is offered for multiple copies when the co-signer answers,
+whether or not the publisher holds an SGT. A claim signs in with Sign-in-with-Solana in the same
+wallet session that signs the claim: the app authorizes, then has the wallet sign the Worker's
+message with `sign_messages`. On Seed Vault Wallet that is a Verify sheet and the claim sheet,
+each with its own confirmation. The Worker co-signs once per SGT per edition. The claim names the owner's token, not the phone that
 took the photograph.
 
 ## The co-signer Worker
@@ -250,8 +252,9 @@ deployed by Wrangler direct upload.
   does the app add its keypairs' signatures, simulate the signed bytes and send.
 - **Fee cap.** The reviewed priority fee is at most 50,000 lamports per transaction (the median of
   recent fees, at least 5,000 µlamports per unit). A wallet's compute-budget rewrite may add at most
-  50,000 lamports above the reviewed price at its limit, with the limit at most 1,400,000 units.
-  The Worker refuses a claim whose priority fee exceeds 100,000 lamports.
+  250,000 lamports above the reviewed price at its limit, with the limit at most 1,400,000 units
+  (Seed Vault Wallet sets about 80,000 on a publish). The Worker refuses a claim whose priority fee
+  exceeds 300,000 lamports.
 - **Release gate.** `npm run release:check` refuses a local env file a production bundle would
   load, a non-mainnet cluster without `--allow-cluster devnet`, a mainnet build without its own RPC
   URL or with a public solana.com one, an RPC URL that is not HTTPS or carries a query string or
@@ -351,16 +354,21 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
 
 ## Before release
 
-- **On the Seeker, the new flows end to end on the release build:** publish (both transactions in
-  one approval, then the upload), collect free, buy in SOL and in SKR, a Seeker-only claim, `Set
-  price`, `Close sale` and `Send`. Judge the looks in daylight with a face and something red in
+- **On the Seeker, the rest of the new flows on the release build.** Run on devnet on 4 October:
+  publish (open and Seeker-only), buy in SOL, `Set price`, a wallet with no Genesis Token refused.
+  Still to run: a Seeker-only claim to the end, collect free, buy in SKR (devnet needs
+  `EXPO_PUBLIC_PRICE_TOKEN_MINT`), `Close sale` and `Send`. Judge the looks in daylight with a face and something red in
   frame; check Camcorder's smear in both landscapes. Read the Device row of a draft left past its
   certificates (`Continue` renews it). Terms and `Agree` before the first publish and collect on a
   fresh install; an edition in `moderation.json` reads Hidden.
-- **The Worker on the phone:** whether Seed Vault adds Lighthouse instructions when it signs a claim
-  (`WALLET_ADDED_PROGRAMS_ALLOWED` in `worker/src/claimTransaction.ts` is empty, so they are refused
-  today), and that Seed Vault accepts the Sign-in-with-Solana payload and the claim in one
-  session.
+- **The Worker on the phone:** a Seeker-only claim has signed in and signed on the Seeker and
+  reached the Worker, which then failed its devnet reads through the public endpoint. It now reads
+  devnet through the `DEVNET_RPC_URL` secret; no claim has reached it since. Still unknown: whether
+  Seed Vault adds Lighthouse instructions when it signs a claim (`WALLET_ADDED_PROGRAMS_ALLOWED` in
+  `worker/src/claimTransaction.ts` is empty, so they are refused today).
+- **Right after a publish** the Wallet screen's Published list showed the new edition as unread for
+  about a minute, until a gateway served its files. Find which read was late.
+- **`scripts/check-candy-svm.ts`** still expects the 50,000 lamport fee allowance.
 - **Mainnet build:** `EXPO_PUBLIC_SOLANA_RPC_URL` at a key-free HTTPS URL, a keyless proxy or a
   provider's key-free frontend URL, since the APK carries it in plain text (`release:check` refuses
   a public endpoint, a query string, credentials and another network). It must serve every method

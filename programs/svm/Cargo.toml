@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 # LiteSVM in a process of its own, driven line by line over stdin/stdout by
-# `scripts/check-candy-svm.ts`, which builds it on Windows with `scripts/build-native-windows.ps1`.
+# `scripts/check-candy-svm.ts`, which builds it on Windows with `programs/svm/scripts/build-native-windows.ps1`.
 # The `litesvm` npm package ships no Windows binary, so the suite reaches the same Rust crate this
 # way. Host-only test tooling, never shipped.
 

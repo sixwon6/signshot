@@ -8,7 +8,7 @@
 // fingerprint, not the display name, is the Android identity). Store builds never go through EAS:
 // eas.json's dapp-store profile exists so EAS never signs with a key of its own.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -112,3 +112,4 @@ if ((v.status ?? 1) !== 0 || !matchesUploadCertificate(certs, uploadCertificate.
   process.exit(1);
 }
 console.log(`\nrelease:apk ok — ${APK}`);
+console.log(`sha256 ${createHash("sha256").update(readFileSync(APK)).digest("hex")}`);

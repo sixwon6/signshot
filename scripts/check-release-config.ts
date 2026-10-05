@@ -32,6 +32,7 @@ import { GOOGLE_ATTESTATION_ROOT_KEYS } from "../src/seeker/keyAttestation";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RECORD = resolve(ROOT, ".expo", "release", "config.json");
+const COSIGNER_URL = "https://cosign.erashot.app";
 
 /** The build record written beside the APK. Values only — never a secret, never an endpoint. */
 interface ReleaseConfig {
@@ -209,15 +210,13 @@ export async function attestationRootsRefusal(): Promise<string | null> {
   );
 }
 
-/** `git rev-parse HEAD`, or `"unknown"` outside a checkout. */
+/** `git rev-parse HEAD`, with `-dirty` when tracked files differ from it, or `"unknown"` outside a checkout. */
 function headCommit(cwd: string): string {
   try {
     // stderr is discarded: outside a checkout git's own complaint is noise, not a result.
-    return execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return `${git("rev-parse", "HEAD")}${git("status", "--porcelain", "--untracked-files=no") ? "-dirty" : ""}`;
   } catch {
     return "unknown";
   }
@@ -257,9 +256,9 @@ async function main(argv: readonly string[]): Promise<void> {
   const network = await genesisRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (network) fail(network);
 
-  // A Seeker-only edition needs the co-signer, an HTTPS URL when set.
-  const cosigner = process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL;
-  if (cosigner && !cosigner.trim().startsWith("https://")) fail("EXPO_PUBLIC_SEEKER_COSIGNER_URL must be an https:// URL.");
+  // The app takes the co-signer's key from this host's /health: only the Worker's own address, when set.
+  const cosigner = process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL?.trim().replace(/\/+$/, "");
+  if (cosigner && cosigner !== COSIGNER_URL) fail(`EXPO_PUBLIC_SEEKER_COSIGNER_URL must be ${COSIGNER_URL}.`);
 
   const roots = await attestationRootsRefusal();
   if (roots) fail(roots);

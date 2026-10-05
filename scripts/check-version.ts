@@ -39,7 +39,6 @@ export type Release = {
   certFingerprint?: unknown;
   date?: unknown;
   cluster?: unknown;
-  program?: unknown;
 };
 type Releases = { releases?: unknown };
 
@@ -92,9 +91,6 @@ function releaseProblems(app: AppJson, record: Releases): string[] {
     }
     if (typeof entry.cluster !== "string" || !CLUSTERS.includes(entry.cluster)) {
       problems.push(`${at}: cluster must be one of ${CLUSTERS.join(", ")}.`);
-    }
-    if (typeof entry.program !== "string" || entry.program.length === 0) {
-      problems.push(`${at}: program must be the program address the APK was built against.`);
     }
   });
 

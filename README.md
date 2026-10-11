@@ -12,12 +12,10 @@ the co-signer at `cosign.erashot.app`, terms and privacy).
 
 ## Try it
 
-- **APK (Solana mainnet):** https://github.com/sixwon6/signshot/releases/latest/download/Signshot.apk
-- Android 14 or newer on arm64, with a Mobile Wallet Adapter wallet; on the Seeker that is Seed
-  Vault Wallet. Shooting, Develop, saving and sharing need no wallet.
-- Publishing an edition costs the publisher about 0.011 SOL in rent, Metaplex's fee and network
-  fees, whatever the number of copies; collecting one costs about 0.003 SOL plus its price.
-  Seeker-only editions need a Seeker Genesis Token in the collecting wallet.
+- **APK (Solana devnet):** https://github.com/sixwon6/signshot/releases/latest/download/Signshot.apk
+- Android 14 or newer on arm64, with a Mobile Wallet Adapter wallet set to devnet; on the Seeker
+  that is Seed Vault Wallet. Test SOL: https://faucet.solana.com. Shooting, Develop, saving and
+  sharing need no wallet. Seeker-only editions need a Seeker Genesis Token in the collecting wallet.
 
 ## The camera
 

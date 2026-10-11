@@ -28,7 +28,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
     private const val METER_PIXEL_STEP = 8
   }
 
-  private val thread = HandlerThread("seedshot").apply { start() }
+  private val thread = HandlerThread("signshot").apply { start() }
   private val handler = Handler(thread.looper)
 
   // Manual controls (CaptureControls.kt). `caps` never changes; `effective` is the last accepted

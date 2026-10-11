@@ -1,5 +1,5 @@
 /**
- * Regenerates `scripts/fixtures/attestation-sample.json`: a SYNTHETIC `seedshot-attestation/1`
+ * Regenerates `scripts/fixtures/attestation-sample.json`: a SYNTHETIC `signshot-attestation/1`
  * bundle whose two-certificate chain (leaf, then a self-signed CA) is made by OpenSSL, the leaf
  * carrying a hand-built key attestation extension with the Seeker's attested properties. It
  * exercises the parser, the chain logic (with the synthetic root injected as trusted) and the
@@ -65,7 +65,7 @@ const challenge = sha256(new TextEncoder().encode(manifestJson));
 
 // --- KeyDescription, as https://source.android.com/docs/security/features/keystore/attestation
 const application = SEQ(
-  SET(SEQ(STR("app.seekershot"), INT(1))),
+  SET(SEQ(STR("app.signshot"), INT(1))),
   SET(OCT(new Uint8Array(32).fill(0xab))),
 );
 const keyDescription = SEQ(
@@ -81,7 +81,7 @@ const keyDescription = SEQ(
 );
 
 // --- OpenSSL: a synthetic P-256 CA, a leaf it signs (with the extension), a manifest signature
-const dir = mkdtempSync(join(tmpdir(), "seedshot-attest-"));
+const dir = mkdtempSync(join(tmpdir(), "signshot-attest-"));
 try {
   const caKey = join(dir, "ca.key"), caCert = join(dir, "ca.der");
   const key = join(dir, "key.pem"), csr = join(dir, "leaf.csr"), cert = join(dir, "cert.der");
@@ -95,7 +95,7 @@ try {
   ].join("\n"));
   execFileSync("openssl", ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", caKey]);
   execFileSync("openssl", [
-    "req", "-new", "-x509", "-key", caKey, "-subj", "/O=Seedshot synthetic/CN=Synthetic attestation CA",
+    "req", "-new", "-x509", "-key", caKey, "-subj", "/O=Signshot synthetic/CN=Synthetic attestation CA",
     "-days", "7300", "-outform", "DER", "-out", caCert, "-addext", "basicConstraints=critical,CA:TRUE",
   ]);
   execFileSync("openssl", ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key]);

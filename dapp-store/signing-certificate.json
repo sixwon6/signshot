@@ -1,5 +1,5 @@
 {
-  "packageName": "app.seekershot",
+  "packageName": "app.signshot",
   "sha256": "ed334f571df9154c1ccfb3cada579771ef566c28dfd1534533b8782bc819dac9",
   "subject": "CN=Era Shot",
   "source": "Existing owner upload keystore; matched https://erashot.app/.well-known/assetlinks.json on 2026-09-16"

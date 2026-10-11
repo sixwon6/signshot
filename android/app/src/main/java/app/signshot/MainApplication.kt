@@ -1,4 +1,4 @@
-package app.seekershot
+package app.signshot
 
 import android.app.Application
 import android.content.res.Configuration

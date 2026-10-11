@@ -1,5 +1,5 @@
 /**
- * Off-device verifier for `seedshot-attestation/1`. Everything the phone cannot honestly claim
+ * Off-device verifier for `signshot-attestation/1`. Everything the phone cannot honestly claim
  * about itself is checked here, from the published bytes alone:
  *
  *   1. The document: by edition, the one at the URI of a candy machine `readEdition` accepts,
@@ -97,14 +97,14 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   if (file) {
     let json: unknown = JSON.parse(readFileSync(file, "utf8"));
     // A bare bundle (like scripts/fixtures/attestation-sample.json) is wrapped as a document.
-    if ((json as Record<string, unknown>).schema === "seedshot-attestation/1") {
+    if ((json as Record<string, unknown>).schema === "signshot-attestation/1") {
       const { schema, manifest, signature, certificates } = json as Record<string, unknown>;
-      json = { properties: { seedshot: { schema, manifest, signature, certificates } } };
+      json = { properties: { signshot: { schema, manifest, signature, certificates } } };
     }
     const o = json as Record<string, unknown>;
     // A local file cannot be checked against chain state; the manifest is taken as the commitment.
-    const manifest = ((o.properties as Record<string, unknown> | undefined)?.seedshot as Record<string, unknown> | undefined)?.manifest as ManifestCommitment | undefined;
-    if (!manifest) throw new Error("the file has no properties.seedshot.manifest");
+    const manifest = ((o.properties as Record<string, unknown> | undefined)?.signshot as Record<string, unknown> | undefined)?.manifest as ManifestCommitment | undefined;
+    if (!manifest) throw new Error("the file has no properties.signshot.manifest");
     check("chain-state", false, "a local file was given: on-chain commitment NOT checked (use --edition)");
     return { json, expected: manifest };
   }
@@ -119,7 +119,7 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
   const bytes = await arweaveBytes(verdict.uri.split("/").pop()!);
   check("chain-state", true, `document read from the edition's URI ${verdict.uri}`);
   const json = JSON.parse(new TextDecoder().decode(bytes));
-  const nonce = json?.properties?.seedshot?.manifest?.nonce ?? "";
+  const nonce = json?.properties?.signshot?.manifest?.nonce ?? "";
   const imageHash = Array.from(verdict.imageSha256, (x: number) => x.toString(16).padStart(2, "0")).join("");
   return {
     json,
@@ -130,7 +130,7 @@ async function loadDocument(): Promise<{ json: unknown; expected: ManifestCommit
 async function main() {
   const { json, expected } = await loadDocument();
   const doc = json as Record<string, unknown>;
-  const bundleValue = (doc.properties as Record<string, unknown> | undefined)?.seedshot;
+  const bundleValue = (doc.properties as Record<string, unknown> | undefined)?.signshot;
   if (!bundleValue) throw new Error("this document carries no attestation");
 
   // 2. The app's reader: manifest, challenge, signature, hardware level, and the chain to a

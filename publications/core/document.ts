@@ -83,7 +83,7 @@ export interface PublishedDocument {
   properties: {
     files: [{ uri: string; type: "image/jpeg" }];
     category: "image";
-    seedshot?: AttestationBundle;
+    signshot?: AttestationBundle;
     genesisToken?: GenesisClaim;
   };
 }
@@ -108,7 +108,7 @@ export function metadata(e: CoreMetadata, attestation?: AttestationBundle, devic
     properties: {
       files: [{ uri: e.image, type: "image/jpeg" }],
       category: "image",
-      ...(attestation ? { seedshot: attestation } : {}),
+      ...(attestation ? { signshot: attestation } : {}),
       ...(e.genesisMint ? { genesisToken: genesisClaim(e.genesisMint) } : {}),
     },
   };

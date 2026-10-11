@@ -20,7 +20,7 @@ export const DEFAULT_SEEKER_ONLY = true;
 /**
  * The phone's own record of one publication; never published. The public document is built by
  * `metadata()` in `core/document.ts`: `name`, `description` and `image`, plus `attributes` and
- * `properties` when the phone attested the publication (`properties.seedshot`) or the publishing
+ * `properties` when the phone attested the publication (`properties.signshot`) or the publishing
  * wallet held a Seeker Genesis Token (`properties.genesisToken`).
  */
 export interface CoreMetadata {

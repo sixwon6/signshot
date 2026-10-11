@@ -1,5 +1,5 @@
 /**
- * The publish-time side of `seedshot-genesis/1`: the Seeker Genesis Token mint a publication by
+ * The publish-time side of `signshot-genesis/1`: the Seeker Genesis Token mint a publication by
  * `wallet` records. Read from mainnet whatever cluster this build publishes on, since the wallet
  * is the same keypair on every cluster. Never throws and never waits forever.
  *

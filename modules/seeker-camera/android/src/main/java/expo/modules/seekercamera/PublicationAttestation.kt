@@ -28,7 +28,7 @@ import org.json.JSONObject
  */
 internal object PublicationAttestation {
   private const val TAG = "SeekerCamera"
-  private const val ALIAS_PREFIX = "seedshot-attestation-"
+  private const val ALIAS_PREFIX = "signshot-attestation-"
 
   fun attest(manifest: ByteArray): JSONObject {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S)

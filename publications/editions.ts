@@ -92,7 +92,7 @@ const ARWEAVE = /^https:\/\/arweave\.net\/([A-Za-z0-9_-]{43})$/;
 
 /** The manifest nonce an attested document carries, which the attestation reader repeats. */
 function manifestNonce(json: unknown): string {
-  const nonce = object(object(object(object(json)?.properties)?.seedshot)?.manifest)?.nonce;
+  const nonce = object(object(object(object(json)?.properties)?.signshot)?.manifest)?.nonce;
   return typeof nonce === "string" ? nonce : "";
 }
 

@@ -1,7 +1,7 @@
 // Builds the dApp Store APK: release variant, arm64-v8a only (the Seeker is arm64; debug builds keep
 // the emulator's x86_64), with R8 and resource shrinking on via gradle.properties.
 //
-// Signed with the upload key, which android/app/build.gradle reads from the four SEEDSHOT_UPLOAD_*
+// Signed with the upload key, which android/app/build.gradle reads from the four SIGNSHOT_UPLOAD_*
 // properties in ~/.gradle/gradle.properties; without them the packaging task fails. The debug
 // keystore is committed and the store rejects debug-signed APKs, so the signer is verified below
 // against dapp-store/signing-certificate.json by fingerprint (the key's subject is CN=Era Shot; the

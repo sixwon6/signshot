@@ -325,7 +325,7 @@ export async function createDraft(
     if (frames.clean !== r.clean.sha256 || frames.styled !== r.styled.sha256 || (edit && edit.sourceHash !== r.clean.sha256))
       throw new Error("Original photo fingerprint changed.");
     const signer = await getUploadKey(creator);
-    const nonce = hash(signer.sign(utf8(`erashot-core/1\n${cluster}\n${r.baseName}\n${r.clean.sha256}`)));
+    const nonce = hash(signer.sign(utf8(`signshot-core/1\n${cluster}\n${r.baseName}\n${r.clean.sha256}`)));
     const seeds = { collection: newSeed(), candyMachine: newSeed(), copy: newSeed() };
     const sourceHash = edit?.sha256 ?? r.styled.sha256;
     const image = await SeekerCamera.preparePrintImage(r.baseName, edit?.uri ?? r.styledUri, sourceHash);

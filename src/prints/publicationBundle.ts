@@ -10,7 +10,7 @@ import type { CoreDraft } from "../../publications/types";
  */
 
 /** The bundle's own schema. Changing the shape means changing this. */
-const PUBLICATION_BUNDLE_SCHEMA = "seedshot-publication-bundle/2" as const;
+const PUBLICATION_BUNDLE_SCHEMA = "signshot-publication-bundle/2" as const;
 
 /**
  * Everything except the image bytes. The native side adds `printImage` after re-hashing the file

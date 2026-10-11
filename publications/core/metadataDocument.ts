@@ -37,7 +37,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   catch { throw new Error(MISMATCH); }
   // The document (`metadata()`): the plain three fields, the edition's collect link as
   // `external_url`, Metaplex `attributes`, and `properties` holding exactly the one image file and
-  // its category. Under `properties` either may carry the keystore's attestation (`seedshot`), the publishing wallet's
+  // its category. Under `properties` either may carry the keystore's attestation (`signshot`), the publishing wallet's
   // Seeker Genesis Token (`genesisToken`), or both. Evidence that fails `readAttestationBundle` or
   // `checkAttributes` is SET ASIDE, not fatal: the photograph is still a valid
   // publication with no device claim, and the Proof sheet says why. Refusing it would add no safety
@@ -46,7 +46,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
   if (current) {
     const properties = object(doc.properties);
     const keys = properties ? Object.keys(properties) : [];
-    const evidence = keys.filter((k) => k === "seedshot" || k === "genesisToken");
+    const evidence = keys.filter((k) => k === "signshot" || k === "genesisToken");
     if (!properties || keys.length !== evidence.length + 2)
       throw new Error(MISMATCH);
     const files = Array.isArray(properties.files) && properties.files.length === 1 ? object(properties.files[0]) : null;
@@ -71,12 +71,12 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
       attributes = (attributes as unknown[]).slice(0, -1);
     }
     const genesis = genesisMint ? { genesisMint } : {};
-    if (!Object.hasOwn(properties, "seedshot")) {
+    if (!Object.hasOwn(properties, "signshot")) {
       if (!Array.isArray(attributes) || attributes.length !== 0) throw new Error(MISMATCH);
       return { image: doc.image, description, ...genesis };
     }
     try {
-      const read = readAttestationBundle(properties.seedshot, expected);
+      const read = readAttestationBundle(properties.signshot, expected);
       checkAttributes(attributes, read.summary);
       return {
         image: doc.image,
@@ -102,7 +102,7 @@ export function readPhotoMetadata(json: unknown, expected: Commitment, serialize
 export function sealedEvidence(serialized: string): { current: boolean; bundle?: unknown; namesDevice: boolean } {
   const doc = object(JSON.parse(serialized));
   const attributes: unknown[] = Array.isArray(doc?.attributes) ? doc.attributes : [];
-  const bundle = object(doc?.properties)?.seedshot;
+  const bundle = object(doc?.properties)?.signshot;
   return {
     current: !!doc && Object.hasOwn(doc, "external_url"),
     ...(bundle === undefined ? {} : { bundle }),

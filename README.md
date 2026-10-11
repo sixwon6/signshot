@@ -7,9 +7,8 @@ built-in wallet (Seed Vault, over Mobile Wallet Adapter) a photograph becomes a 
 Core edition, sold through Metaplex's Core Candy Machine, its image and details on Arweave, that
 other wallets collect free or buy for SOL or SKR.
 
-The repository, the Android package `app.seekershot`, the `erashot.app` domain and the metadata
-identifiers `seedshot-attestation/1`, `seedshot-genesis/1`, `properties.seedshot` and
-`erashot-core/1` keep their names: published editions and verified App Links depend on them.
+The Android package is `app.signshot`; the web domain is `erashot.app` (collect links, App Links,
+the co-signer at `cosign.erashot.app`, terms and privacy).
 
 ## The camera
 
@@ -155,10 +154,10 @@ on the phone.
 ## Device attestation
 
 On a phone that supports it, the metadata document carries Android hardware key attestation
-(`seedshot-attestation/1`, `publications/core/attestation.ts`): a fresh StrongBox (or TEE) key,
+(`signshot-attestation/1`, `publications/core/attestation.ts`): a fresh StrongBox (or TEE) key,
 whose challenge is the SHA-256 of a manifest naming this publication (cluster, the Candy Machine
 program, the candy machine, collection, publisher, nonce, image hash and capture fingerprints),
-signs the manifest; the chain and signature go under `properties.seedshot`, and the key is
+signs the manifest; the chain and signature go under `properties.signshot`, and the key is
 deleted. The manifest names the candy machine and the image hash it holds, so the evidence cannot
 move to another publication.
 
@@ -169,7 +168,7 @@ carries the attribute `Device: Solana Seeker`, only when (`readAttestationBundle
 
 - the manifest, challenge and signature match a hardware-backed key whose chain ends at a Google
   root pinned in `src/seeker/keyAttestation.ts`;
-- the attested app is exactly `app.seekershot` signed by exactly the release key (`RELEASE_APP`,
+- the attested app is exactly `app.signshot` signed by exactly the release key (`RELEASE_APP`,
   from `dapp-store/signing-certificate.json`);
 - boot is verified, the bootloader locked, and the attested maker and model are Solana Mobile Inc.
   / Seeker;
@@ -201,7 +200,7 @@ npm run verify:attestation -- --edition <candy machine address> --cluster devnet
 When the draft is made, the app looks up the publishing wallet's Seeker Genesis Token (SGT) on
 mainnet, whatever cluster it publishes on: the one it found last time while still held, else the
 lowest member number. A found mint is written under `properties.genesisToken`
-(`seedshot-genesis/1`, `publications/core/genesisToken.ts`) and as the attribute
+(`signshot-genesis/1`, `publications/core/genesisToken.ts`) and as the attribute
 `Seeker Genesis Token: <mint>`; when mainnet cannot be asked the document names none and the
 receipt's `Genesis Token` row reads "Couldn’t check.".
 
@@ -344,7 +343,7 @@ keeps one React; the scoped `xcode` override pins `uuid` 11.1.1.
 
 Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
 `dapp-store/signing-certificate.json` pins; the four local Gradle properties use the
-`SEEDSHOT_UPLOAD_*` prefix.
+`SIGNSHOT_UPLOAD_*` prefix.
 
 ## Folders
 
@@ -412,10 +411,9 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
   https://erashot.app/terms/; the opaque 512×512 icon in `dapp-store/icon-512.png`, a 1200×600
   banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a name of 25 characters or fewer and a
   short description of 30 or fewer; privacy URL https://erashot.app/privacy.
-- **Submission:** `SUBMISSION_DRAFT.md`: push, connect GitHub on Align (or make the repository
-  public), a public direct link to the APK, a captioned three-minute device demo and the pitch deck
-  (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of
-  the repository).
+- **Submission:** push, connect GitHub on Align (or make the repository public), a public direct
+  link to the APK, a captioned three-minute device demo and the pitch deck
+  (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of the repository).
 
 ## Licence
 

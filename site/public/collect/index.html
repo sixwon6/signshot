@@ -14,11 +14,11 @@
     <meta name="theme-color" content="#f2efe6" />
     <title>Signshot</title>
     <link rel="icon" href="/icon.png" />
-    <link rel="stylesheet" href="/brand/era-shot.css" />
+    <link rel="stylesheet" href="/brand/signshot.css" />
   </head>
   <body>
     <header class="site-header">
-      <img src="/brand/era-shot-mark.svg" width="36" height="36" alt="" />
+      <img src="/brand/signshot-mark.svg" width="36" height="36" alt="" />
     </header>
     <main class="document">
       <a id="open" class="button primary" hidden>Open in Signshot</a>
@@ -39,7 +39,7 @@
       if (core.length === 1 && isAddress(core[0]) && (cluster.length === 0 || (cluster.length === 1 && cluster[0] === "devnet"))) {
         const open = document.getElementById("open");
         open.href = "intent://erashot.app/collect/?core=" + core[0] + (cluster.length ? "&cluster=devnet" : "") +
-          "#Intent;scheme=https;package=app.seekershot;S.browser_fallback_url=https%3A%2F%2Ferashot.app%2F;end";
+          "#Intent;scheme=https;package=app.signshot;S.browser_fallback_url=https%3A%2F%2Ferashot.app%2F;end";
         open.hidden = false;
       }
     </script>

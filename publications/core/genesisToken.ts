@@ -1,5 +1,5 @@
 /**
- * The Seeker Genesis Token part of a published document (`seedshot-genesis/1`).
+ * The Seeker Genesis Token part of a published document (`signshot-genesis/1`).
  *
  * At publish time the app looks up the publishing wallet's SGT on mainnet and writes its MINT
  * ADDRESS into the document under `properties.genesisToken`, beside a Metaplex `attributes` entry
@@ -13,7 +13,7 @@
  * on: the wallet address is the same keypair on every cluster.
  *
  * What it says: the publishing wallet holds the Genesis Token of a Seeker. What it does not say:
- * which device made the publication — that is `seedshot-attestation/1`, in `attestation.ts`.
+ * which device made the publication — that is `signshot-attestation/1`, in `attestation.ts`.
  */
 
 import { address, getAddressDecoder, getBase64Encoder } from "@solana/kit";
@@ -21,7 +21,7 @@ import { request } from "../rpc";
 import type { Cluster } from "../types";
 import { exactKeys, object } from "./attestation";
 
-export const GENESIS_SCHEMA = "seedshot-genesis/1" as const;
+export const GENESIS_SCHEMA = "signshot-genesis/1" as const;
 
 /** Solana Mobile's metadata address and group. They are the same account. */
 export const SGT_METADATA_ADDRESS = "GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te";
@@ -55,7 +55,7 @@ export function genesisAttributes(mint: string): { trait_type: string; value: st
   return [{ trait_type: "Seeker Genesis Token", value: mint }];
 }
 
-/** The claimed mint, or a throw for anything that is not exactly a `seedshot-genesis/1` claim. */
+/** The claimed mint, or a throw for anything that is not exactly a `signshot-genesis/1` claim. */
 export function readGenesisClaim(value: unknown): string {
   const claim = object(value);
   if (!claim || !exactKeys(claim, ["schema", "mint"]) || claim.schema !== GENESIS_SCHEMA ||

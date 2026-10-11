@@ -11,12 +11,12 @@ The Seeker co-signer at `cosign.erashot.app` is a separate Worker (`worker/READM
 - `public/icon.png` — also the Mobile Wallet Adapter identity icon (`src/solana/appIdentity.ts`).
 - `public/brand/` — the shared mark and stylesheet.
 - `public/_headers` — response headers and CSPs.
-- `public/.well-known/assetlinks.json` — the App Link association for `app.seekershot` and the
+- `public/.well-known/assetlinks.json` — the App Link association for `app.signshot` and the
   release key's fingerprint in `dapp-store/signing-certificate.json`; **keep it byte-identical**
   (sha256 in the checks below): Android re-verifies it only on install or update.
 - `public/collect/index.html` — what `/collect/?core=<edition>[&cluster=devnet]` shows when the
   App Link does not open the app: one inline script, allowed by its hash, builds
-  `intent://erashot.app/collect/?core=…#Intent;scheme=https;package=app.seekershot;S.browser_fallback_url=…;end`
+  `intent://erashot.app/collect/?core=…#Intent;scheme=https;package=app.signshot;S.browser_fallback_url=…;end`
   from a valid `core` and `cluster` (`devnet` or none) and fetches nothing. The edition is the
   candy machine's address.
 - `public/terms/index.html` — the terms at `/terms/`; "Version N" is `TERMS_VERSION` in

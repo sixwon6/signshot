@@ -5,7 +5,7 @@
     ],
     "target": {
       "namespace": "android_app",
-      "package_name": "app.seekershot",
+      "package_name": "app.signshot",
       "sha256_cert_fingerprints": [
         "ED:33:4F:57:1D:F9:15:4C:1C:CF:B3:CA:DA:57:97:71:EF:56:6C:28:DF:D1:53:45:33:B8:78:2B:C8:19:DA:C9"
       ]

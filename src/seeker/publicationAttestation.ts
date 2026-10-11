@@ -1,5 +1,5 @@
 /**
- * The publish-time side of `seedshot-attestation/1`: build the manifest for a draft, have the
+ * The publish-time side of `signshot-attestation/1`: build the manifest for a draft, have the
  * keystore attest and sign it, and read the result back through the SAME reader every document
  * goes through, so nothing is written that this app could not later read. Never throws and never
  * waits forever: a phone that cannot attest, or does not answer in time, publishes a plain

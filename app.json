@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Signshot",
-    "slug": "seedshot",
+    "slug": "signshot",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,7 +10,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#10140F"
       },
-      "package": "app.seekershot",
+      "package": "app.signshot",
       "versionCode": 2,
       "allowBackup": false,
       "intentFilters": [

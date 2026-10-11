@@ -1,10 +1,10 @@
 /**
- * The device-attestation part of a published document (`seedshot-attestation/1`).
+ * The device-attestation part of a published document (`signshot-attestation/1`).
  *
  * At publish time the phone's keystore generates a fresh hardware-backed key whose attestation
  * challenge is the SHA-256 of a canonical MANIFEST naming this exact publication (edition address,
  * creator, nonce, image fingerprint, capture fingerprints), signs the manifest with that key, and
- * the certificate chain plus signature go into the document under `properties.seedshot`. The
+ * the certificate chain plus signature go into the document under `properties.signshot`. The
  * manifest names the candy machine and the image hash it holds, so the evidence cannot be
  * transplanted: a certificate from another key, phone or publication carries a different
  * challenge and fails here.
@@ -36,7 +36,7 @@ import type { AttestationSummary, Cluster } from "../types";
 
 export type { AttestationSummary };
 
-export const ATTESTATION_SCHEMA = "seedshot-attestation/1" as const;
+export const ATTESTATION_SCHEMA = "signshot-attestation/1" as const;
 
 const HEX32 = /^[a-f0-9]{64}$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;

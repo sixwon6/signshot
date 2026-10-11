@@ -1,6 +1,6 @@
 /**
  * Wraps a `PublicationAttestationTest` export (the native result: signature and certificates)
- * with the sample manifest into a `seedshot-attestation/1` bundle, for `verify-attestation.ts
+ * with the sample manifest into a `signshot-attestation/1` bundle, for `verify-attestation.ts
  * --file`. Usage: npx tsx scripts/wrap-device-attestation.ts <native-result.json> <out.json>
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -15,7 +15,7 @@ if (!native.available) throw new Error(`device reported attestation unavailable:
 const { manifest } = JSON.parse(readFileSync(resolve(here, "fixtures", "attestation-sample.json"), "utf8")) as { manifest: unknown };
 writeFileSync(output, JSON.stringify({
   note: `Real device export (strongBox=${native.strongBox}); manifest is the synthetic sample.`,
-  schema: "seedshot-attestation/1",
+  schema: "signshot-attestation/1",
   manifest,
   signature: native.signature,
   certificates: native.certificates,

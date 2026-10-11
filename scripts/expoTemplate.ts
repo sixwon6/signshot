@@ -1,12 +1,9 @@
 /**
- * Read one file out of the Expo bare template that `npx expo prebuild` generates `android/` from.
+ * Reads files from `node_modules/expo/template.tgz`, the template `expo prebuild` unpacks into
+ * `android/`, so checks can compare against a fresh prebuild without running one.
  *
- * `node_modules/expo/template.tgz` is the archive Expo's prebuild unpacks, so it answers "what
- * would a fresh prebuild write here?" without running one. `check-signing.ts` and
- * `check-prebuild.ts` both ask, through this one reader.
- *
- * Gzipped POSIX tar, read with no tar binary: 512-byte headers, name in bytes 0..100, an optional
- * long-path prefix in 345..500, and an octal size in 124..136.
+ * Gzipped POSIX tar parsed directly: 512-byte headers, name at 0..100, long-path prefix at
+ * 345..500, octal size at 124..136.
  */
 
 import { readFileSync } from "node:fs";

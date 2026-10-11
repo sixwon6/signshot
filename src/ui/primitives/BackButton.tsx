@@ -1,8 +1,4 @@
-/**
- * BackButton — a chevron and where it goes. There is no tab bar: the camera is home, and Photos,
- * Wallet and Settings each carry this at their head to return to it; the photo detail uses it to
- * return to Photos. Android's back gesture goes to the same place.
- */
+/** Chevron plus destination. Must go where Android's back gesture goes. */
 import {
   Pressable,
   StyleSheet,
@@ -17,7 +13,7 @@ interface BackButtonProps {
   /** The destination, as the screen is named: "Camera", "Photos". */
   label: string;
   onPress: () => void;
-  /** What a screen reader says, when the label alone is not a sentence: "Back to camera". */
+  /** e.g. "Back to camera" when the label alone is not a sentence. */
   accessibilityLabel?: string;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;

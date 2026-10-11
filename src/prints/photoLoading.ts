@@ -1,4 +1,4 @@
-/** Preserve library order without starting every photo's RPC work at once. */
+/** Results in library order, with at most 3 reads in flight. */
 export async function loadPhotoEntries<T, R>(
   records: readonly T[],
   read: (record: T) => Promise<R>,
@@ -16,7 +16,7 @@ export async function loadPhotoEntries<T, R>(
   return entries;
 }
 
-/** Publish all local records before any remote refresh, then deliver fresh statuses separately. */
+/** Show all local records first, then deliver each refreshed status as it arrives. */
 export async function loadPhotosInStages<T, R>(options: {
   records: readonly T[];
   readLocal(record: T): Promise<R>;

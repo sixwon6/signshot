@@ -76,7 +76,7 @@ class Profile(
         val paramNames = ShaderGen.STAGE_PARAMS[type]
           ?: throw IllegalArgumentException(
             "stage '$type' is not in the renderer stage registry (renderer ${ShaderGen.RENDERER_VERSION}) — update required")
-        // Scaling law is mandatory and fixed per type: no default, no free choice.
+        // Scaling law is mandatory and fixed per type.
         require(s.has("scaling")) { "stage '$type': scaling law must be declared" }
         val scaling = s.getString("scaling")
         val expected = ShaderGen.STAGE_SCALING.getValue(type)

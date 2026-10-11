@@ -55,8 +55,7 @@ export function selectPhotoProof(
           ? "unavailable"
           : "unconfirmed";
     const signature: string | undefined = undefined;
-    // Only the validated view supplies edition links; a saved address alone cannot rebuild one
-    // when draft or trust validation failed.
+    // Links come only from the validated view, never rebuilt from a saved address.
     return {
       kind: "core",
       draft,

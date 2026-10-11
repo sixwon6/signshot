@@ -1,9 +1,6 @@
 /**
- * The camera, and the app's home screen: one layout under an AUTO · P · M dial. In every mode the
- * bottom row chooses, the row above it adjusts and the shutter shoots, all in the bottom sheet.
- * AUTO's row is the looks under the look's strength, and brightness is a drag on the picture; P
- * and M show the readout cells (the look among them) under the live cell's dial. State lives in
- * `useRecipes` (the look) and `useCaptureControls` (the camera and its dial).
+ * Home screen: one layout under an AUTO · P · M dial. The bottom sheet holds choose, adjust and
+ * shutter rows. Look state is in `useRecipes`, camera state in `useCaptureControls`.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -47,20 +44,16 @@ import { useRecipes } from "./useRecipes";
 import { useCaptureControls } from "./useCaptureControls";
 import { useAppActive } from "../useAppActive";
 
-/**
- * The preview stream is a supported 4:3 size on its side (CameraController.kt), so the upright picture is
- * 3:4. GlRenderer fits it inside the view and centres it; what is drawn on the picture is placed on that rect.
- */
+// The preview stream is 4:3 sideways (CameraController.kt), so upright it is 3:4. GlRenderer
+// letterboxes it centred; overlays are positioned on that rect.
 const PICTURE_ASPECT = 3 / 4;
 const FOCUS_RING = 72;
-/** A finger's travel on the picture for one stop of brightness, and how far it moves before it is a drag. */
+/** dp of vertical drag per EV stop, and the slop before a touch counts as a drag. */
 const DP_PER_STOP = 80;
 const DRAG_SLOP = 10;
-/** The brightness readout, drawn clear of the finger while it drags. */
+/** `above` keeps the readout clear of the dragging finger. */
 const BRIGHT_READOUT = { width: 84, height: 44, above: 96 };
-/** The dial's positions, in the order a camera prints them. */
 const MODES: readonly CaptureMode[] = ["auto", "program", "manual"];
-/** DISP's grid: the picture in thirds. */
 const THIRDS = [1 / 3, 2 / 3];
 
 function pictureRect(frame: { width: number; height: number }) {
@@ -83,26 +76,21 @@ export function CameraScreen() {
   const [permissionBlocked, setPermissionBlocked] = useState(false);
   const [requestingPermission, setRequestingPermission] = useState(false);
   const [busy, setBusy] = useState(false);
-  /** The camera's own trouble: permission, the shutter, the session. Never a recipe's. */
+  /** Camera errors only (permission, shutter, session); recipe errors come from `recipes`. */
   const [error, setError] = useState("");
   const [cameraGeneration, setCameraGeneration] = useState(0);
   const [frame, setFrame] = useState<{ width: number; height: number } | null>(
     null,
   );
-  /** The recipe editor: the one stage open over the foot of the picture, or null when it is shut. */
   const [openStage, setOpenStage] = useState<StageType | null>(null);
   const [sheetMode, setSheetMode] = useState<SheetMode | "closed">("closed");
   const [optionsFor, setOptionsFor] = useState<Recipe | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   const [confirming, setConfirming] = useState(false);
-  /**
-   * The cell the photographer made live, or null for the mode's own: brightness in P, the shutter
-   * in M. AUTO has no cells, and its adjust row is the look's strength.
-   */
+  /** User-picked live cell; null means the mode default (EV in P, shutter in M). */
   const [chosenCell, setChosenCell] = useState<LiveKey | null>(null);
-  /** With the look live: its row of looks, or, after a second tap on the one in force, its strength. */
+  /** Look cell: "pick" shows the looks; re-tapping the active look shows its strength. */
   const [lookDepth, setLookDepth] = useState<"pick" | "strength">("pick");
-  /** Where the picture was last tapped to focus, in picture coordinates; the ring drawn there. */
   const [focusRing, setFocusRing] = useState<{ x: number; y: number; at: number } | null>(null);
   const ring = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -116,17 +104,14 @@ export function CameraScreen() {
       if (finished) setFocusRing((now) => (now?.at === focusRing.at ? null : now));
     });
   }, [focusRing, ring]);
-  /**
-   * A tap on the picture focuses and meters there; a vertical drag sets brightness in the camera's
-   * own steps. The PanResponder is created once, so it reads this render's handlers from
-   * `pictureTouch`, which an effect refreshes after every render.
-   */
+  // Tap focuses and meters; vertical drag sets EV in the camera's steps. The PanResponder is created
+  // once, so it reads current handlers from `pictureTouch`, refreshed after every render.
   const [brightDrag, setBrightDrag] = useState<{ x: number; y: number; steps: number } | null>(null);
   const brightFade = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (brightFade.current) clearTimeout(brightFade.current); }, []);
   const pictureTouch = useRef<{
     tap: (x: number, y: number) => void;
-    /** Null where brightness is not the photographer's to set: M, a capture in flight, no control. */
+    /** Null when EV can't be dragged: M, a capture in flight, or no EV control. */
     bright: ((steps: number) => void) | null;
     range: { min: number; max: number; step: number } | null;
     steps: number;
@@ -145,14 +130,14 @@ export function CameraScreen() {
         const d = drag.current;
         if (!now.bright || !now.range) return;
         if (!d.on) {
-          // Up or down, and far enough that it is not a tap that slipped.
+          // Mostly vertical and past the slop, so a slipped tap stays a tap.
           if (Math.abs(gesture.dy) < DRAG_SLOP || Math.abs(gesture.dy) < Math.abs(gesture.dx)) return;
           d.on = true;
           if (brightFade.current) clearTimeout(brightFade.current);
           setBrightDrag({ x: d.x, y: d.y, steps: d.last });
         }
         const moved = Math.round(-gesture.dy / DP_PER_STOP / now.range.step);
-        // A value from beyond the range (P's, carried into AUTO) comes in from where it is, not with a jump.
+        // Clamp includes the start value so an out-of-range EV carried from P doesn't jump.
         const low = Math.min(now.range.min, d.from), high = Math.max(now.range.max, d.from);
         const steps = Math.max(low, Math.min(high, d.from + moved));
         if (steps === d.last) return;
@@ -177,12 +162,9 @@ export function CameraScreen() {
   const live = focused && active && hasPermission === true;
   const recipes = useRecipes({ live, generation: cameraGeneration, busy });
   const capture = useCaptureControls({ live, generation: cameraGeneration });
-  /** Off AUTO: the readout is up. */
   const readout = capture.mode !== "auto";
-  /**
-   * The live cell, read off the mode rather than kept in step with it: when the dial turns to M by
-   * itself (a ruler moved in P) a live BRIGHT is forbidden, and the shutter is live in its place.
-   */
+  // Derived, not stored: if the dial switches itself to M (a ruler moved in P), a live EV cell is
+  // forbidden and the mode default takes over.
   const liveCell: LiveKey | null =
     capture.caps === null || !readout
       ? null
@@ -192,21 +174,18 @@ export function CameraScreen() {
             !forbiddenIn(chosenCell, capture.mode))
         ? chosenCell
         : firstLive(capture.caps, capture.mode);
-  /** Only a dial that turned changes anything here: each mode arrives on its own live cell. */
+  /** No-op unless the mode changed; each mode starts on its default cell. */
   const chooseMode = (next: CaptureMode) => {
     if (!capture.chooseMode(next)) return;
     setChosenCell(null);
     setLookDepth("pick");
     if (next === "auto") {
       setOpenStage(null);
-      // AUTO is the camera choosing: a tapped subject is released with everything else held.
+      // AUTO releases any tapped focus point.
       void SeekerCamera.releaseFocusPoint().catch(() => {});
     }
   };
-  /**
-   * AUTO held down: everything back to the camera with nothing set aside. A tap on AUTO instead
-   * keeps what P and M held for their return.
-   */
+  /** Long-press AUTO: full reset. A plain tap keeps P/M settings for their return. */
   const resetAll = () => {
     setChosenCell(null);
     setLookDepth("pick");
@@ -251,10 +230,7 @@ export function CameraScreen() {
     setConfirming(false);
     recipes.clearError();
   };
-  /**
-   * Another look is chosen and the editor shuts. The look in force, tapped again off AUTO, turns
-   * its row to its strength; AUTO has that row up already.
-   */
+  /** Off AUTO, re-tapping the active look switches its row to strength. */
   const chooseRecipe = (next: Recipe) => {
     if (captureInFlight.current) return;
     const again = recipes.choose(next) !== null;
@@ -262,13 +238,13 @@ export function CameraScreen() {
     if (again && readout) setLookDepth("strength");
     if (!readout) setChosenCell(null);
   };
-  /** The look's stages, opened on the first one it moves. */
+  /** Opens the editor on the first stage the look changes. */
   const openEditor = () => {
     if (captureInFlight.current || origin === null) return;
     const stage = recipes.choose(origin);
     if (stage !== null) setOpenStage(stage);
   };
-  /** `+` asks for a name first; the recipe exists under that name before any slider moves. */
+  /** `+` asks for a name first; the recipe exists before any slider moves. */
   const chooseCustom = () => {
     if (captureInFlight.current || busy) return;
     recipes.clearError();
@@ -277,7 +253,7 @@ export function CameraScreen() {
   };
   const createNew = async () => {
     if (await recipes.create(nameDraft)) {
-      // Every stage is at neutral, so the editor opens on the first for the sliders to start.
+      // All stages start neutral; open the first.
       setChosenCell("look");
       setLookDepth("strength");
       setOpenStage(STAGES[0].type);
@@ -298,7 +274,7 @@ export function CameraScreen() {
       setSheetMode("closed");
     }
   };
-  /** One word of confirmation, then it is gone: the first tap arms, the second removes. */
+  /** Two-tap delete: the first tap arms. */
   const deleteOwned = async (target: Recipe | null) => {
     if (target === null) return;
     if (!confirming) {
@@ -323,7 +299,6 @@ export function CameraScreen() {
     captureInFlight.current = false;
     setBusy(false);
   }, [busy, navigation]);
-  /** A fresh camera view, and the trouble that asked for it cleared with it. */
   const restart = () => {
     setError("");
     setCameraGeneration((value) => value + 1);
@@ -333,21 +308,19 @@ export function CameraScreen() {
 
   const picture = frame ? pictureRect(frame) : null;
   const evRange = capture.caps !== null && typeof capture.caps.ev === "object" ? capture.caps.ev : null;
-  // In AUTO the drag goes as far as the slider does; P has the camera's whole range.
+  // AUTO limits the drag to the slider's span; P gets the camera's full range.
   const autoSpan = capture.caps !== null && capture.mode === "auto" ? autoEvSpan(capture.caps) : null;
-  // M holds the exposure, so brightness there is not the photographer's to move.
+  // M holds exposure, so no EV drag.
   const canBright =
     !busy && capture.caps !== null && controlsOf(capture.caps, capture.mode).includes("ev") && !forbiddenIn("ev", capture.mode);
-  // After every render, so the handlers always act on the settings now in force. A hook, so it
-  // stays above the permission screen's early return.
+  // Runs every render so the handlers see current settings. Must stay above the early return.
   useEffect(() => {
     pictureTouch.current = {
       tap: (x, y) => {
         if (!picture) return;
         setOpenStage(null);
-        // A held lens cannot follow a tap; the tap hands focus back to the camera first. In AUTO
-        // it meters afresh, brightness included: with no cell to show one, a held value must not
-        // outlive the tap.
+        // A locked lens can't follow a tap, so return focus to auto. AUTO also zeroes EV, since
+        // it has no cell to show a held value.
         const ev = readout ? capture.settings.ev : 0;
         if (capture.settings.focus !== "auto" || ev !== capture.settings.ev)
           capture.change({ ...capture.settings, focus: "auto", ev });
@@ -411,20 +384,18 @@ export function CameraScreen() {
       </Screen>
     );
 
-  /** The camera's own trouble, or a recipe that would not apply: one line, one Restart. */
   const notice = error || recipes.applyError || capture.applyError;
   const shutterDisabled = busy || recipes.applying || capture.applying || !live || !!notice || recipe === null;
   const strengthDisabled = busy || recipes.applying || recipes.isClean;
-  // What looks unavailable, as against what merely holds a tap for a moment (see slowApply).
+  // Dim only when unavailable, not while a quick apply briefly blocks taps (see slowApply).
   const dimmed = busy || recipes.slowApply || !!notice || recipe === null;
   const strengthDimmed = busy || recipes.slowApply || recipes.isClean;
   const points = Math.round(recipes.strength * 100);
   const dialDisabled = busy || !live || capture.caps === null;
 
-  /** The look's strength: its name and number as a cell would say them, then the dial itself. */
   const strengthRow = (trailing?: React.ReactNode) => (
     <View style={[s.adjustRow, strengthDimmed && s.strengthDisabled]}>
-      {/* No − and + buttons: screen readers step the track through its increment/decrement actions. */}
+      {/* No −/+ buttons: screen readers use the track's increment/decrement actions. */}
       <View style={s.strengthCell} importantForAccessibility="no-hide-descendants">
         <Text maxFontSizeMultiplier={CHROME_FONT_SCALE} style={[type.imprint, s.muted]}>{recipeCopy.strength}</Text>
         <Text maxFontSizeMultiplier={CHROME_FONT_SCALE} style={[type.readout, s.strengthValue]}>{points}</Text>
@@ -468,7 +439,6 @@ export function CameraScreen() {
       {focused && <StatusBar style="light" />}
       <View style={s.stage}>
         <View style={s.header}>
-          {/* The dial: three positions set in type, an index mark under the one it is turned to. */}
           <View style={s.dial} accessibilityRole="radiogroup" accessibilityLabel={controlsCopy.modeDial}>
             {MODES.filter((one) => one !== "manual" || capture.canHoldExposure).map((one) => (
               <TextKey
@@ -477,13 +447,13 @@ export function CameraScreen() {
                 label={controlsCopy.modes[one]}
                 on={capture.mode === one}
                 index
-                // On AUTO, the position that kept the photographer's settings reads in the accent.
+                // On AUTO, accents the mode whose settings are remembered.
                 held={capture.remembered === one}
                 accessibilityRole="radio"
                 accessibilityLabel={capture.remembered === one
                   ? controlsCopy.modeHeld(controlsCopy.modeNames[one])
                   : controlsCopy.modeNames[one]}
-                // M holds what this camera metered, so it waits for a first reading.
+                // M holds the metered exposure, so it needs a first reading.
                 disabled={dialDisabled || (one === "manual" && capture.mode !== "manual" && capture.meter === null)}
                 onPress={() => chooseMode(one)}
                 onLongPress={one === "auto" ? resetAll : undefined}
@@ -512,8 +482,7 @@ export function CameraScreen() {
           </Pressable>
         </View>
 
-        {/* The picture has the whole space between the header and the sheet, and the native
-            view fits the 3:4 frame inside it, so none of the shot hides under the sheet. */}
+        {/* Fills the space between header and sheet; the native view letterboxes 3:4 inside it. */}
         <View
           style={s.viewfinderLayer}
           onLayout={(event) => {
@@ -549,8 +518,7 @@ export function CameraScreen() {
                 />
               </React.Fragment>
             ))}
-          {/* The whole picture is the target, under whatever is drawn over it: a tap focuses and
-              meters there, a drag up or down is brightness (`picturePan`). */}
+          {/* Touch target over the whole picture: tap focuses, vertical drag sets EV (`picturePan`). */}
           {picture && live && (
             <View
               accessible
@@ -649,7 +617,7 @@ export function CameraScreen() {
         </View>
 
         <View style={s.sheet}>
-          {/* ADJUST: the live cell's dial; with no cell live, the look's strength. */}
+          {/* Adjust row: the live cell's control, else the look's strength. */}
           {capture.caps !== null && liveCell !== null && liveCell !== "look" ? (
             <CaptureAdjust
               key={liveCell}
@@ -674,7 +642,7 @@ export function CameraScreen() {
             )
           )}
 
-          {/* CHOOSE: AUTO chooses a look; P and M choose a cell. */}
+          {/* Choose row: looks in AUTO, readout cells in P/M. */}
           {readout && capture.caps !== null ? (
             <View style={s.chooseCells}>
             <ReadoutCells
@@ -687,7 +655,7 @@ export function CameraScreen() {
               disabled={busy}
               onLive={(key) => {
                 setChosenCell(key);
-                // The look cell again turns its row between the looks and the strength of the one in force.
+                // Re-tapping the look cell toggles between looks and strength.
                 setLookDepth(key === "look" && liveCell === "look" && lookDepth === "pick" ? "strength" : "pick");
               }}
             />
@@ -696,7 +664,6 @@ export function CameraScreen() {
             <View style={s.chooseRow}>{lookRow()}</View>
           )}
 
-          {/* SHOOT: the shutter, and the two doors out of the camera set as words on its axis. */}
           <View style={s.shootRow}>
             <TextKey
               label={cameraCopy.photos}
@@ -767,7 +734,6 @@ export function CameraScreen() {
 }
 
 const s = StyleSheet.create({
-  /** Header, picture, sheet: a column, so the picture is never under either of the others. */
   stage: { flex: 1 },
   viewfinderLayer: {
     flex: 1,
@@ -793,7 +759,6 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   loadingText: { color: colors.ink },
-  /** The tap-to-focus mark: a square the accent colour, the size of a fingertip. */
   focusRing: {
     position: "absolute",
     width: FOCUS_RING,
@@ -802,7 +767,6 @@ const s = StyleSheet.create({
     borderColor: colors.teal,
     borderRadius: radius.small,
   },
-  /** Brightness while it is dragged: a tag over its value, on the histogram's backing. */
   brightReadout: {
     position: "absolute",
     width: BRIGHT_READOUT.width,
@@ -813,7 +777,7 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.55)",
   },
   brightTag: { color: colors.muted },
-  /** Over the foot of the picture, so an error never resizes the viewfinder. */
+  /** Overlays the picture so an error never resizes the viewfinder. */
   notice: {
     position: "absolute",
     left: space.gutter,
@@ -826,7 +790,7 @@ const s = StyleSheet.create({
   noticeText: { color: colors.ink },
   noticeButton: { alignSelf: "flex-start", marginTop: space.sm, paddingVertical: space.xs },
   noticeButtonText: { color: colors.tealText },
-  /** The same height in every mode, so the picture never resizes as the dial turns. */
+  /** Same height in every mode so the picture never resizes as the dial turns. */
   sheet: {
     backgroundColor: colors.sheet,
     borderTopLeftRadius: radius.card,
@@ -836,16 +800,15 @@ const s = StyleSheet.create({
     paddingBottom: space.md,
   },
   adjustRow: { height: ADJUST_HEIGHT, flexDirection: "row", alignItems: "center", gap: space.sm },
-  /** A scrolling row in the adjust position: a column, so it takes the width and can bleed past it. */
+  /** Column, so the scrolling row takes the full width and can bleed past the gutter. */
   adjustSlot: { height: ADJUST_HEIGHT, justifyContent: "center" },
-  /** The look row in the choose position: a column, so it takes the width and can bleed past it. */
   chooseRow: { height: 44, marginTop: space.sm, justifyContent: "center" },
   chooseCells: { height: 44, marginTop: space.sm },
   muted: { color: colors.muted },
   strengthDisabled: { opacity: 0.35 },
   strengthCell: { width: 64, alignItems: "flex-start", justifyContent: "center" },
   strengthValue: { color: colors.tealText },
-  /** The thumb is 18 wide and centred on the value, so the rail starts half a thumb in. */
+  /** Thumb is 18 wide and centred on the value, so inset the rail by half. */
   strengthTrack: { flex: 1, paddingHorizontal: 9 },
   shootRow: {
     height: 84,
@@ -854,7 +817,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  /** Half the row's spare width each, so the shutter stays centred between the two doors. */
+  /** Equal flex on both sides keeps the shutter centred. */
   door: { flex: 1, height: 84 },
   shutter: {
     width: 76,

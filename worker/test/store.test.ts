@@ -11,7 +11,7 @@ describe("claims table", () => {
   it("lets exactly one of two simultaneous inserts take an (edition, SGT) slot", async () => {
     const results = await Promise.all([insertClaim(env.DB, claim("one")), insertClaim(env.DB, claim("two"))]);
     expect(results.filter(Boolean)).toHaveLength(1);
-    // Another edition, or the same edition address on the other cluster, is its own slot.
+    // Slots are per edition and per cluster.
     expect(await insertClaim(env.DB, claim("three", { edition: "E2" }))).toBe(true);
     expect(await insertClaim(env.DB, claim("four", { cluster: "mainnet-beta" }))).toBe(true);
   });

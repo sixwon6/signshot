@@ -10,10 +10,7 @@ import { actions, onChain, publish as copy } from "../ui/copy";
 import type { useTermsAgreement } from "../moderation/store";
 import { TermsAgreement } from "../moderation/TermsAgreement";
 
-/**
- * What the publish sheet's dock holds: the notice when publishing is unavailable, otherwise the
- * one status line and the one action for the current step.
- */
+/** The publish sheet's dock: an unavailable notice, or the status line and action for the current step. */
 export function PrintDock({
   canPublish,
   initializing,

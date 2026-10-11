@@ -22,7 +22,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
     private const val CAPTURE_TIMEOUT_MS = 15_000L
     /** Seeker main sensor (probe: physical BACK, FULL, YUV max 4000x3000). */
     private const val CAMERA_ID = "0"
-    /** ≤ 10 Hz, the ceiling the view event is specified at. */
+    /** Meter events at most 10 Hz. */
     private const val METER_INTERVAL_MS = 100L
     /** Every 8th pixel both ways: ~30k samples of a 1600×1200 preview frame. */
     private const val METER_PIXEL_STEP = 8
@@ -31,16 +31,15 @@ class CameraController(private val context: Context, private val renderer: GlRen
   private val thread = HandlerThread("signshot").apply { start() }
   private val handler = Handler(thread.looper)
 
-  // Manual controls (CaptureControls.kt). `caps` never changes; `effective` is the last accepted
-  // settings, applied to both preview and still requests through applyTo().
+  // Manual controls (CaptureControls.kt). `effective` is the last accepted settings, applied to
+  // preview and still alike.
   @Volatile private var caps: CaptureCaps? = null
   @Volatile private var effective: EffectiveCapture = EffectiveCapture.AUTO_EFFECTIVE
   // The live AE result, so a half-manual pair can borrow the half the camera is still choosing.
   @Volatile private var lastAeIso: Int? = null
   @Volatile private var lastAeShutterNs: Long? = null
-  // Tap to focus: the sensor geometry read at open(), and the one metering region a tap sets.
-  // The region is camera-thread only. It rides on every request until a still is taken, the
-  // photographer releases focus, or manual focus takes over.
+  // Tap to focus. `meteringRegion` is camera-thread only and rides on every request until a
+  // still, releaseFocusPoint(), or manual focus.
   @Volatile private var activeArray: Rect? = null
   @Volatile private var sensorOrientation = 0
   @Volatile private var maxAfRegions = 0
@@ -64,17 +63,13 @@ class CameraController(private val context: Context, private val renderer: GlRen
   private var previewReader: ImageReader? = null
   private var stillReader: ImageReader? = null
   @Volatile private var closed = false
-  // openCamera is in flight and its StateCallback has not fired yet. The looper must stay alive
-  // until it does — a device delivered to nobody is a leaked device, which poisons the camera
-  // app-wide. Written/read on the handler thread only.
+  // openCamera's StateCallback has not fired. The looper must outlive it: a device delivered to
+  // nobody leaks and blocks the camera app-wide. Handler thread only.
   private var awaitingOpen = false
 
   var onError: ((String) -> Unit)? = null
 
-  /**
-   * SENSOR_INFO_TIMESTAMP_SOURCE, read at open(). SENSOR_TIMESTAMP is meaningless without it
-   * (0 = unknown epoch, 1 = boot-realtime); read rather than assumed in case an OTA changes it.
-   */
+  /** SENSOR_INFO_TIMESTAMP_SOURCE (0 = unknown epoch, 1 = boot-realtime); SENSOR_TIMESTAMP needs it. */
   @Volatile var timestampSource: Int? = null
     private set
 
@@ -171,7 +166,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
 
   /**
    * The repeating preview request, rebuilt from the template on every settings change so an auto
-   * control is expressed by simply not setting it.
+   * control is expressed by not setting it.
    */
   private fun startPreview(afTrigger: Int? = null) {
     val d = device ?: return
@@ -181,8 +176,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
     req.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
     applyTo(req, effective)
     applyRegions(req)
-    // A trigger is a one-frame instruction: sent once on its own, never left on the repeating
-    // request, or every frame would restart the scan.
+    // Triggers go out once; left on the repeating request, every frame would restart the scan.
     if (afTrigger != null) {
       req.set(CaptureRequest.CONTROL_AF_TRIGGER, afTrigger)
       try { s.capture(req.build(), meterCallback, handler) } catch (e: Throwable) { Log.w(TAG, "af trigger", e) }
@@ -200,10 +194,8 @@ class CameraController(private val context: Context, private val renderer: GlRen
   }
 
   /**
-   * Tap to focus. `u`,`v` are 0..1 across the picture AS DISPLAYED (portrait, rotated from the
-   * sensor), mapped back through the sensor orientation onto the active array. Focus and exposure
-   * meter on a square an eighth of the frame wide around the point, and continuous AF is told to
-   * lock there (`AF_TRIGGER_START`), the way a phone camera holds a tapped subject.
+   * `u`,`v` are 0..1 across the picture as displayed, mapped through the sensor orientation onto
+   * the active array. AF and AE meter on a square 1/8 of the array wide, then AF_TRIGGER_START locks.
    */
   fun focusAt(u: Double, v: Double) {
     handler.post {
@@ -211,8 +203,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
       val array = activeArray ?: return@post
       if (maxAfRegions == 0 && maxAeRegions == 0) return@post
       val cu = u.coerceIn(0.0, 1.0); val cv = v.coerceIn(0.0, 1.0)
-      // Rotating the sensor frame clockwise by the orientation gives the displayed frame; this is
-      // that rotation undone, point by point.
+      // Undo the clockwise sensor-to-display rotation.
       val (fx, fy) = when (sensorOrientation) {
         90 -> cv to (1.0 - cu)
         180 -> (1.0 - cu) to (1.0 - cv)
@@ -319,8 +310,8 @@ class CameraController(private val context: Context, private val renderer: GlRen
       try {
         val req = d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
         req.addTarget(stillReader!!.surface)
-        // Keep the device's still-processing defaults (forcing them OFF adds sensor noise); recipes
-        // run on the processed image. Same exposure, colour, focus and tap region as the viewfinder.
+        // Device still-processing defaults stay on (forcing them OFF adds noise); recipes run on
+        // the processed image.
         applyTo(req, effective)
         applyRegions(req)
         s.capture(req.build(), object : CameraCaptureSession.CaptureCallback() {
@@ -328,7 +319,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
             if (pending !== operation) return
             operation.result = tr
             maybeCompleteCapture()
-            // Tap, shoot, and the camera is choosing again: a tapped subject is for one photograph.
+            // A tapped point holds for one photograph.
             releaseFocusPoint()
           }
           override fun onCaptureFailed(cs: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) {
@@ -372,7 +363,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
    */
   fun bundleKeys(tr: TotalCaptureResult): JSONObject = JSONObject().apply {
     put("sensorTimestamp", tr.get(CaptureResult.SENSOR_TIMESTAMP)?.toString() ?: JSONObject.NULL)
-    // Read from CameraCharacteristics at open(), not from this result — see the field's doc.
+    // From CameraCharacteristics, not this result.
     put("timestampSource", timestampSource ?: JSONObject.NULL)
     put("sensorSensitivity", tr.get(CaptureResult.SENSOR_SENSITIVITY) ?: JSONObject.NULL)
     put("exposureTimeNs", tr.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: JSONObject.NULL)
@@ -381,7 +372,7 @@ class CameraController(private val context: Context, private val renderer: GlRen
     put("flashState", tr.get(CaptureResult.FLASH_STATE) ?: JSONObject.NULL)
     put("aeAntibandingMode", tr.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE) ?: JSONObject.NULL)
     put("sceneFlicker", tr.get(CaptureResult.STATISTICS_SCENE_FLICKER) ?: JSONObject.NULL)
-    // Actual device processing modes, not an assumption based on the request template.
+    // As reported by the device, not assumed from the request template.
     put("noiseReductionMode", tr.get(CaptureResult.NOISE_REDUCTION_MODE) ?: JSONObject.NULL)
     put("edgeMode", tr.get(CaptureResult.EDGE_MODE) ?: JSONObject.NULL)
   }

@@ -11,7 +11,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Device checks for the camera configuration we actually ship. Takes and uploads no photographs. */
+/** Device checks for the shipped camera configuration. Takes no photographs. */
 @RunWith(AndroidJUnit4::class)
 class CaptureControlsTest {
   @Test fun stillRotationFollowsPhysicalPhoneWithPortraitUiLocked() {
@@ -39,7 +39,6 @@ class CaptureControlsTest {
   private fun characteristics(): CameraCharacteristics {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    // Main sensor selected by CameraController.
     return manager.getCameraCharacteristics("0")
   }
 

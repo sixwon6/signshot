@@ -13,17 +13,15 @@ import {
 import { sha256 } from "@noble/hashes/sha2.js";
 
 /**
- * `.skr` name (Seeker ID) resolution, reverse direction only (address → names), per Solana Mobile's
- * kit resolver (https://docs.solanamobile.com/solana-mobile-stack/skr-domain). Each name is an ANS
- * account found by a PDA chain seeded with `sha256("ALT Name Service" + name)`:
+ * Reverse `.skr` lookup (address → name) per https://docs.solanamobile.com/solana-mobile-stack/skr-domain.
+ * ANS PDAs are seeded with `sha256("ALT Name Service" + name)`:
  *
  *   ANS root      hash("ANS"),   32 zero bytes, 32 zero bytes
  *   `.skr` parent hash(".skr"),  32 zero bytes, ANS root
  *   `alice.skr`   hash("alice"), 32 zero bytes, `.skr` parent
  *
- * RPC failures throw, so "no name" and "could not look" stay different answers. A wrong derivation
- * would also look like "no name", so the ANS root is checked against its known address once.
- * Mainnet only; the caller passes a mainnet client, whatever cluster the build publishes on.
+ * Mainnet only. RPC failures throw so "no name" and "couldn't look" stay distinct; the ANS root is
+ * checked once because a wrong derivation would also read as "no name".
  */
 
 const ANS_PROGRAM = address("ALTNSZ46uaAUU7XUV6awvdorLGqAsPwa9shm7h4uP2FK");
@@ -36,10 +34,7 @@ const HEADER_SIZE = 200;
 const OWNER_OFFSET = 40;
 const EXPIRES_AT_OFFSET = 104;
 
-/**
- * `.skr` name records, as measured on mainnet: 200 bytes, starting with this discriminator. Both
- * are checked before fixed offsets are trusted, so another ANS account type cannot pass as a name.
- */
+/** Observed on mainnet. Checked before trusting fixed offsets, so other ANS account types can't pass. */
 const NAME_RECORD_SIZE = 200;
 const NAME_RECORD_DISCRIMINATOR = new Uint8Array([0x44, 0x48, 0x58, 0x2c, 0x0f, 0xa7, 0x67, 0xf3]);
 
@@ -78,7 +73,6 @@ async function fetchAccountData(
 
 let derivationChecked: Promise<void> | null = null;
 
-/** Derives the ANS root and asserts it equals the documented constant. */
 async function assertSkrDerivation(): Promise<void> {
   const root = await pda(ANS_PROGRAM, [hashName("ANS"), ZERO_32, ZERO_32]);
   if (root !== ROOT_ANS) {
@@ -89,8 +83,7 @@ async function assertSkrDerivation(): Promise<void> {
 function checkDerivationOnce(): Promise<void> {
   if (derivationChecked === null) {
     derivationChecked = assertSkrDerivation().catch((e: unknown) => {
-      // Do not cache the failure as settled-bad; a transient crypto-polyfill hiccup at cold
-      // start should be retried rather than poisoning every later lookup.
+      // Don't cache failure: a transient crypto-polyfill error at cold start should be retried.
       derivationChecked = null;
       throw e;
     });
@@ -98,10 +91,7 @@ function checkDerivationOnce(): Promise<void> {
   return derivationChecked;
 }
 
-/**
- * Every `.skr` name `owner` holds, sorted. An address can own several and the on-chain order is
- * not a ranking — sorting is what stops the displayed name changing between calls.
- */
+/** Sorted so the displayed name is stable; on-chain order isn't. */
 async function resolveSkrNames(
   rpc: Rpc<SolanaRpcApi>,
   owner: Address,
@@ -112,8 +102,7 @@ async function resolveSkrNames(
   const parent = await deriveNameAccount(TLD, ROOT_ANS);
   const tldHouse = await deriveTldHouse();
 
-  // Whole accounts (filtered to one owner, so a handful of 200-byte records): size, discriminator
-  // and expiry (`expiresAt`, u64 LE seconds at offset 104; 0 = never) all come from this response.
+  // Full accounts (few, one owner): `expiresAt` is u64 LE seconds at offset 104, 0 = never.
   const accounts = await rpc
     .getProgramAccounts(ANS_PROGRAM, {
       encoding: "base64",
@@ -136,8 +125,7 @@ async function resolveSkrNames(
     })
     .send({ abortSignal });
 
-  // The human-readable label lives in a separate reverse-lookup account, seeded with the name
-  // account's own base58 string — which is why this costs one extra read per name.
+  // The label is in a reverse-lookup account seeded with the name account's base58: one read per name.
   const nowSeconds = Date.now() / 1000;
   const live = accounts.filter(({ account }) => {
     const data = new Uint8Array(base64Encoder.encode(account.data[0]));
@@ -157,8 +145,8 @@ async function resolveSkrNames(
       if (!data || data.length <= HEADER_SIZE) return null;
       const label = utf8Decoder.decode(data.subarray(HEADER_SIZE)).replace(/\0.*$/, "");
       if (!label) return null;
-      // The label must re-derive to this name account. Otherwise it is unverified third-party text
-      // that would be shown in place of the address and stamped onto shared pictures.
+      // Security: the label must re-derive to this name account, or it's unverified text that
+      // would replace the address on screen and on shared pictures.
       if ((await deriveNameAccount(label, parent)) !== pubkey) return null;
       return `${label}${TLD}`;
     }),
@@ -166,11 +154,7 @@ async function resolveSkrNames(
   return names.filter((name): name is string => name !== null).sort();
 }
 
-/**
- * The one `.skr` name to display for `owner`, or null when it holds none. Throws on RPC
- * failure, so "no name" and "could not look" stay different answers. `rpc` must be a mainnet
- * client; `abortSignal` bounds every request made here.
- */
+/** Null when `owner` holds none; throws on RPC failure. `rpc` must be mainnet. */
 export async function resolveSkrName(
   rpc: Rpc<SolanaRpcApi>,
   owner: Address,

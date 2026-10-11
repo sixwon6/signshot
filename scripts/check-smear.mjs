@@ -6,19 +6,17 @@ import { fileURLToPath } from "node:url";
 /**
  * `chromaSmear`, with no device: a 1-D scan-line simulator of the stage as `ShaderGen.kt` emits it.
  *
- *   1. the kernel: tap count and weights PARSED out of the Kotlin, so there is one source for them;
- *   2. what the stage is: luma untouched, an exact identity at amount 0, a chroma transition of
- *      about `width` that is far wider than luma's, delayed rightward by `shift`;
- *   3. resolution independence: the same transition, in reference pixels, at preview and still size;
- *   4. the decode constants duplicated from YUV_GLSL.
+ *   1. kernel tap count and weights parsed from the Kotlin (single source);
+ *   2. luma untouched, exact identity at amount 0, chroma transition of about `width` (far wider
+ *      than luma's), delayed rightward by `shift`;
+ *   3. resolution independence: same transition in reference pixels at preview and still size;
+ *   4. decode constants match YUV_GLSL.
  *
- * Consumer analog video carries chroma at roughly a tenth of luma's bandwidth (VHS ~0.3-0.5 MHz
- * against ~3 MHz), so colour bleeds along the scan line while luma detail survives, with a slight
- * rightward chroma delay. That is what the numbers below are holding on to.
+ * Models consumer analog video: chroma at ~1/10 of luma bandwidth (VHS ~0.3-0.5 MHz vs ~3 MHz),
+ * so colour bleeds along the line while luma stays sharp, with a slight rightward chroma delay.
  *
- * The simulator is the shader: Y at W texels and U/V at W/2, LINEAR and CLAMP_TO_EDGE, sampled 1:1
- * at output texel centres, decoded with the constants read out of `ShaderGen.kt`. W is the scan
- * axis and the long edge, so uRefScale is W/4000.
+ * Simulator: Y at W texels, U/V at W/2, LINEAR + CLAMP_TO_EDGE, sampled 1:1 at output texel
+ * centres. W is the scan axis and long edge, so uRefScale = W/4000.
  */
 
 if (!process.argv.includes("--worker")) {
@@ -180,7 +178,7 @@ if (!process.argv.includes("--worker")) {
     return { rise, mid: crossing(values, 0.5) / refScale };
   }
 
-  // ---- The Camcorder's curves, or the proposed ones until the look carries the stage.
+  // ---- Camcorder's curves; PROPOSED when the look does not carry the stage.
   const PROPOSED = {
     type: "chromaSmear", scaling: "reference-pixel",
     params: { amount: 0, width: 24, shift: 4 },
@@ -260,10 +258,9 @@ if (!process.argv.includes("--worker")) {
       `w${kernel}: preview and still disagree by ${(drift * 100).toFixed(1)} % (${seen.preview.toFixed(1)} vs ${seen.still.toFixed(1)} px)`);
   }
 
-  // ---- Tap spacing. Gap-free sampling wants consecutive taps within 2 chroma texels, since a
-  // LINEAR fetch reaches one texel each way and a chroma texel is two luma pixels. The shipping
-  // look holds that at full size; the slider's ceiling is allowed a little past it, where the
-  // chroma being sampled is already smooth. Fewer taps spaces them out, so both fail together.
+  // ---- Tap spacing. Gap-free sampling needs taps within 2 chroma texels (a LINEAR fetch reaches
+  // one texel each way). The look must hold that at still size; the slider ceiling may go to 2.5,
+  // where the sampled chroma is already smooth.
   const texels = (kernel, frame) => (kernel / HALF) * (frame / REF_LONG_EDGE) / 2;
   const limit = (2 * 2 * HALF * REF_LONG_EDGE) / STILL;
   for (const strength of [60, 100]) {
@@ -275,7 +272,6 @@ if (!process.argv.includes("--worker")) {
     `width's ceiling (${ceiling} px) samples every ${texels(ceiling, STILL).toFixed(2)} chroma texels at ${STILL} px`
     + ` with ${TAPS} taps — lower the ceiling to ${(2.5 * 2 * HALF * REF_LONG_EDGE / STILL).toFixed(1)}`);
 
-  // =====================================================================================
   console.log(`smear ok — ${TAPS} taps summing to 1; luma untouched and an exact identity at amount 0;`
     + ` a chroma transition of about width, over 3x luma's, delayed rightward by shift;`
     + ` preview and still agree within 12 %; the decode constants match YUV_GLSL`

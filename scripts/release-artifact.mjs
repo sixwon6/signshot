@@ -1,13 +1,8 @@
-// What `release-apk.mjs` checks around Gradle, kept apart so `check-runtime-behavior.mjs` can hold
-// it to a synthetic zip: the env files refused right before bundling, one entry of the built APK,
-// and whether the JS bundle in it is this build's. Plain Node, no dependencies.
+// Checks `release-apk.mjs` runs around Gradle, split out so `check-runtime-behavior.mjs` can test
+// them on a synthetic zip. Plain Node, no dependencies.
 import { crc32, inflateRawSync } from "node:zlib";
 
-/**
- * Of `names`, the env files refused right before Gradle bundles, sorted: the same names as
- * `refusedEnvFiles` in `check-release-config.ts`. The gate ran first, but Expo's bundler reads the
- * files again when Gradle reaches it.
- */
+/** Same as `refusedEnvFiles` in `check-release-config.ts`, re-run right before Gradle bundles. */
 export function refusedEnvFiles(names) {
   return names.filter((name) => /^\.env(?:\.production)?$|^\.env(?:\..+)?\.local$/.test(name)).sort();
 }
@@ -17,12 +12,11 @@ const DIRECTORY_ENTRY = 0x02014b50;
 const LOCAL_HEADER = 0x04034b50;
 
 /**
- * The bytes of the entry `name` in a zip, inflated and CRC-checked, or `null` when it has none.
- * An APK is a zip whose signing block sits between the entries and the central directory
- * (https://source.android.com/docs/security/features/apksigning/v2), so entries are found through
- * the directory. Sizes come from the directory, which also covers entries written with a data
- * descriptor; each entry's name and extra lengths from its local header, which zipalign pads.
- * Zip64, encryption and methods other than stored and deflated throw.
+ * Entry `name` from a zip, inflated and CRC-checked, or `null`. Entries are located via the central
+ * directory because an APK's signing block sits before it
+ * (https://source.android.com/docs/security/features/apksigning/v2). Sizes come from the directory
+ * (covers data descriptors); name/extra lengths from the local header (zipalign pads it).
+ * Throws on zip64, encryption, or methods other than stored/deflated.
  */
 export function readZipEntry(zip, name) {
   let end = -1;
@@ -67,12 +61,11 @@ export function readZipEntry(zip, name) {
 }
 
 /**
- * Why the packaged JS bundle is not this build's, or `null`. An environment value is no input of
- * React Native's bundle task, so Gradle can call a bundle from another cluster or endpoint up to
- * date (https://docs.gradle.org/current/userguide/incremental_build.html). Metro inlines each
- * `EXPO_PUBLIC_*` value as a string literal and Hermes stores a literal as its own bytes, so a
- * value is found by searching for it: this run's `nonce`, and the RPC URL when one is set. Never
- * repeats a value.
+ * Why the packaged JS bundle is not this build's, or `null`. Env values are not inputs of the RN
+ * bundle task, so Gradle can treat a bundle built for another endpoint as up to date
+ * (https://docs.gradle.org/current/userguide/incremental_build.html). Metro inlines EXPO_PUBLIC_*
+ * as string literals and Hermes stores them verbatim, so a byte search finds this run's `nonce` and
+ * RPC URL. Never echoes a value.
  */
 export function bundleRefusal(bundle, { nonce, rpcUrl }) {
   const carries = (value) => bundle.includes(Buffer.from(value, "utf8"));

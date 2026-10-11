@@ -1,9 +1,7 @@
 /**
- * The Worker against the app's real client (publications/candy, imported read-only): the edition
- * accounts this suite lays out are ones the client's `readEdition` accepts, and every claim the
- * client's `claimDraft` builds for a Seeker-only edition, prepared by its `prepareForWallet`,
- * signed by the wallet first (as returned, or with its accounts reordered as Seed Vault does) and
- * finished with the app's local signatures, passes the Worker's checks.
+ * The Worker against the app's real client (publications/candy): fixture editions pass the client's
+ * `readEdition`, and claims from `claimDraft` + `prepareForWallet`, wallet-signed (optionally
+ * reordered as Seed Vault does), pass the Worker's checks.
  */
 
 import { describe, expect, it } from "vitest";
@@ -42,7 +40,6 @@ describe("the app's client", () => {
         collection: { owner: "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", data: await collectionBytes({ edition, publisher }) },
       };
 
-      // The client accepts the edition this suite lays out.
       const view = (address: string, a: { owner: string; data: Uint8Array }) =>
         ({ address: address as Address, owner: a.owner as Address, lamports: 1_000_000n, bytes: a.data });
       const verdict = await clientReadEdition({
@@ -51,7 +48,6 @@ describe("the app's client", () => {
       expect(verdict.ok ? "ok" : verdict.reason).toBe("ok");
       if (!verdict.ok) return;
 
-      // The client's claim, compiled, through the Worker's checks.
       const cost = await claimCost(verdict, rent);
       const draft = await claimDraft({
         edition: verdict, counter: null, cost, collector: wallet.address, asset, payer,
@@ -61,7 +57,7 @@ describe("the app's client", () => {
       expect(draft.transactions).toHaveLength(1);
       const lifetime = { blockhash: (await randomAddress()) as unknown as Blockhash, lastValidBlockHeight: 1000n };
       const prepared = prepareForWallet(wallet.address, draft.transactions[0], lifetime, { units: 400_000, microLamports: 5_000n });
-      // The wallet: maybe reorders, then signs the message as it returns it.
+      // Wallet: optionally reorders, then signs.
       const returned: any = rewrite ? reorderAccounts(prepared.transaction as never) : prepared.transaction;
       const walletSignature = new Uint8Array(await signBytes(wallet.keyPair.privateKey, returned.messageBytes));
       const finished = await prepared.finish({ ...returned, signatures: { ...returned.signatures, [wallet.address]: walletSignature } });

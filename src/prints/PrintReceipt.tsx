@@ -28,8 +28,8 @@ import {
 } from "../ui/copy";
 
 /**
- * The publish sheet's receipt. The rows come from the validated draft, never the text fields, so
- * they match the hashed document exactly; with no draft yet it holds the wallet row alone.
+ * Rows come from the validated draft, never the text fields, so they match the hashed document.
+ * With no draft yet, only the wallet row.
  */
 export function PrintReceipt({
   draft,
@@ -50,7 +50,6 @@ export function PrintReceipt({
   showWallet: boolean;
   onToggleWallet(): void;
 }) {
-  /** The price the draft itself committed to, read back like every other receipt row. */
   const shownPrice = draft ? priceValue(readDraftPrice(draft)) : null;
   return draft ? (
     <View style={s.receipt}>
@@ -63,14 +62,11 @@ export function PrintReceipt({
         </View>
       )}
       <Row label={copy.rowCopies} value={String(draft.edition.supply)} />
-      {/* The price is a buyer's, not the publisher's: it is stated beside the copies and
-          never added into the estimate below. */}
+      {/* A buyer's price: shown beside the copies, never added into the estimate. */}
       {shownPrice !== null && <Row label={priceCopy.label} value={shownPrice} />}
-      {/* Set at publish beside the price. */}
       {(
         <Row label={copy.rowRoyalty} value={copy.royaltyValue(draft.royaltyBps)} />
       )}
-      {/* Always stated for more than one copy. */}
       {draft.edition.supply > 1 && (
         <Row label={copy.rowCollectors}
           value={draft.seekerOnly ? collectCopy.seekerOnly : collectCopy.anyone} />
@@ -82,13 +78,12 @@ export function PrintReceipt({
         label={copy.rowImage}
         value={`${draft.edition.width} × ${draft.edition.height}`}
       />
-      {/* Derived from the certificate sealed in the document, never typed; always
-          shown, so a phone that produced no evidence says so here. */}
+      {/* From the certificate sealed in the document; always shown, so missing evidence is visible. */}
       <Row
         label={copy.rowDevice}
         value={deviceValue(draft.edition, device, (a) => `${deviceName(a)} · ${securityLevelName(a)}`)}
       />
-      {/* The mint the document names, found on mainnet when the draft was made. */}
+      {/* Looked up on mainnet when the draft was made. */}
       {draft.edition.genesisMint ? (
         <Row label={copy.rowGenesis} value={shortAddress(draft.edition.genesisMint)} />
       ) : draft.genesisUnchecked ? (
@@ -108,8 +103,7 @@ export function PrintReceipt({
             label={estimate.networkFee}
             value={`${sol(quote.prepared.estimateBreakdown.networkFee)} SOL`}
           />
-          {/* The simulated balance delta contains the network fee, which is stated on its own
-              row rather than twice. */}
+          {/* The balance delta includes the network fee, which has its own row. */}
           <Row
             label={estimate.accountCost}
             value={`${sol(costRows(quote.prepared).accounts)} SOL`}
@@ -134,7 +128,6 @@ export function PrintReceipt({
   );
 }
 
-/** One receipt row: a mono label on the left, its value on the right. */
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <View style={sheetStyles.rowLine}>
@@ -146,10 +139,7 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/**
- * The wallet row: the address, with the `.skr` name beside it when known. Tapping shows the full
- * address. Never uppercased: base58 is case-sensitive.
- */
+/** Address with the `.skr` name beside it. Tap for the full address. Never uppercased: base58 is case-sensitive. */
 function WalletRow({
   owner,
   ownerLabel,

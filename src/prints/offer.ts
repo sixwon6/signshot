@@ -113,9 +113,9 @@ export async function prepareClose(e: CoreMetadata): Promise<OfferQuote> {
 
 type OfferProgress = "wallet" | "confirming";
 
-/** Sign, send, confirm, and check the edition now says what was approved. */
 export { sameTerms as samePrice };
 
+/** Sign, send, confirm, then check the edition reads as approved. */
 export async function sendOffer(
   e: CoreMetadata,
   q: OfferQuote,

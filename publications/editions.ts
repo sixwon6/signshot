@@ -1,7 +1,6 @@
 /**
- * Reading Signshot editions off the chain: the three accounts `readEdition` judges, the edition's
- * document and picture, its copies, and the scans behind the Wallet screen. Nothing here signs.
- * An edition `readEdition` does not accept is never shown as one.
+ * Read-only edition loading: the accounts `readEdition` judges, the document and picture, copies,
+ * and the Wallet screen scans. Nothing `readEdition` rejects is shown as an edition.
  */
 
 import { address, getAddressDecoder, getBase64Decoder, getBase64Encoder, getAddressEncoder, type Address } from "@solana/kit";
@@ -63,7 +62,6 @@ export function machineCollection(account: AccountView | null): Address | null {
   }
 }
 
-/** `readEdition`'s verdict on the edition whose candy machine is `candyMachine`. */
 export async function loadEdition(endpoint: string, candyMachine: string): Promise<EditionVerdict> {
   const machine = await fetchAccount(endpoint, address(candyMachine));
   if (!machine) return { ok: false, reason: "No such edition" };
@@ -73,16 +71,16 @@ export async function loadEdition(endpoint: string, candyMachine: string): Promi
   return readEdition({ candyMachine: machine, candyGuard, collection: collectionAccount });
 }
 
-/** What every screen shows of an edition `readEdition` accepted, with its verified picture. */
+/** An accepted edition with its verified picture. */
 export interface EditionDisplay {
-  /** The app's view of the edition: `edition` is the candy machine, `creator` the publisher. */
+  /** `edition` is the candy machine, `creator` the publisher. */
   edition: CoreMetadata;
   chain: Edition;
   metadataId: string;
   minted: number;
   remaining: number;
   imageBytes: Uint8Array;
-  /** The price of a copy (SOL or a token), or null when free. */
+  /** Null when free. */
   offer: Price | null;
   seekerOnly: boolean;
   royaltyBps: number;
@@ -90,13 +88,12 @@ export interface EditionDisplay {
 
 const ARWEAVE = /^https:\/\/arweave\.net\/([A-Za-z0-9_-]{43})$/;
 
-/** The manifest nonce an attested document carries, which the attestation reader repeats. */
+/** The attestation manifest's nonce, or `""`. */
 function manifestNonce(json: unknown): string {
   const nonce = object(object(object(object(json)?.properties)?.signshot)?.manifest)?.nonce;
   return typeof nonce === "string" ? nonce : "";
 }
 
-/** An accepted edition with its document and picture, both checked. */
 export async function editionDisplay(cluster: Cluster, e: Edition): Promise<EditionDisplay> {
   const metadataId = ARWEAVE.exec(e.uri)?.[1];
   if (!metadataId) throw new Error("This edition's details are not on Arweave.");
@@ -133,9 +130,7 @@ export async function editionDisplay(cluster: Cluster, e: Edition): Promise<Edit
   };
 }
 
-// ---------------------------------------------------------------------------------------------
-// Copies
-// ---------------------------------------------------------------------------------------------
+// --- Copies ---
 
 type Row = { pubkey: string; account: { owner: string; data: [string, string] } };
 
@@ -165,19 +160,17 @@ function copyOfRow(row: Row, collection: Address): HeldCopy | null {
   return copy ? { ...copy, owner: getAddressDecoder().decode(account.bytes.subarray(1, 33)) } : null;
 }
 
-/** Every copy of `collection` on chain. */
 export async function editionCopies(endpoint: string, collection: Address): Promise<HeldCopy[]> {
   const rows = await scan(endpoint, MPL_CORE, [ASSET_V1, inCollection(collection)]);
   return rows.map((row) => copyOfRow(row, collection)).filter((c): c is HeldCopy => c !== null);
 }
 
-/** The copies of `collection` that `wallet` holds. */
 export async function copiesHeld(endpoint: string, collection: Address, wallet: string): Promise<HeldCopy[]> {
   const rows = await scan(endpoint, MPL_CORE, [ASSET_V1, ownedBy(wallet), inCollection(collection)]);
   return rows.map((row) => copyOfRow(row, collection)).filter((c): c is HeldCopy => c !== null && c.owner === wallet);
 }
 
-/** One copy by address, or null when it is not a copy of `collection` (burned, absent, other). */
+/** Null when burned, absent, or not a copy of `collection`. */
 export async function readHeldCopy(endpoint: string, asset: string, collection: Address): Promise<HeldCopy | null> {
   const account = await fetchAccount(endpoint, asset);
   if (!account) return null;
@@ -185,7 +178,7 @@ export async function readHeldCopy(endpoint: string, asset: string, collection: 
   return copy ? { ...copy, owner: getAddressDecoder().decode(account.bytes.subarray(1, 33)) } : null;
 }
 
-/** `copyAnomalies` over the edition's copies; one line for a screen, or null when consistent. */
+/** `copyAnomalies` as one screen line, or null when consistent. */
 export async function copiesLine(endpoint: string, e: Edition): Promise<string | null> {
   const anomalies: CopyAnomaly[] = copyAnomalies({ title: e.title, minted: e.minted }, await editionCopies(endpoint, e.collection));
   if (!anomalies.length) return null;
@@ -195,11 +188,9 @@ export async function copiesLine(endpoint: string, e: Edition): Promise<string |
     : `The copies on chain do not match this edition's count (${anomalies.length} ${anomalies.length === 1 ? "issue" : "issues"}).`;
 }
 
-// ---------------------------------------------------------------------------------------------
-// The Wallet screen's scans
-// ---------------------------------------------------------------------------------------------
+// --- Wallet screen scans ---
 
-/** The candy machines whose guard `wallet` holds: the editions it published. */
+/** Candy machines whose guard authority is `wallet`. */
 export async function publishedBy(endpoint: string, wallet: string): Promise<Address[]> {
   // CandyGuard: discriminator 8, base 32, bump 1, authority 32.
   const rows = await scan(endpoint, CANDY_GUARD_PROGRAM, [{ memcmp: { offset: 41, bytes: address(wallet) } }], { offset: 8, length: 32 });

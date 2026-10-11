@@ -1,8 +1,4 @@
-/**
- * Screen — the ground every screen sits on: near-black ground, 18 px side gutter, content
- * starting below the status bar and ending above the system navigation. There is no tab bar
- * to leave room for; the camera is home.
- */
+/** Screen root inside the safe area. No tab bar: the camera is home. */
 import React from "react";
 import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

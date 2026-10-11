@@ -1,14 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <!--
-    The QR scanner screen (QrScanner.kt). Never exported: it is started only by
-    SeekerCameraModule's `scanQrCode`, from this app's own foreground activity.
-
-    The theme comes from appcompat itself so the module needs no app resource, and
-    `AppCompatActivity` needs an AppCompat theme:
-    https://developer.android.com/develop/ui/views/theming/themes
-
-    No `<uses-permission>` here: CAMERA is already declared through app.json
-    (`expo.android.permissions`), and `scripts/check-prebuild.ts` owns that list.
+    QR scanner (QrScanner.kt). AppCompatActivity needs an AppCompat theme; appcompat's own avoids
+    an app resource. CAMERA is declared via app.json, not here.
   -->
   <application>
     <activity

@@ -6,12 +6,10 @@ param(
   [string[]]$CargoArgs = @('build', '--release', '--locked')
 )
 
-# Builds the LiteSVM host (programs/svm) on the pinned portable toolchain, for
-# `scripts/check-candy-svm.ts`; `-CargoArgs` runs any other cargo command on the same toolchain.
-# Portable local build only: no network reads, installers, registry changes, wallet keys,
-# deployments or uploads. `-Bootstrap` is the one exception, and it downloads only the
-# pinned official archives listed below, each verified against its SHA-256.
-# Environment changes are restored on exit.
+# Builds the LiteSVM host (programs/svm) for scripts/check-candy-svm.ts on a pinned portable
+# toolchain under $ToolsRoot; `-CargoArgs` runs other cargo commands on it. Offline except with
+# `-Bootstrap`, which downloads the pinned archives below and checks each SHA-256.
+# Process environment is restored on exit.
 $ErrorActionPreference = 'Stop'
 $ToolsRoot = [IO.Path]::GetFullPath($ToolsRoot)
 $programRoot = [IO.Path]::GetFullPath($ProgramRoot)
@@ -40,8 +38,7 @@ if ($Bootstrap) {
     Expand-ToolArchive $platformArchive (Join-Path $ToolsRoot 'platform-tools')
   }
   $manifestFile = Join-Path $ToolsRoot 'VisualStudio.vsman'
-  # The file's own SHA-256. The hash in the URL's path is Microsoft's name for the manifest, not
-  # the digest of the bytes served.
+  # Digest of the served bytes; the hash in the URL path is only Microsoft's name for the manifest.
   Get-VerifiedArchive $manifestUrl $manifestFile 'b60efac8768e31b4b0bb74d312a3fd3145de9bef7f794c050d498d079e540e11'
   $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json -Depth 100
   $packageIds = @(

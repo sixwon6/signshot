@@ -8,9 +8,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 
 /**
- * The public print image: under 96 KiB so the upload stays within the free item size, no EXIF (fresh
- * `Bitmap.compress`), decoded with `inSampleSize`. Idempotent by content, because the upload's data
- * item id is derived from these exact bytes.
+ * The public print image: at most 96 KiB (free upload size), no EXIF. Idempotent by content because
+ * the upload's data item id is derived from these bytes.
  */
 internal object Thumbnail {
 
@@ -19,11 +18,7 @@ internal object Thumbnail {
 
   class Result(val file: File, val sha256: String, val bytes: Int)
 
-  /**
-   * Does this file have a readable image header? `inJustDecodeBounds` allocates no bitmap — it
-   * only fills `outWidth`/`outHeight`, which are left at -1 when the header cannot be read
-   * (https://developer.android.com/topic/performance/graphics/load-bitmap).
-   */
+  /** Readable image header? A failed bounds decode leaves `outWidth`/`outHeight` at -1. */
   private fun decodes(file: File): Boolean {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.absolutePath, bounds)
@@ -31,8 +26,7 @@ internal object Thumbnail {
   }
 
   fun printImage(styled: File, out: File): Result {
-    // Reuse an existing print only if it also decodes: a truncated JPEG would yield -1 dimensions
-    // in published metadata. A bounds decode is cheap; anything else is re-rendered.
+    // Reuse an existing print only if it decodes: a truncated JPEG would publish -1 dimensions.
     if (out.isFile && out.length() in 1..MAX_BYTES.toLong() && decodes(out)) {
       return Result(out, CaptureIntegrity.sha256(out), out.length().toInt())
     }
@@ -58,11 +52,7 @@ internal object Thumbnail {
     throw IOException("This photo cannot fit in the publication size limit")
   }
 
-  /**
-   * Decodes `styled` subsampled, scales it to `longEdge` and hands the bitmap to `body`. Both
-   * bitmaps are recycled before this returns, on every path — the caller encodes inside `body`
-   * and keeps only bytes, so nothing may outlive it.
-   */
+  /** Decodes `styled` scaled to `longEdge` for `body`; both bitmaps are recycled on every path. */
   private fun <T> withScaled(styled: File, longEdge: Int, body: (Bitmap) -> T): T {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(styled.absolutePath, bounds)
@@ -70,8 +60,7 @@ internal object Thumbnail {
     val srcH = bounds.outHeight
     if (srcW <= 0 || srcH <= 0) throw IOException("could not read ${styled.name}")
 
-    // Largest power-of-two subsample that still leaves the long edge at or above the target, so
-    // the exact scale below is only ever a downscale of at most 2x and never an upscale.
+    // Largest power-of-two subsample that keeps the long edge >= target: never an upscale.
     var sample = 1
     while (maxOf(srcW, srcH) / (sample * 2) >= longEdge) sample *= 2
 
@@ -94,10 +83,10 @@ internal object Thumbnail {
     }
   }
 
-  /** Scratch file written before the rename; shared with SeekerCameraModule's cleanup so both agree on the name. */
+  /** Scratch file before the rename; SeekerCameraModule's cleanup uses the same name. */
   fun tmpFor(out: File): File = File(out.parentFile, "${out.name}.tmp")
 
-  /** `src` with its long edge at `longEdge`, aspect preserved. `src` itself when it already is. */
+  /** `src` with its long edge at `longEdge`, or `src` itself if already no larger. */
   private fun scale(src: Bitmap, longEdge: Int): Bitmap {
     val w = src.width
     val h = src.height

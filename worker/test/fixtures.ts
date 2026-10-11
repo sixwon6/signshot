@@ -1,9 +1,8 @@
 /**
- * Test fixtures, written from the documented layouts (the table in src/claimTransaction.ts, the
- * programs' account layouts) and NOT from the app's client, so the two implementations check each
- * other; `client.test.ts` then holds the Worker to what the real client builds. Transactions are
- * compiled and encoded by @solana/kit, so the Worker's hand parser is held to the official wire
- * format. The fake JSON-RPC endpoint answers in the shapes Helius and Solana use.
+ * Fixtures built from the documented layouts (src/claimTransaction.ts table, program account
+ * layouts), deliberately not from the app's client, so the two cross-check (client.test.ts covers
+ * the client). Transactions are compiled by @solana/kit to test the hand parser against the real
+ * wire format. The fake RPC answers in Helius/Solana response shapes.
  */
 
 import {
@@ -50,9 +49,7 @@ export const MAINNET_URL = "https://mainnet.helius-rpc.com/?api-key=SECRET-API-K
 export const DEVNET_URL = "https://api.devnet.solana.com";
 export const API_KEY = "SECRET-API-KEY-0123456789";
 
-// ---------------------------------------------------------------------------------------------
-// Keys and bytes
-// ---------------------------------------------------------------------------------------------
+// --- Keys and bytes ---
 
 export interface TestKey { address: Address; publicKey: Uint8Array; privateKey: CryptoKey; secret: Uint8Array }
 
@@ -82,9 +79,7 @@ export const u32 = (n: number) => { const b = new Uint8Array(4); new DataView(b.
 export const u64 = (n: bigint) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, n, true); return b; };
 const str = (s: string) => { const b = new TextEncoder().encode(s); return concat(u32(b.length), b); };
 
-// ---------------------------------------------------------------------------------------------
-// Genesis Token mints
-// ---------------------------------------------------------------------------------------------
+// --- Genesis Token mints ---
 
 /** A Token-2022 mint with MetadataPointer and TokenGroupMember, as an SGT is laid out. */
 export function sgtMintBytes(mint: string, member: bigint, opts: { group?: string; memberMint?: string; metadata?: string } = {}) {
@@ -103,9 +98,7 @@ export function plainToken2022MintBytes() {
   return concat(base, new Uint8Array(165 - 82), u8(1), concat(u16(18), u16(64), new Uint8Array(32), keyBytes(SGT_METADATA_ADDRESS)));
 }
 
-// ---------------------------------------------------------------------------------------------
-// Edition accounts
-// ---------------------------------------------------------------------------------------------
+// --- Edition accounts ---
 
 export type TestPrice =
   | { kind: "free" }
@@ -202,9 +195,7 @@ export async function collectionBytes(o: CollectionOptions) {
   return concat(head, header, ...plugins.map((p) => p[2]), u8(4), u32(plugins.length), ...records, u32(0));
 }
 
-// ---------------------------------------------------------------------------------------------
-// The claim transaction, per the table
-// ---------------------------------------------------------------------------------------------
+// --- The claim transaction, per the table ---
 
 export interface ClaimParts {
   wallet: Address;
@@ -339,9 +330,7 @@ export function reorderAccounts(tx: { messageBytes: Uint8Array; signatures: Reco
   return { messageBytes, signatures };
 }
 
-// ---------------------------------------------------------------------------------------------
-// SIWS, as the wallet does it
-// ---------------------------------------------------------------------------------------------
+// --- SIWS, as the wallet does it ---
 
 export async function signIn(key: TestKey, payload: Record<string, string>, asAddress = key.address) {
   const text = createSignInMessageText({ ...payload, address: asAddress } as never);
@@ -350,17 +339,13 @@ export async function signIn(key: TestKey, payload: Record<string, string>, asAd
   return { address: b64(key.publicKey), signed_message: b64(message), signature: b64(signature) };
 }
 
-// ---------------------------------------------------------------------------------------------
-// The fake RPC
-// ---------------------------------------------------------------------------------------------
+// --- The fake RPC ---
 
 type AccountEntry = { owner: string; data: Uint8Array; lamports?: number } | null;
 
 /**
- * A cluster as the fake RPC models it: a processed block height, a confirmed bank `lag` blocks
- * behind it, slots `SLOT_OFFSET` ahead of heights, and blockhashes registered at the processed
- * height when added. A blockhash is valid at a commitment while that bank has seen it and its
- * height is within 150 blocks of the blockhash's.
+ * Fake cluster: processed height, confirmed bank `lag` blocks behind, slot = height + `SLOT_OFFSET`.
+ * Blockhashes register at the processed height and stay valid for 150 blocks in banks that saw them.
  */
 export class Blockhashes extends Set<string> {
   readonly heights = new Map<string, number>();

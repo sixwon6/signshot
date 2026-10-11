@@ -1,19 +1,15 @@
 /**
- * Which Seeker Genesis Token a wallet holds on mainnet, by Solana Mobile's server-side recipe
+ * Seeker Genesis Token lookup on mainnet, per Solana Mobile's server-side recipe
  * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token):
  *
- *   - the wallet's Token-2022 accounts through Helius's `getTokenAccountsByOwnerV2`, paginated;
- *   - empty token accounts skipped (moving an SGT out leaves the old account open at zero);
- *   - each candidate mint's MetadataPointer and TokenGroupMember must name Solana Mobile's
- *     address `GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`;
- *   - the MINT is returned, not a boolean: it is what uniqueness is recorded against.
+ *   - Token-2022 accounts via Helius `getTokenAccountsByOwnerV2`, paginated;
+ *   - zero-balance accounts skipped (an SGT moved out leaves its old account open);
+ *   - MetadataPointer and TokenGroupMember must name `GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`;
+ *   - returns the MINT, which uniqueness is recorded against.
  *
- * The mint rules are the app's (`publications/core/genesisToken.ts`, copied, not imported):
- * the account must be owned by Token-2022, be an initialized mint (not a multisig), and the
- * TokenGroupMember's `mint` must be the mint itself. The group membership is what cannot be
- * forged: Token-2022 writes it only with the group update authority's signature.
- *
- * The SGT exists on mainnet only, so this always reads mainnet, whatever cluster the edition is on.
+ * Mint rules match publications/core/genesisToken.ts (copied, not imported). Group membership is
+ * the unforgeable part: Token-2022 writes it only with the group update authority's signature.
+ * SGTs exist on mainnet only, whatever cluster the edition is on.
  */
 
 import { getAddressDecoder, getBase64Encoder, isAddress } from "@solana/kit";
@@ -92,8 +88,7 @@ export async function findSeekerGenesisTokens(fetchImpl: Fetch, mainnetUrl: stri
       { programId: TOKEN_2022_PROGRAM },
       { encoding: "jsonParsed", limit: PAGE_LIMIT, ...(paginationKey ? { paginationKey } : {}) },
     ]));
-    // Without `withContext` the accounts are `result.value` and the key `result.paginationKey`;
-    // with it, both sit under `result.value` (the recipe handles both).
+    // Without `withContext`: `result.value` + `result.paginationKey`; with it, both under `result.value`.
     const shaped = Array.isArray(result?.value)
       ? { accounts: result.value, paginationKey: result.paginationKey }
       : object(result?.value);
@@ -103,8 +98,7 @@ export async function findSeekerGenesisTokens(fetchImpl: Fetch, mainnetUrl: stri
     paginationKey = shaped.paginationKey;
   }
 
-  // A held SGT is exactly one unit of a 0-decimal mint, in a token account the wallet owns.
-  // Zero is an account an SGT has left. Frozen is how a held SGT always is, and is accepted.
+  // A held SGT: amount 1, 0 decimals, owned by the wallet. SGT accounts are always frozen; accepted.
   const candidates: string[] = [];
   for (const row of rows) {
     const account = object(object(row)?.account);

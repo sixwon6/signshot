@@ -1,11 +1,9 @@
 //! One LiteSVM instance behind a line protocol: each stdin line is a JSON request `{"op": ..}`,
-//! each stdout line the JSON reply `{"result": ..}` or `{"error": ".."}`, in order. Addresses,
-//! hashes, account data and transactions travel as hex; lamports as decimal strings.
+//! each stdout line the reply `{"result": ..}` or `{"error": ".."}`, in order. Addresses, hashes,
+//! account data and transactions are hex; lamports are decimal strings.
 //!
-//! Transactions arrive as wire bytes the caller compiled and signed, and run through
-//! `LiteSVM::send_transaction` with signature and blockhash checks on, as `LiteSVM::new()` sets
-//! them. Accounts are written directly only where the caller asks (`set`), to load what was read
-//! from mainnet.
+//! Transactions are signed wire bytes and run with signature and blockhash checks on (the
+//! `LiteSVM::new()` defaults). `set` writes accounts directly, for state loaded from mainnet.
 
 use std::io::{self, BufRead, Write};
 

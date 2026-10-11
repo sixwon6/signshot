@@ -13,15 +13,12 @@ import { proof as copy } from "../ui/copy";
 export type DeviceCheck = DeviceVerdict | { status: "checking" };
 
 /**
- * Whether a screen may name the device a draft's document attests (`deviceVerdict`), checked
- * against Google's revocation list, fetched directly, and at the right time: the edition's
- * on-chain publication time once `published` (`publicationTime`), otherwise now, for a draft not
- * yet sent (the send path renews a chain close to expiry, `src/prints/creator.ts`). Null when the
+ * Checks the attested device against Google's revocation list, as of the on-chain publication
+ * time once `published`, otherwise now (the send path renews near-expiry chains). Null when the
  * document carries no accepted attestation.
  */
 export function useDeviceVerdict(edition: CoreMetadata | null | undefined, published: boolean): DeviceCheck | null {
   const summary = edition?.attestation;
-  // Everything the check reads: the edition, which time applies, and the chain itself.
   const key = edition && summary
     ? `${edition.edition}:${published}:${summary.certificates.map((c) => c.serial).join()}`
     : null;
@@ -37,7 +34,7 @@ export function useDeviceVerdict(edition: CoreMetadata | null | undefined, publi
         : async () => new Date(),
     }).then(
       (verdict) => {
-        // Judged now, a draft's dates are not yet "at publication".
+        // A draft is judged now, not at publication.
         const value: DeviceVerdict = !published && verdict.status === "refused" && verdict.reason === DEVICE_REFUSAL.expired
           ? { status: "refused", reason: DEVICE_REFUSAL.expiredDraft }
           : verdict;
@@ -50,7 +47,7 @@ export function useDeviceVerdict(edition: CoreMetadata | null | undefined, publi
     return () => {
       live = false;
     };
-    // `key` names everything the check reads; the objects behind it are re-created on every read.
+    // `key` covers every input; the objects themselves are re-created on every read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
@@ -58,10 +55,6 @@ export function useDeviceVerdict(edition: CoreMetadata | null | undefined, publi
   return check?.key === key ? check.value : { status: "checking" };
 }
 
-/**
- * The Device value, in the app's words: `verified(summary)` only once the check says so; the
- * reason when the reader or the verdict refused; "Checking…" and "Couldn't check." otherwise.
- */
 export function deviceValue(
   edition: CoreMetadata,
   check: DeviceCheck | null,

@@ -37,10 +37,7 @@ import { walletOwesUpload } from "../prints/creator";
 import { storageCreditHeld } from "../../publications/storage";
 import { SUPPORT_EMAIL, TERMS_URL } from "../moderation/core";
 
-/**
- * The dApp Store Developer Agreement (§2.1) requires links to the privacy policy and the EULA in
- * the app, not only the listing. The terms are the EULA.
- */
+// dApp Store Developer Agreement §2.1 requires in-app privacy policy and EULA links (terms = EULA).
 const PRIVACY_URL = "https://erashot.app/privacy";
 
 export function shortAddress(address: string): string {
@@ -48,10 +45,9 @@ export function shortAddress(address: string): string {
 }
 
 /**
- * Removes a disconnected wallet's upload seed, whose cleartext SecureStore entry name contains the
- * address. Kept while any publication owes an upload: its data-item ids are already on chain and a
- * new seed cannot reproduce them. Kept too while its address holds paid storage credit, which
- * nothing else can spend. Best effort, and fails closed.
+ * Deletes a disconnected wallet's upload seed (its SecureStore key name contains the address).
+ * Kept while a publication owes an upload (its data-item ids are on chain and a new seed can't
+ * reproduce them) or while the seed's address holds paid storage credit. Fails closed.
  */
 async function forgetUploadSeed(wallet: string | null): Promise<void> {
   if (wallet === null) return;
@@ -61,11 +57,11 @@ async function forgetUploadSeed(wallet: string | null): Promise<void> {
     if (owner !== null && (await storageCreditHeld(owner))) return;
     await deleteUploadKey(wallet);
   } catch {
-    /* The seed stays. Keeping one is a preference entry; removing one wrongly is permanent. */
+    /* Keep the seed: wrongly deleting it is unrecoverable. */
   }
 }
 
-/** No cluster picker: the cluster is a build-time fact (`src/solana/cluster.ts`). */
+/** No cluster picker: the cluster is fixed at build time (`src/solana/cluster.ts`). */
 export function SettingsScreen() {
   const focused = useIsFocused();
   const navigation =
@@ -81,8 +77,8 @@ export function SettingsScreen() {
   const [walletBusy, setWalletBusy] = useState(false);
   const [developerTools, setDeveloperTools] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
-  // `walletBusy` is state and lands a render late; this is what a second tap actually reads.
-  // Two concurrent transact() sessions corrupt each other, so the guard has to be immediate.
+  // Synchronous guard: `walletBusy` lags a render, and concurrent transact() sessions corrupt
+  // each other.
   const walletInFlight = useRef(false);
 
   const onConnect = useCallback(async () => {
@@ -93,8 +89,7 @@ export function SettingsScreen() {
     try {
       await connect();
     } catch (e) {
-      // Dismissing the picker is not an error. A timeout may mean the wallet already authorized,
-      // so it gets its own sentence instead of the raw TimeoutException text.
+      // A timeout may mean the wallet already authorized, so it gets its own message.
       if (isWalletResponseTimeout(e)) setWalletError(walletTimeout.connect);
       else if (!isUserCancellation(e)) setWalletError(safeErrorText(e));
     } finally {
@@ -109,23 +104,22 @@ export function SettingsScreen() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      // A real deauthorization: wallet-ui's `disconnect()` only clears its cache. The cast is
-      // needed because wallet-ui 4.3.0 types the callback as `AuthorizeAPI`, while `transact()`
-      // passes the full `KitMobileWallet`, which has `deauthorize`.
+      // wallet-ui's `disconnect()` only clears its cache, so deauthorize explicitly. The cast:
+      // wallet-ui 4.3.0 types the callback as `AuthorizeAPI`, but `transact()` passes the full
+      // `KitMobileWallet`, which has `deauthorize`.
       const disconnecting = wallet;
       await connectAnd((wallet) =>
         deauthorizeSession(wallet as KitMobileWallet),
       );
-      // The .skr stamp was opted into for this wallet only; cleared once the disconnect happened.
+      // The .skr stamp opt-in is per wallet.
       stamp.setEnabled(false);
       await forgetUploadSeed(disconnecting);
     } catch (e) {
       if (isUserCancellation(e)) {
-        // The user backed out of the wallet. Still connected, on both sides; show nothing.
+        // Still connected on both sides.
         return;
       }
-      // The wallet is gone, uninstalled, or refused the session. The token is unusable either
-      // way, so the cache is still cleared rather than showing an address the app cannot sign with.
+      // Wallet gone or refused the session; the token is unusable, so clear the local cache anyway.
       setWalletError(safeErrorText(e));
       try {
         const disconnecting = wallet;
@@ -133,7 +127,7 @@ export function SettingsScreen() {
         stamp.setEnabled(false);
         await forgetUploadSeed(disconnecting);
       } catch {
-        /* Nothing left to try; the error above is what the user sees. */
+        /* The error above is already shown. */
       }
     } finally {
       walletInFlight.current = false;
@@ -141,7 +135,7 @@ export function SettingsScreen() {
     }
   }, [connectAnd, deauthorizeSession, disconnect, stamp]);
 
-  // These reject only on a device with no browser, where there is nothing useful to show.
+  // Rejects only when no browser is installed.
   const onPrivacy = useCallback(() => {
     void Linking.openURL(PRIVACY_URL).catch(() => undefined);
   }, []);
@@ -149,11 +143,10 @@ export function SettingsScreen() {
     void Linking.openURL(TERMS_URL).catch(() => undefined);
   }, []);
 
-  // `account.address` is already a kit `Address` — a branded base58 string, no conversion.
   const wallet: string | null = account?.address ?? null;
   const canStamp = wallet !== null && typeof identity.skrName === "string";
 
-  /** One Seeker fact: unknown, checked-absent and present are three different answers. */
+  /** Distinguishes unknown (undefined), checked-absent (null) and present. */
   const factText = (
     value: string | null | undefined,
     absent: string,
@@ -181,8 +174,7 @@ export function SettingsScreen() {
       >
         <Text style={s.heading}>{copy.heading}</Text>
 
-        {/* The `.skr` name is shown beside the address, never instead of it: the name is a
-            third-party claim, and the address is what every other surface is checked against. */}
+        {/* The `.skr` name is a third-party claim, so the address is always shown alongside it. */}
         <View style={s.wallet}>
           <Wash />
           <View style={s.walletTop}>
@@ -242,9 +234,8 @@ export function SettingsScreen() {
             value={devnet ? copy.networkDevnet : copy.networkMainnet}
             last
           />
-          {/* The token and name rows are read from mainnet even on a devnet build
-              (`getMainnetReadRpc`). Nothing is gated on them; a publication's recorded SGT mint is
-              checked again by every reader (`publications/core/genesisToken.ts`). */}
+          {/* Token and name are read from mainnet even on devnet builds (`getMainnetReadRpc`).
+              Nothing is gated on them; readers re-check the SGT (`publications/core/genesisToken.ts`). */}
           {devnet && <Text style={s.note}>{copy.seekerSourceDevnet}</Text>}
           {!!identity.error && <Text style={s.error}>{identity.error}</Text>}
           <Pill
@@ -313,13 +304,11 @@ export function SettingsScreen() {
   );
 }
 
-/**
- * The wallet card's ground-to-teal wash, with no gradient dependency: eased colour bands under
- * ground-alpha columns. The counts keep each step below the Seeker panel's visible quantisation.
- */
+// Gradient without a dependency: eased colour bands under alpha columns. Counts are high enough
+// that steps don't show on the Seeker's panel.
 const WASH_BANDS = 64;
 const WASH_COLUMNS = 48;
-/** Smoothstep: flat at 0 and 1, the change in the middle. */
+/** Smoothstep. */
 const ease = (t: number) => t * t * (3 - 2 * t);
 function channels(hex: string): [number, number, number] {
   return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [
@@ -389,7 +378,6 @@ function Section({
   );
 }
 
-/** One Seeker fact. The label is body text; the value is a readout, in teal when it is there. */
 function Row({
   label,
   value,

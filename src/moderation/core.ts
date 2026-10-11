@@ -1,40 +1,30 @@
 /**
- * Terms, reports, blocks and the moderation list, as data. No React, no storage, no DOM: the app
- * reads them through `src/moderation/store.ts`.
- *
- * A publication is permanent on Arweave and Solana and nobody can delete it. What Signshot can do
- * is decide what its own views show: Signshot's list at `MODERATION_URL` hides editions and
- * creators for everyone, and a viewer's block list hides creators for that viewer alone. The list
- * FAILS OPEN — unreadable, oversized, late or malformed means nothing is hidden — because a list
- * that failed closed would let one bad deploy blank every photograph in the app.
+ * Terms, reports, blocks and the moderation list. No React or storage; see `store.ts`.
+ * Publications are permanent on chain, so moderation only controls what the app shows. The list
+ * FAILS OPEN: one bad deploy must not blank every photo.
  */
 
 export const SUPPORT_EMAIL = "support@erashot.app";
 
-/** The terms people agree to before a first publish or collect (`site/public/terms/index.html`). */
+/** Source: `site/public/terms/index.html`. */
 export const TERMS_URL = "https://erashot.app/terms/";
-/**
- * The terms' version. Raise it when the terms change in a way people must agree to again: a
- * stored agreement to any other version reads as none, so the next publish or collect asks.
- */
+/** Bump to require re-agreement; any other stored version reads as none. */
 export const TERMS_VERSION = 1;
-/** Whether a stored agreement is to the current terms. */
 export const termsAgreed = (stored: string | null | undefined): boolean =>
   stored === String(TERMS_VERSION);
 
-/** Signshot's moderation list (`site/public/moderation.json`). */
+/** Source: `site/public/moderation.json`. */
 export const MODERATION_URL = "https://erashot.app/moderation.json";
-/** Far above any real list, far below anything that could hurt to allocate. */
 export const MODERATION_MAX_BYTES = 256 * 1024;
 /** Per array. */
 export const MODERATION_MAX_ENTRIES = 4096;
-/** How long a read list is used before it is read again. The file itself is served max-age=300. */
+/** Matches the file's max-age=300. */
 export const MODERATION_TTL_MS = 5 * 60_000;
 const MODERATION_TIMEOUT_MS = 5_000;
 
-/** Base58, 32..44 characters: the shape of a Solana address, and nothing else is stored or listed. */
+/** Base58 Solana address shape. */
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-/** A viewer's own block list, capped so a runaway write cannot grow storage without bound. */
+/** Caps storage growth from a runaway write. */
 export const MAX_BLOCKED = 1000;
 
 export interface ModerationList {
@@ -42,11 +32,7 @@ export interface ModerationList {
   hiddenCreators: ReadonlySet<string>;
 }
 
-/**
- * `{"version":1,"hiddenEditions":[...],"hiddenCreators":[...]}` and nothing else: exactly those
- * three keys, version 1, and arrays of addresses. Anything else throws, and the caller shows
- * everything.
- */
+/** Exactly `{"version":1,"hiddenEditions":[...],"hiddenCreators":[...]}` of addresses; anything else throws. */
 export function parseModerationList(text: string): ModerationList {
   if (text.length > MODERATION_MAX_BYTES) throw new Error("Moderation list too large.");
   const value: unknown = JSON.parse(text);
@@ -71,10 +57,7 @@ export function parseModerationList(text: string): ModerationList {
   };
 }
 
-/**
- * The list at `url`, or `null` when it cannot be had for any reason. Never throws. The body is
- * bounded twice: by a declared `Content-Length` before it is read, and by its length after.
- */
+/** Null on any failure; never throws. Size-checked by `Content-Length` before reading and by length after. */
 export async function fetchModerationList(
   url: string,
   fetchImpl: typeof fetch = fetch,
@@ -98,7 +81,7 @@ export async function fetchModerationList(
   }
 }
 
-/** A stored block list: well-shaped addresses only, duplicates dropped, capped. Never throws. */
+/** Never throws. */
 export function readBlockList(raw: string | null | undefined): string[] {
   try {
     const parsed: unknown = raw ? JSON.parse(raw) : [];
@@ -110,7 +93,6 @@ export function readBlockList(raw: string | null | undefined): string[] {
   }
 }
 
-/** The block list with `creator` added or removed, ready to store. */
 export function withBlocked(list: Iterable<string>, creator: string, blocked: boolean): string[] {
   const next = new Set(list);
   if (blocked && ADDRESS.test(creator)) next.add(creator);
@@ -118,11 +100,7 @@ export function withBlocked(list: Iterable<string>, creator: string, blocked: bo
   return [...next].slice(0, MAX_BLOCKED);
 }
 
-/**
- * What stands in for a publication's picture, title and caption: `hidden` by the moderation list,
- * `blocked` by this viewer, or `null` to show it. The moderation list wins, since Unblock cannot
- * bring back what the list hides.
- */
+/** `hidden` (moderation list) wins over `blocked` (viewer): Unblock can't reveal what the list hides. */
 export type Veil = "hidden" | "blocked" | null;
 export function veilOf(
   edition: string,
@@ -135,7 +113,6 @@ export function veilOf(
   return blocked.has(creator) ? "blocked" : null;
 }
 
-/** Report: an email to support naming the edition, with its collect link in the body. */
 export function reportMailto(edition: string, collectLink: string): string {
   return (
     `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Report ${edition}`)}` +

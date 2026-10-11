@@ -5,19 +5,17 @@ import { base58Encode, fromHex, toHex } from "./codec";
 import { OWNER_LENGTH, SIGNATURE_LENGTH, type DataItemSigner } from "./dataItem";
 
 /**
- * Per-wallet ed25519 key that signs Turbo uploads, kept in SecureStore (Keystore-encrypted). One
- * key per wallet, not per install, so a public `owner` never links two wallets. It holds no SOL: on
- * mainnet its base58 address holds the Turbo credit each publication transaction buys for it
- * (`publications/storage.ts`), and devnet uploads ride the free tier. The secret bytes never leave
- * this module.
+ * Per-wallet ed25519 key that signs Turbo uploads, in SecureStore. Per wallet, not per install, so a
+ * public `owner` never links two wallets. Holds Turbo credit, never SOL (`publications/storage.ts`).
+ * The secret never leaves this module.
  */
 
 /** SecureStore rejects `:` in keys, so this namespace uses a `.` separator. */
 const UPLOAD_KEY_SECURE_PREFIX = "es.uploadKey.v1";
 
 /**
- * The Keystore alias for this seed. Its own service so another SecureStore entry that uses
- * `requireAuthentication` cannot invalidate this key; changing it would make the seed unreadable.
+ * Own service so an entry using `requireAuthentication` can't invalidate this key. Changing it
+ * makes existing seeds unreadable.
  */
 const UPLOAD_KEY_KEYCHAIN_SERVICE = "es.uploadKey";
 
@@ -25,10 +23,9 @@ const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainService: UPLOAD_KEY_KEYCHAIN_SERVICE,
 };
 
-/** 32-byte ed25519 seed, lowercase hex. 64 characters — far under any SecureStore size limit. */
+/** 32-byte ed25519 seed, lowercase hex. */
 const SECRET_HEX = /^[0-9a-f]{64}$/;
 
-/** A base58 Solana address: 32 bytes, so 32..44 characters of the Bitcoin alphabet. */
 const WALLET_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 function assertWallet(wallet: string): void {
@@ -37,25 +34,21 @@ function assertWallet(wallet: string): void {
   }
 }
 
-/** The SecureStore key for `wallet`; base58 always satisfies SecureStore's `/^[\w.-]+$/`. */
+/** Base58 always satisfies SecureStore's `/^[\w.-]+$/`. */
 function uploadKeySecureStoreKey(wallet: string): string {
   assertWallet(wallet);
   return `${UPLOAD_KEY_SECURE_PREFIX}.${wallet}`;
 }
 
 interface UploadKey extends DataItemSigner {
-  /** The 32-byte ed25519 public key — a data item's `owner`. */
+  /** A data item's `owner`. */
   publicKey: Uint8Array;
-  /** Detached 64-byte signature over `message`. Synchronous, like the rest of this module. */
+  /** Detached 64-byte signature. */
   sign(message: Uint8Array): Uint8Array;
-  /** base58 of `publicKey`. */
   ownerBase58: string;
 }
 
-/**
- * One in-flight load per wallet, so concurrent callers cannot each generate and store a different
- * key. Keyed by wallet so a wallet switch never returns the other wallet's key.
- */
+/** One load per wallet, so concurrent callers can't each generate a different key. */
 const inFlight = new Map<string, Promise<UploadKey>>();
 const cached = new Map<string, UploadKey>();
 
@@ -79,10 +72,7 @@ function makeKey(secret: Uint8Array): UploadKey {
   };
 }
 
-/**
- * A stored string turned into seed bytes, or a refusal. A corrupt seed is never silently replaced:
- * items signed by it may already be referenced on chain.
- */
+/** Never silently replace a corrupt seed: items it signed may already be referenced on chain. */
 function parseSeed(stored: string, where: string): Uint8Array {
   const hex = stored.trim();
   if (!SECRET_HEX.test(hex)) {
@@ -95,8 +85,8 @@ function parseSeed(stored: string, where: string): Uint8Array {
 }
 
 async function load(secureKey: string): Promise<UploadKey> {
-  // A rejection propagates: `getItemAsync` already returns null for undecryptable entries, so a
-  // throw means the store itself is broken, and generating a new key would silently swap identity.
+  // Let rejections propagate: SecureStore reads an invalidated or pre-reinstall entry as null and
+  // throws on any other failure, where a new key would silently swap identity.
   const stored = await SecureStore.getItemAsync(secureKey, SECURE_STORE_OPTIONS);
   if (stored !== null) {
     return makeKey(parseSeed(stored, `SecureStore ${secureKey}`));
@@ -108,10 +98,7 @@ async function load(secureKey: string): Promise<UploadKey> {
   return makeKey(secret);
 }
 
-/**
- * `wallet`'s upload key, created on first use. Cached in memory per wallet, since each SecureStore
- * read is a Keystore decrypt inside a wallet session.
- */
+/** Created on first use. Cached: each read is a Keystore decrypt inside a wallet session. */
 export async function getUploadKey(wallet: string): Promise<UploadKey> {
   const secureKey = uploadKeySecureStoreKey(wallet);
 
@@ -133,7 +120,7 @@ export async function getUploadKey(wallet: string): Promise<UploadKey> {
   return started;
 }
 
-/** The base58 address of `wallet`'s upload key, or `null` when none is stored. Never creates one. */
+/** Never creates a key. */
 export async function uploadKeyAddress(wallet: string): Promise<string | null> {
   const secureKey = uploadKeySecureStoreKey(wallet);
   const hit = cached.get(secureKey);
@@ -143,11 +130,9 @@ export async function uploadKeyAddress(wallet: string): Promise<string | null> {
 }
 
 /**
- * Remove this wallet's upload seed. SecureStore's Android preference key names the wallet in
- * cleartext, so forgetting a wallet must delete it. Only safe when no upload is still owed: a
- * regenerated key cannot reproduce item ids already referenced on chain. Unspent storage credit
- * (the headroom above each quote) would stay with the deleted key's address, so Settings keeps a
- * key that holds any (`storageCreditHeld`).
+ * The Android preference key names the wallet in cleartext, so forgetting a wallet must delete it.
+ * Only safe with no upload owed (a new key can't reproduce on-chain item ids) and no unspent
+ * credit, which would be stranded (`storageCreditHeld`).
  */
 export async function deleteUploadKey(wallet: string): Promise<void> {
   const secureKey = uploadKeySecureStoreKey(wallet);

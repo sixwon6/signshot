@@ -1,8 +1,6 @@
 /**
- * The recipe's stages as a bar of tabs, and the camera's editor: that bar over one open stage's
- * sliders, in a panel over the foot of the picture. Tapping a stage opens it and closes the one
- * before; tapping the open one closes the editor. No state of its own: the recipe is
- * `useRecipes`', the open stage its caller's, and the bar's refs only park it on the open tab.
+ * Recipe editor: a tab bar of stages over the open stage's sliders. Tapping the open tab closes
+ * the editor. Stateless; the recipe lives in `useRecipes`, the open stage in the caller.
  */
 import { useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -14,7 +12,7 @@ import { fonts } from "../ui/fonts";
 import { Pill, PILL_SMALL_HEIGHT } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
 
-/** How many of a stage's parameters the recipe moves, at any strength. */
+/** Count of the stage's params that differ from neutral at any strength. */
 function movedCount(recipe: Recipe, stage: StageType): number {
   const held = recipe.manifest.stages.find((s) => s.type === stage);
   if (!held) return 0;
@@ -34,11 +32,7 @@ interface StageBarProps {
 
 export function StageBar({ recipe, open, disabled = false, onOpen }: StageBarProps) {
   const scroll = useRef<ScrollView>(null);
-  /**
-   * A bar that mounts with a stage open parks on its tab, once: the open tab is the only thing
-   * naming the stage, and it may lie past the edge. A tab already in view is left where it is,
-   * and after that the bar is the thumb's.
-   */
+  // On mount, scroll the open tab into view once if it is off-screen; after that the user scrolls.
   const parked = useRef(open === null);
   const sized = useRef(false);
   const viewport = useRef<number | null>(null);
@@ -55,7 +49,7 @@ export function StageBar({ recipe, open, disabled = false, onOpen }: StageBarPro
     <ScrollView
       ref={scroll}
       horizontal
-      // The three measurements arrive in no promised order; the bar parks when it has them all.
+      // The three layout callbacks arrive in any order; park once all have fired.
       onLayout={(event) => {
         viewport.current = event.nativeEvent.layout.width;
         park();
@@ -106,12 +100,12 @@ interface StagePanelProps {
   recipe: Recipe;
   strength: number;
   stage: StageType;
-  /** True when the recipe differs from what Reset would bring back. */
+  /** True when Reset would change something. */
   canReset: boolean;
   busy?: boolean;
   error?: string;
   onParam: (stage: StageType, param: string, value: number) => void;
-  /** Another stage, or null when the open one is tapped again. */
+  /** Null when the open stage is tapped again. */
   onStage: (stage: StageType | null) => void;
   onReset: () => void;
   onClose: () => void;
@@ -131,7 +125,6 @@ export function StagePanel({
 }: StagePanelProps) {
   return (
     <View style={s.panel} testID="recipe-panel">
-      {/* The open tab names the stage, so the head does not say it twice. */}
       <View style={s.panelHead}>
         <View style={s.panelBar}>
           <StageBar recipe={recipe} open={stage} disabled={busy} onOpen={onStage} />
@@ -169,7 +162,7 @@ export function StagePanel({
 }
 
 const s = StyleSheet.create({
-  /** Centred, for a bar given more height than its tabs: the camera's panel head is as tall as Reset. */
+  /** Centred because the panel head is taller (Reset's height) than the tabs. */
   bar: { gap: space.xs, paddingHorizontal: space.gutter, alignItems: "center" },
   tab: {
     flexDirection: "row",
@@ -201,7 +194,7 @@ const s = StyleSheet.create({
     paddingBottom: space.md,
     backgroundColor: "rgba(11, 12, 14, 0.78)",
   },
-  /** The bar bleeds to the panel's left edge. As tall as Reset, so the tabs hold still when it appears. */
+  /** Min height matches Reset so the tabs don't shift when it appears. */
   panelHead: {
     flexDirection: "row",
     alignItems: "center",

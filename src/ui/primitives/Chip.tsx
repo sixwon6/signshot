@@ -1,8 +1,4 @@
-/**
- * Chip — a rounded choice or action, h 44 (32 small), mono 10 label. Selected carries the fill
- * colour and a dark label; unselected is a 22 % ink hairline with the label at 72 %. A caller's
- * own `fill` must be a light theme accent so the dark label still reads.
- */
+/** Rounded choice or action. */
 import { Pressable, StyleSheet, Text, type Insets, type StyleProp, type ViewStyle } from "react-native";
 import { colors, radius } from "../theme";
 import { fonts } from "../fonts";
@@ -10,15 +6,11 @@ import { fonts } from "../fonts";
 interface ChipProps {
   label: string;
   selected?: boolean;
-  /** The selected fill. Teal unless given; a light theme accent, under the dark label. */
+  /** Selected fill; must be light enough for the dark label. Defaults to teal. */
   fill?: string;
-  /**
-   * Unselected, but keeping something of the photographer's: the label reads in the accent, as a
-   * held value does on the camera's readout.
-   */
+  /** Unselected but holding a user value: label in the accent. */
   held?: boolean;
   onPress?: () => void;
-  /** A long press on a chip the photographer owns: its Rename / Copy / Delete options. */
   onLongPress?: () => void;
   disabled?: boolean;
   accessibilityLabel?: string;
@@ -26,7 +18,7 @@ interface ChipProps {
   style?: StyleProp<ViewStyle>;
   testID?: string;
   size?: "regular" | "small";
-  /** Touch beyond the outline: a small chip is 32 tall and a fingertip is 44. */
+  /** Small chips are 32 tall; pad the touch target to 44. */
   hitSlop?: Insets;
 }
 
@@ -93,7 +85,7 @@ const styles = StyleSheet.create({
   unselected: {
     borderWidth: 1,
     borderColor: "rgba(245,244,240,0.22)",
-    // With the hairline, as wide as selected: choosing a chip must not move its neighbours.
+    // 14 + 1px border = selected's 15, so selection doesn't shift neighbours.
     paddingHorizontal: 14,
   },
   label: { fontSize: 10, letterSpacing: 1, textTransform: "uppercase" },

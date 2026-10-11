@@ -1,7 +1,6 @@
 /**
- * JSON-RPC over `fetch`. The endpoint URL carries an API key, so nothing that leaves this file
- * names it: every failure becomes an `RpcError` carrying only the method name, and the cause
- * (a fetch TypeError can quote the URL) is dropped, never chained.
+ * JSON-RPC over `fetch`. The endpoint URL carries an API key, so every failure becomes an
+ * `RpcError` with only the method name; the cause (which can quote the URL) is never chained.
  */
 
 export type Fetch = (input: string, init: RequestInit) => Promise<Response>;
@@ -13,7 +12,7 @@ export class RpcError extends Error {
   }
 }
 
-/** Every answer this Worker reads is small; a bigger body is refused before it is parsed. */
+/** Refused before parsing. */
 const MAX_RESPONSE_BYTES = 2_000_000;
 
 export async function rpc<T>(fetchImpl: Fetch, url: string, method: string, params: unknown[]): Promise<T> {
@@ -40,7 +39,7 @@ export async function rpc<T>(fetchImpl: Fetch, url: string, method: string, para
 export const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 
-/** Each cluster's genesis hash: the one value that says which chain an endpoint is really on. */
+/** Genesis hash per cluster: identifies which chain an endpoint is actually on. */
 export const GENESIS_HASH = {
   "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
   devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
@@ -50,10 +49,7 @@ export type Cluster = keyof typeof GENESIS_HASH;
 
 const checked = new Map<string, Promise<void>>();
 
-/**
- * Refuse an endpoint that is not on `cluster` before any answer from it is believed. Asked once
- * per endpoint per isolate; a failure is forgotten so the next request asks again.
- */
+/** Rejects an endpoint not on `cluster`. Cached per endpoint per isolate; failures are not cached. */
 export function assertCluster(fetchImpl: Fetch, url: string, cluster: Cluster): Promise<void> {
   const key = `${cluster}\n${url}`;
   let asking = checked.get(key);

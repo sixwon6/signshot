@@ -5,13 +5,9 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#10140f" />
     <!--
-      Without a top-level 404.html, Cloudflare Pages answers every unknown path with index.html
-      and a 200. This file makes a missing path a 404, so a wallet fetching an unpublished
-      /.well-known/assetlinks.json sees "not found", not the home page labelled as JSON.
-
-      The policy below is the static-page policy in site/public/_headers minus frame-ancestors
-      (ignored in a <meta>), repeated because this body is served for arbitrary paths and
-      _headers matches the request path, not this file's.
+      Without a 404.html, Pages serves index.html with a 200 for unknown paths (including an
+      unpublished /.well-known/assetlinks.json). The CSP repeats _headers' static policy minus
+      frame-ancestors, because _headers matches the request path, not this file.
     -->
     <meta
       http-equiv="Content-Security-Policy"

@@ -1,4 +1,4 @@
-/** NetworkLabel — the cluster badge: teal text, 38 % teal hairline, mono 10 · .14em. */
+/** Cluster badge. */
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { colors, radius } from "../theme";
 import { typeScale } from "../type";

@@ -1,15 +1,12 @@
 /**
- * The Third Party Signer keys. Each is a 64-byte solana-keygen key (a JSON array: the 32-byte
- * seed, then the public key), imported once per isolate as a non-extractable WebCrypto Ed25519
- * key; `createKeyPairFromBytes` refuses a secret whose two halves do not belong together.
+ * Third Party Signer keys: 64-byte solana-keygen arrays (32-byte seed, then public key), imported
+ * once per isolate as non-extractable Ed25519 keys. `createKeyPairFromBytes` rejects mismatched halves.
  *
- *   COSIGNER_SECRET_KEY    the ACTIVE key: the one /health names for new editions.
- *   COSIGNER_SECRET_KEYS   optional: a JSON array of further ACCEPTED keys.
+ *   COSIGNER_SECRET_KEY    the ACTIVE key, named by /health for new editions.
+ *   COSIGNER_SECRET_KEYS   optional JSON array of further ACCEPTED keys.
  *
- * A guard names exactly one key, and a claim is co-signed with whichever accepted key the
- * edition's guard names. Rotation therefore overlaps: add the new key, make it active, and keep
- * the old one accepted until no open edition names it (the app's `setPriceDraft` re-encodes an
- * edition's current co-signer, so existing editions keep their key until they close).
+ * A claim is co-signed with whichever accepted key its edition's guard names. To rotate: add the
+ * new key, make it active, keep the old one accepted until no open edition names it.
  */
 
 import { createKeyPairFromBytes, getAddressFromPublicKey, signBytes } from "@solana/kit";

@@ -1,11 +1,6 @@
 /**
- * Wallet: the address, what it holds, and what it published. The route keeps the name `Chain` so
- * deep links and saved navigation state keep working; every visible word comes from the
- * `collection` export of `src/ui/copy.ts`.
- *
- * The chrome is set in type, as on the camera: a `TextKey` navigates or switches the view, and
- * anything that acts on the chain or the clipboard is a small outlined `Chip`. Teal means "yours"
- * and appears once per screen: the wallet address on the list, the copy number on a held print.
+ * Wallet screen: address, balance, collected and published editions. The route is still named
+ * `Chain` so deep links keep working. `TextKey` navigates, `Chip` acts; teal marks "yours".
  */
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { RouteProp } from "@react-navigation/native";
@@ -42,26 +37,19 @@ import { reportMailto, type Veil } from "../moderation/core";
 import { useModeration } from "../moderation/store";
 import { shortAddress } from "./SettingsScreen";
 
-/** A small chip is 32 tall and a fingertip is 44. */
+/** Pads a 32 dp chip to a 44 dp touch target. */
 const CHIP_SLOP = { top: 6, bottom: 6 } as const;
-/** How long a key says what it just did before it goes back to being a key. */
+/** How long inline feedback ("Copied") replaces a key's label. */
 const SAID_MS = 1200;
 const LAMPORTS_PER_SOL = 1_000_000_000n;
-/**
- * The balance, to three figures. Truncated rather than rounded: a wallet's own number is never
- * shown larger than it is, and the exact amount is the wallet app's to state.
- */
+/** SOL to three decimals, truncated so the balance is never overstated. */
 const solText = (lamports: bigint) =>
   `${lamports / LAMPORTS_PER_SOL}.${String((lamports % LAMPORTS_PER_SOL) / 1_000_000n).padStart(3, "0")}`;
 
-/**
- * The paper print. In the grid it is uncaptioned and square, so a row of tiles keeps one baseline
- * and the readouts line up; on the photograph's own screen it is captioned and takes the
- * edition's own ratio. Paper carries graphite only, never teal.
- */
+/** Square and uncaptioned in the grid so rows align; captioned at the edition's ratio in detail. */
 function Print({ item, wallet, compact = false, veil = null }: {
   item: LibraryPhoto; wallet?: string; compact?: boolean;
-  /** Hidden or blocked: blank paper carrying the word, with no picture and no title. */
+  /** Hidden or blocked: shows the word only, no image or title. */
   veil?: Veil;
 }) {
   const e = item.photo.edition;
@@ -79,10 +67,9 @@ function Print({ item, wallet, compact = false, veil = null }: {
   />;
 }
 
-/** One fact under a photograph: its tag, then its value. The accent is for a value that is yours. */
 function Fact({ tag, value, yours = false, verbatim = false, onPress, accessibilityLabel, testID }: {
   tag: string; value: string; yours?: boolean;
-  /** The value as written: an address is case-sensitive. */
+  /** No uppercasing: addresses are case-sensitive. */
   verbatim?: boolean;
   onPress?: () => void; accessibilityLabel?: string; testID?: string;
 }) {
@@ -102,68 +89,55 @@ export function ChainScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const navigation = useNavigation<BottomTabNavigationProp<HomeTabs, "Chain">>();
-  // A collect link lands here as route params; see `src/navigators/linking.ts`.
   const route = useRoute<RouteProp<HomeTabs, "Chain">>();
   const { account, connect } = useMobileWallet();
   const wallet = account?.address;
-  // Whatever the app already knows about this wallet's `.skr` name. `false` starts no lookup from
-  // here: the name is a label on the address, never a reason to reach for the network.
+  // `false`: use a cached `.skr` name only; this screen never triggers a lookup.
   const seeker = useSeekerIdentity(false);
-  // Signshot's list and this phone's blocks. A collected copy of somebody else's photograph is
-  // veiled here as it is on the Collect sheet; the wallet's own publications never are.
+  // Same veil rules as the Collect sheet; the wallet's own publications are never veiled.
   const moderation = useModeration();
   const veilOf = (item: LibraryPhoto) =>
     moderation.veil(item.photo.edition.edition, item.photo.edition.creator, wallet);
-  // The same session object the photo sheets build, so the Collect sheet opens a wallet exactly
-  // the way publishing and sending do.
   const session = useWalletSession();
   const [mode, setMode] = useState<LibraryMode>("collected");
   const [refresh, setRefresh] = useState(0);
-  // `error` is the sentence for a failure retrying cannot fix; `failed` is every failure.
+  // `error` is set only for failures a retry can't fix; `failed` is set for every failure.
   const [state, setState] = useState<{ key: string; result?: LibraryResult; error?: string; failed?: boolean; loading?: boolean }>({ key: "" });
   const [selected, setSelected] = useState<string | null>(null);
   const [immersive, setImmersive] = useState(false);
-  /** The wallet's own SOL, or null when it has not been read. */
   const [balance, setBalance] = useState<bigint | null>(null);
-  /** Connecting from this screen: the wallet app is up, or it came back without authorizing. */
   const [walletBusy, setWalletBusy] = useState(false);
   const [connectFailed, setConnectFailed] = useState(false);
-  // `walletBusy` is state and lands a render late; this is what a second tap actually reads.
+  // Synchronous guard: `walletBusy` lags a render behind a double tap.
   const walletInFlight = useRef(false);
-  /** What a key says in place of its own label for a moment, and which key says it. */
   const [said, setSaid] = useState<{ id: string; label: string } | null>(null);
   const saidTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** The Collect entry: the paste/scan stage, the link being typed, and its one refusal. */
   const [collectStage, setCollectStage] = useState(false);
   const [link, setLink] = useState("");
   const [collectError, setCollectError] = useState<{ text: string; word?: boolean } | null>(null);
-  /** Set means the Collect sheet is open on this edition. */
   const [collectTarget, setCollectTarget] = useState<CollectTarget | null>(null);
-  /** Set means the price sheet is open on this edition. The creator's own control. */
   const [priceEdition, setPriceEdition] = useState<LibraryPhoto["photo"]["edition"] | null>(null);
-  /** Set means the Send sheet is open on this copy; `sent` once a send from it confirmed. */
+  /** `sent` is set once the transfer confirms. */
   const [sending, setSending] = useState<{ item: LibraryPhoto; target: TransferTarget; sent?: boolean } | null>(null);
   const key = `${wallet ?? ""}:${cluster}:${mode}`;
   const current = state.key === key ? state : undefined;
   const loading = Boolean(wallet && (!current || current.loading));
   const result = current?.result;
   const items = result?.items ?? [];
-  // The copy being sent stays on screen while its sheet is open, even once a re-read drops it.
+  // Keep the copy being sent on screen even after a re-read drops it from the list.
   const activePhoto = focused && current
     ? items.find(item => item.id === selected) ?? (sending?.item.id === selected ? sending.item : undefined)
     : undefined;
 
   useEffect(() => {
     setSelected(null); setImmersive(false); setPriceEdition(null); setSending(null); setSaid(null);
-    // A different wallet clears the last failed connect.
     setConnectFailed(false);
   }, [key]);
   useEffect(() => {
     if (!focused || !active || !wallet) return;
     const controller = new AbortController();
     setState(previous => ({ key, result: previous.key === key ? previous.result : undefined, loading: true }));
-    // The endpoint's cluster is checked first; a mismatch keeps its own sentence, since retrying
-    // cannot fix configuration.
+    // Check the endpoint's cluster first; a mismatch is a config error, so it gets its own message.
     assertEndpointCluster()
       .then(async () => { await loadPriceToken().catch(() => null); return loadLibrary(RPC_ENDPOINT, cluster, wallet, mode, controller.signal); })
       .then(
@@ -178,22 +152,19 @@ export function ChainScreen() {
     return () => controller.abort();
   }, [focused, active, wallet, mode, key, refresh]);
 
-  /**
-   * The balance beside the address, read when the screen comes back and whenever the list is
-   * refreshed. A balance nobody could read carries no number rather than a zero.
-   */
+  // Re-read on focus and refresh. An unreadable balance shows nothing rather than zero.
   useEffect(() => {
     setBalance(null);
     if (!focused || !active || !wallet) return;
     let live = true;
     request<{ value: number }>(RPC_ENDPOINT, "getBalance", [wallet, { commitment: "confirmed" }])
       .then(({ value }) => { if (live && Number.isSafeInteger(value) && value >= 0) setBalance(BigInt(value)); })
-      .catch(() => { /* The line simply carries no number. */ });
+      .catch(() => { /* leave balance null */ });
     return () => { live = false; };
   }, [focused, active, wallet, refresh]);
 
   useEffect(() => () => { if (saidTimer.current) clearTimeout(saidTimer.current); }, []);
-  /** Feedback in place: the key that was tapped says what happened, then goes back to its label. */
+  /** Briefly replaces the tapped key's label with feedback. */
   const say = (id: string, label: string) => {
     if (saidTimer.current) clearTimeout(saidTimer.current);
     setSaid({ id, label });
@@ -202,10 +173,8 @@ export function ChainScreen() {
   const labelOf = (id: string, label: string) => (said?.id === id ? said.label : label);
 
   /**
-   * Open one collect link. Every route into the sheet goes through here — pasted, scanned or
-   * deep-linked — so `parseCollectLink` is the only thing that ever decides what is collectable.
-   * It returns null for text that is not one of ours and throws a readable refusal (another
-   * network) for text that is.
+   * Single entry for pasted, scanned and deep-linked links, so `parseCollectLink` alone decides
+   * what is collectable. It returns null for foreign text and throws for ours on another cluster.
    */
   const openLink = useCallback((value: string) => {
     setCollectError(null);
@@ -216,22 +185,16 @@ export function ChainScreen() {
       setCollectStage(false);
       setCollectTarget(parsed);
     } catch (e) {
-      // The refusal's own reason: a wrong network cannot be a retry.
       setCollectError({ text: safeErrorText(e, collection.notOurLink) });
       setCollectStage(true);
     }
   }, []);
 
-  /**
-   * An Android App Link that reached this tab. The query string is rebuilt into the link shape
-   * `parseCollectLink` validates rather than trusted as a target: the params are URL text from
-   * outside the app, and the address and the cluster both have to be checked.
-   */
+  // App Link params are untrusted: rebuild the URL and run it through `parseCollectLink`.
   const core = route.params?.core, linkCluster = route.params?.cluster;
   useEffect(() => {
     if (!core) return;
-    // Consumed immediately: a link is a one-shot instruction, and params left on the route would
-    // reopen this sheet every time the tab regains focus.
+    // Clear the params, or the sheet reopens every time the tab regains focus.
     navigation.setParams({ core: undefined, cluster: undefined });
     openLink(`${COLLECT_ORIGIN}/${COLLECT_PATH}/?core=${encodeURIComponent(core)}` +
       (linkCluster ? `&cluster=${encodeURIComponent(linkCluster)}` : ""));
@@ -241,7 +204,7 @@ export function ChainScreen() {
     try { openLink(await Clipboard.getStringAsync()); }
     catch { setCollectError({ text: collectCopy.pasteFailed }); }
   };
-  /** The native scanner, behind its runtime guard. `null` is a cancellation, not a failure. */
+  /** `null` from the scanner is a cancellation, not a failure. */
   const scan = async () => {
     setCollectError(null);
     if (!scanQrAvailable()) { setCollectError({ text: collection.noScanner, word: true }); return; }
@@ -252,12 +215,8 @@ export function ChainScreen() {
     } catch { setCollectError({ text: collectCopy.scanFailed }); }
   };
   const openCollectStage = () => { setCollectError(null); setLink(""); setCollectStage(true); };
-  /** A collected copy belongs under Collected, so the view switches and the library re-reads. */
   const onCollected = () => { setMode("collected"); setRefresh(n => n + 1); };
-  /**
-   * The wallet is connected here, on the screen that is about it. Disconnecting stays in Settings:
-   * it deauthorizes the session and clears the upload seed, which is one careful piece of code.
-   */
+  /** Disconnect lives in Settings, which also deauthorizes and clears the upload seed. */
   const onConnect = async () => {
     if (walletInFlight.current) return;
     walletInFlight.current = true;
@@ -266,8 +225,7 @@ export function ChainScreen() {
     try {
       await connect();
     } catch (e) {
-      // Dismissing the picker is not a failure; a timeout is, even though the wallet may have
-      // authorized — in which case the address arrives on its own and replaces the word.
+      // A timeout counts as failure even if the wallet authorized; the address then arrives anyway.
       if (!isUserCancellation(e)) setConnectFailed(true);
     } finally {
       walletInFlight.current = false;
@@ -291,11 +249,10 @@ export function ChainScreen() {
   const e = activePhoto?.photo.edition;
   const activeVeil = activePhoto ? veilOf(activePhoto) : null;
   const activeBlocked = !!e && moderation.isBlocked(e.creator);
-  /** Only a copy this wallet was read holding can be sent from here. */
+  /** Only a copy this wallet was read as holding is sendable. */
   const sendable = activePhoto ? heldCopy(activePhoto, wallet) : null;
   const activeIndex = activePhoto ? items.findIndex(p => p.id === activePhoto.id) : -1;
   const gridWidth = (width - space.gutter * 2 - space.md) / 2;
-  /** The wallet's value word: the address, or where the connection got to. */
   const walletValue = wallet ? shortAddress(wallet)
     : walletBusy ? collection.opening
     : connectFailed ? collection.notConnected
@@ -303,16 +260,14 @@ export function ChainScreen() {
 
   return <Screen>
     {focused && <StatusBar style="light" />}
-    {/* The way back, the chain these copies were read from, and the Collect entry. Collecting is
-        offered whether or not a wallet is connected: the sheet itself asks for one. */}
+    {/* Collect is offered without a wallet; the sheet asks for one. */}
     <View style={s.header}>
       <BackButton label={actions.camera} accessibilityLabel={actions.backToCamera} onPress={toCamera} testID="back-to-camera" />
       <View style={s.grow} />
       <Text style={s.network}>{collection.networkFlag(IS_MAINNET)}</Text>
       <Chip size="small" label={actions.collect} onPress={openCollectStage} hitSlop={CHIP_SLOP} testID="wallet-collect" />
     </View>
-    {/* The wallet itself, read like the camera's cells: a tag over its value. The `.skr` name is
-        the tag and never replaces the address, which is the thing every other surface matches. */}
+    {/* The `.skr` name is only the tag; the address is always shown verbatim. */}
     <View style={s.walletRow}>
       <Cell
         tag={labelOf("wallet", typeof seeker.skrName === "string" ? seeker.skrName : collection.wallet)}
@@ -329,7 +284,6 @@ export function ChainScreen() {
             accessibilityLabel={balance === null ? collection.noBalance : priceCopy.value(solText(balance))} />
         : <TextKey label={collection.connect} disabled={walletBusy} onPress={() => void onConnect()} testID="wallet-connect" />}
     </View>
-    {/* The two views, turned like the camera's dial: the one in force carries the index bar. */}
     {!!wallet && <View style={s.dial} accessibilityRole="radiogroup">
       <TextKey size="readout" index label={collection.collected} on={mode === "collected"}
         accessibilityRole="radio" onPress={() => setMode("collected")} testID="wallet-view-collected" />
@@ -342,19 +296,17 @@ export function ChainScreen() {
       contentContainerStyle={s.list}
       refreshControl={<RefreshControl refreshing={loading && Boolean(result)} onRefresh={retry} tintColor={colors.muted} colors={[colors.muted]} />}
       ListHeaderComponent={<>
-        {/* A count, not just a flag: anyone can mint Core assets to any wallet and grind addresses
-            to sort first, so the line says how many the scan's cap hid. It carries the only RETRY
-            over a list that still has rows. */}
+        {/* Anyone can mint Core assets to any wallet and grind addresses to sort first, so show
+            how many the scan cap hid. */}
         {(current?.failed || result && (result.unavailable > 0 || result.hiddenCount > 0)) && !!result && <View style={s.notice}>
           <Text style={s.state}>{current?.failed ? collection.notRefreshed
             : result.unavailable > 0 ? collection.unread(result.unavailable)
             : collection.notShown(result.hiddenCount)}</Text>
-          {/* Nothing to retry for the scan's own cap: the next read meets the same one. */}
+          {/* No retry for the scan cap: the next read hits the same cap. */}
           {(current?.failed || result.unavailable > 0) && <TextKey label={collection.retry} onPress={retry} testID="wallet-retry" />}
         </View>}
       </>}
       ListEmptyComponent={!wallet ? null : <View style={s.empty}>
-        {/* With no wallet this stays empty: the wallet line above reads NO WALLET beside CONNECT. */}
         {loading && !result ? <><ActivityIndicator color={colors.muted} /><Text style={s.state}>{collection.loading}</Text></> :
           current?.failed && !result ? (current.error
             ? <Text style={s.stateLine}>{current.error}</Text>
@@ -385,8 +337,6 @@ export function ChainScreen() {
             </View>
           </Screen>
         : <Screen>
-            {/* The paper imprints the title and the byline, so the nav carries the way back and
-                nothing else. */}
             <View style={s.header}>
               <BackButton label={collection.wallet} accessibilityLabel={collection.backToWallet} onPress={close} testID="wallet-close" />
             </View>
@@ -395,7 +345,6 @@ export function ChainScreen() {
                 <Print item={activePhoto} wallet={wallet} veil={activeVeil} />
               </Pressable>
               <Text style={[s.readout, activePhoto.number ? s.yours : null]}>{activePhoto.number ? collection.copyOf(activePhoto.number, e.supply) : collection.editionOf(e.supply)}</Text>
-              {/* The creator's own words, and the only proportional face on the screen. */}
               {!!e.description && !activeVeil && <Text style={s.caption}>{e.description}</Text>}
               <View>
                 <Fact tag={labelOf("by", collection.byLabel)} value={e.creator === wallet ? collection.you : shortAddress(e.creator)}
@@ -403,9 +352,8 @@ export function ChainScreen() {
                   onPress={() => void copy("by", e.creator)} />
                 <Fact tag={collection.issuedLabel} value={collection.tally(activePhoto.photo.minted, e.supply)} />
                 {activePhoto.photo.seekerOnly && <Fact tag="COLLECTORS" value="Seeker holders only" />}
-                {/* What a copy costs, and on the creator's own publication the way to change it:
-                    the price of the copies nobody has taken yet. Keyed by the edition, so a
-                    photograph that never came from this phone can still be priced. */}
+                {/* Creator can reprice remaining copies. Keyed by edition, so it works for photos
+                    published from another phone. */}
                 <Fact tag={priceCopy.label}
                   value={priceValue(activePhoto.photo.offer)}
                   accessibilityLabel={actions.setPrice} testID="wallet-price"
@@ -428,7 +376,6 @@ export function ChainScreen() {
                   onPress={() => setSending({ item: activePhoto, target: sendable })} />}
                 <Chip size="small" label={labelOf("link", collection.copyLink)} accessibilityLabel={collection.copyMomentLink} hitSlop={CHIP_SLOP} testID="wallet-copy-link"
                   onPress={() => void copy("link", collectUrl(e.edition, cluster))} />
-                {/* Somebody else's photograph: report it, or stop this phone showing its publisher. */}
                 {e.creator !== wallet && <>
                   <Chip size="small" label={labelOf("report", moderationCopy.report)} hitSlop={CHIP_SLOP} testID="wallet-report"
                     onPress={() => { Linking.openURL(reportMailto(e.edition, collectUrl(e.edition, cluster))).catch(() => say("report", collection.couldNotOpen)); }} />
@@ -438,15 +385,12 @@ export function ChainScreen() {
               </View>
             </View>
             {priceEdition && <OfferSheet edition={priceEdition} session={session} onClose={() => setPriceEdition(null)} onSaved={() => setRefresh(n => n + 1)} />}
-            {/* A confirmed send re-reads the wallet at once; closing then goes back to the grid,
-                which no longer holds the copy. */}
+            {/* After a confirmed send, closing returns to the grid, which no longer has the copy. */}
             {sending && <SendSheet target={sending.target} image={activeVeil ? undefined : sending.item.imageUri} session={session}
               onSent={() => { setSending(s => s && { ...s, sent: true }); setRefresh(n => n + 1); }}
               onClose={() => { if (sending.sent) setSelected(null); setSending(null); }} />}
           </Screen>)}
     </Modal>
-    {/* The Collect entry: one field and three chips. Paste or scan a link; everything else about
-        the edition is the Collect sheet's to show. */}
     <Modal visible={collectStage} animationType="slide" onRequestClose={() => setCollectStage(false)}>
       <Screen>
         <View style={s.header}>
@@ -461,7 +405,6 @@ export function ChainScreen() {
           <View style={s.chipRow}>
             <Chip size="small" label={actions.open} disabled={!link.trim()} onPress={() => openLink(link)} hitSlop={CHIP_SLOP} />
             <Chip size="small" label={actions.paste} onPress={() => void pasteLink()} hitSlop={CHIP_SLOP} />
-            {/* Offered only when this build's native side actually has the scanner. */}
             {scanQrAvailable() && <Chip size="small" label={actions.scan} onPress={() => void scan()} hitSlop={CHIP_SLOP} />}
           </View>
           {!!collectError && <Text accessibilityLiveRegion="polite" style={collectError.word ? s.refusalWord : s.refusal}>{collectError.text}</Text>}
@@ -482,37 +425,32 @@ const s = StyleSheet.create({
   grow: { flex: 1, minWidth: 0 },
   pressed: { opacity: 0.7 },
 
-  // --- header, the wallet line, the view dial ------------------------------
+  // Header, wallet row, view dial
   header: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 44 },
   network: { ...typeScale.label, color: colors.muted },
-  /** The screen's one hairline: under the wallet, which the rest of it is about. */
   walletRow: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 44, borderBottomWidth: 1, borderBottomColor: colors.line },
-  /** Content width, so the address sits on the gutter; capped so a long `.skr` name cannot push
-      the balance off the row. */
+  /** Capped so a long `.skr` name can't push the balance off the row. */
   walletCell: { maxWidth: 200 },
-  /** A key's word is inset 6 by its own padding; the row pulls that back to the paper's edge. */
+  /** Offsets the key's 6 dp padding to align text with the gutter. */
   dial: { flexDirection: "row", gap: space.xs, marginTop: space.sm, marginLeft: -6 },
 
-  // --- the list ----------------------------------------------------------
+  // List
   list: { flexGrow: 1, paddingTop: space.xl, paddingBottom: space.lg },
   gridRow: { gap: space.md },
-  /** The readout binds to its own print, so the gap under the paper is the smallest one. */
   item: { flex: 1, gap: 6, marginBottom: space.xl },
   readout: { ...typeScale.readout, color: colors.muted },
-  /** The accent, and its one meaning: this is yours. */
   yours: { color: colors.tealText },
 
 
   notice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm, paddingBottom: space.lg, marginRight: -6 },
 
-  // --- states ------------------------------------------------------------
+  // States
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.sm, paddingBottom: space.xxl },
   state: { ...typeScale.readout, color: colors.muted },
-  /** Where a hidden or blocked photograph would be: the picture's place, unexposed. */
   veil: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.field },
   stateLine: { ...typeScale.body, color: colors.muted, textAlign: "center", maxWidth: 300 },
 
-  // --- the photograph's own screen ---------------------------------------
+  // Detail
   detail: { paddingBottom: space.xl, gap: space.md },
   caption: { ...typeScale.body, color: colors.ink },
   fact: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.md, borderBottomWidth: 1, borderBottomColor: colors.line },
@@ -524,12 +462,12 @@ const s = StyleSheet.create({
   chipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.sm },
   bottomBar: { paddingTop: space.md, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.ground },
 
-  // --- the Collect entry --------------------------------------------------
+  // Collect entry
   input: { ...typeScale.body, fontFamily: typeScale.imprint.fontFamily, fontSize: 13, lineHeight: 20, color: colors.ink, backgroundColor: colors.field, borderWidth: 1, borderColor: colors.line, borderRadius: radius.small, minHeight: 90, padding: 14, textAlignVertical: "top" },
   refusal: { ...typeScale.body, color: colors.danger },
   refusalWord: { ...typeScale.readout, color: colors.danger },
 
-  // --- full screen -------------------------------------------------------
+  // Full screen
   immersiveNav: { paddingHorizontal: space.gutter, paddingBottom: space.md },
   immersiveImage: { flex: 1, width: "100%" },
   immersiveFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: space.gutter - 6, paddingTop: space.md },

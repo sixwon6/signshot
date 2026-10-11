@@ -1,10 +1,6 @@
 /**
- * The app's side of `core.ts`: the terms agreement and the block list in AsyncStorage, and the
- * moderation list read over the network, held in one module-level store so a Block on the
- * Collect sheet is already in force on the Wallet screen behind it.
- *
- * Both stored values are per phone, not per wallet: the agreement is the person's, and a block
- * is about whose pictures this phone shows. Neither ever leaves the phone.
+ * Module-level store for terms agreement, block list and the fetched moderation list, so a block
+ * applies on every screen at once. Stored per phone, not per wallet, and never uploaded.
  */
 import { useEffect, useSyncExternalStore } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -42,8 +38,7 @@ function subscribe(listener: () => void) {
   return () => void listeners.delete(listener);
 }
 
-// Read once, at import, so the first sheet opened already knows the answer. An unreadable store
-// asks for the terms again and blocks nobody.
+// Read at import so the first sheet already knows. Unreadable storage re-asks terms, blocks nobody.
 const stored = Promise.all([
   AsyncStorage.getItem(TERMS_KEY).catch(() => null),
   AsyncStorage.getItem(BLOCKED_KEY).catch(() => null),
@@ -56,7 +51,7 @@ const stored = Promise.all([
 
 let listReadAt = 0;
 let listReading = false;
-/** Re-read the list when it is older than its TTL. A failed read keeps the last good one. */
+/** A failed read keeps the last good list. */
 function refreshList() {
   if (listReading || Date.now() - listReadAt < MODERATION_TTL_MS) return;
   listReading = true;
@@ -72,7 +67,7 @@ async function agree() {
   await AsyncStorage.setItem(TERMS_KEY, String(TERMS_VERSION)).catch(() => {});
 }
 
-/** Block or unblock a publisher. In force at once; stored best effort. */
+/** Applies immediately; persistence is best effort. */
 async function setBlocked(creator: string, blocked: boolean) {
   await stored;
   const next = withBlocked(state.blocked, creator, blocked);

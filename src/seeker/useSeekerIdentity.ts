@@ -11,27 +11,19 @@ import { resolveSkrName } from "./skrName";
 import { safeErrorText } from "../ui/errorText";
 
 /**
- * The connected wallet's Seeker facts (SGT, `.skr` name) in one app-wide store, cached for a day
- * because the public RPC throttles `getProgramAccounts`. A failed half keeps its last value and is
- * never recorded as "none" (`undefined` = unknown). Disconnect clears this cache.
- *
- * Both facts exist on mainnet only, so they are always read from mainnet (`getMainnetReadRpc`),
- * whatever cluster this build publishes on: the wallet address is the same keypair on every
- * cluster, so no wallet interaction is involved. A failure here is a line in Settings and never
- * reaches the camera, publishing or collecting; the one thing publishing takes from this store is
- * which SGT to prefer when a wallet holds several (`lastKnownGenesisMint`).
+ * App-wide store of the connected wallet's SGT and `.skr` name, always read from mainnet and cached
+ * for a day (the public RPC throttles `getProgramAccounts`). A failed lookup keeps its last value
+ * and is never recorded as "none". Disconnect clears the cache.
  */
 
 interface SeekerIdentity {
-  /** The wallet these facts are about, or null when no wallet is connected. */
   wallet: string | null;
   /** SGT mint held by `wallet`; null = checked, none; undefined = not successfully checked. */
   sgtMint: string | null | undefined;
   /** `.skr` name of `wallet`; null = checked, none; undefined = not successfully checked. */
   skrName: string | null | undefined;
-  /** A lookup for `wallet` is running right now. */
   checking: boolean;
-  /** Last lookup error for `wallet`, display-ready; null after a fully successful lookup. */
+  /** Display-ready; null after a fully successful lookup. */
   error: string | null;
   refresh(): Promise<void>;
 }
@@ -48,8 +40,6 @@ const CACHE_KEY = "seeker.identity.v2";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const UNAVAILABLE = "SEEKER DETAILS UNAVAILABLE — TRY AGAIN";
 
-// ---- store ---------------------------------------------------------------------------------
-
 interface State {
   wallet: string | null;
   entry: CacheEntry | null;
@@ -59,7 +49,6 @@ interface State {
 let state: State = { wallet: null, entry: null, error: null };
 const listeners = new Set<() => void>();
 const inFlight = new Map<string, Promise<void>>();
-/** Serializes AsyncStorage traffic for the one cache key. */
 const withCache = createSerialQueue();
 
 function emit(): void {
@@ -114,11 +103,10 @@ function clearCache(): Promise<void> {
 }
 
 function messageOf(e: unknown): string {
-  // Through the filter first: this line renders in Settings, and an RPC failure quotes the
-  // endpoint URL, which on a keyed provider carries the key.
+  // Filter first: RPC errors quote the endpoint URL, which may carry an API key.
   const t = safeErrorText(e, "LOOKUP FAILED");
   if (/429|Too Many Requests|rate/i.test(t)) return "RPC RATE LIMITED — TRY AGAIN IN A MINUTE";
-  // Offline, DNS, TLS, a blocked IP (403) or the 20 s deadline: mainnet could not be asked.
+  // Offline, DNS, TLS, 403 or the 20 s deadline.
   if (/network request failed|fetch failed|did not answer in time|abort|HTTP error|403/i.test(t))
     return UNAVAILABLE;
   return t.toUpperCase().slice(0, 96);
@@ -128,7 +116,7 @@ function isFresh(at: number | undefined, now: number): boolean {
   return typeof at === "number" && now - at < MAX_AGE_MS;
 }
 
-/** Runs the lookup for `target` unless one is already running. Safe to call often. */
+/** Deduplicated per wallet; safe to call often. */
 function lookup(target: string, force: boolean): Promise<void> {
   const running = inFlight.get(target);
   if (running) return running;
@@ -143,7 +131,7 @@ function lookup(target: string, force: boolean): Promise<void> {
       return;
     }
     const rpc = getMainnetReadRpc();
-    // `target` is already a kit `Address`; it only lost the brand in this store's `string` state.
+    // Already an `Address`; the brand was lost in the `string` state.
     const owner = target as Address;
     const [sgt, skr] = await Promise.allSettled([
       needSgt
@@ -171,8 +159,8 @@ function lookup(target: string, force: boolean): Promise<void> {
     } else {
       error = error ?? messageOf(skr.reason);
     }
-    // State first, disk after: a storage hiccup must not discard a good answer. Both are skipped
-    // if the wallet changed meanwhile, so a late lookup cannot undo a disconnect's `clearCache()`.
+    // State before disk so a storage error can't discard a good answer. Skip both if the wallet
+    // changed, so a late lookup can't undo a disconnect's `clearCache()`.
     if (state.wallet !== target) return;
     setState({ entry: next, error });
     await writeCache(next);
@@ -185,7 +173,7 @@ function lookup(target: string, force: boolean): Promise<void> {
   return task;
 }
 
-/** Called when the connected wallet changes. Serves the cache, then refreshes what is stale. */
+/** Serves the cache, then refreshes what is stale. */
 async function setWallet(wallet: string | null): Promise<void> {
   if (wallet === state.wallet) return;
   if (wallet === null) {
@@ -195,25 +183,18 @@ async function setWallet(wallet: string | null): Promise<void> {
   }
   setState({ wallet, entry: null, error: null });
   const cached = await readCache();
-  if (state.wallet !== wallet) return; // switched again while reading
+  if (state.wallet !== wallet) return;
   if (cached?.wallet === wallet) setState({ entry: cached });
   void lookup(wallet, false);
 }
 
-/**
- * The SGT mint last found for `wallet`, however old, or undefined. Only ever a preference among
- * the SGTs a fresh lookup finds (`publisherGenesisMint`), never a mint to name on its own.
- */
+/** Possibly stale. Only a tiebreak among SGTs a fresh lookup finds, never a mint to name on its own. */
 export async function lastKnownGenesisMint(wallet: string): Promise<string | undefined> {
   const entry = state.entry?.wallet === wallet ? state.entry : await readCache();
   return entry?.wallet === wallet && typeof entry.sgtMint === "string" ? entry.sgtMint : undefined;
 }
 
-// ---- hook ----------------------------------------------------------------------------------
-
-/**
- * @param enabled false: read whatever the store knows, but never start a lookup from this mount.
- */
+/** @param enabled false: read the store but never start a lookup from this mount. */
 export function useSeekerIdentity(enabled: boolean = true): SeekerIdentity {
   const { account } = useMobileWallet();
   const wallet: string | null = account?.address ?? null;
@@ -228,8 +209,7 @@ export function useSeekerIdentity(enabled: boolean = true): SeekerIdentity {
     if (wallet !== null) await lookup(wallet, true);
   }, [wallet]);
 
-  // The store may lag one render behind a wallet change; report against the wallet the caller
-  // actually has, and never another wallet's facts.
+  // The store can lag a render behind a wallet change; never return another wallet's facts.
   const known = snap.wallet === wallet && snap.entry !== null && snap.entry.wallet === wallet;
   const entry = known ? snap.entry : null;
   return {

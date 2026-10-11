@@ -2,12 +2,8 @@ import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 import { Row } from "./SheetRow";
 /**
- * OfferSheet: the creator's price for the remaining copies of one edition.
- *
- * Keyed by edition, not photograph: the Collection tab can open it for a publication whose photo is
- * not on this phone. "Continue" prepares the change and shows the estimate; only the next tap
- * opens the wallet, and a cleared quote can never be approved. The price reaches the creator; the
- * estimate is what the creator pays to change it, so the two are never added.
+ * The creator's price for an edition's remaining copies. Keyed by edition, not photo, so it works
+ * when the photo isn't on this phone. The estimate is the cost of the change, never added to the price.
  */
 import { useEffect, useState } from "react";
 import {
@@ -54,7 +50,7 @@ export function OfferSheet({
   edition: CoreMetadata;
   session: WalletSession;
   onClose(): void;
-  /** The price changed on chain. The caller re-reads whatever list it is showing. */
+  /** Called after the price changes on chain. */
   onSaved?(): void;
 }) {
   const insets = useSafeAreaInsets();
@@ -75,18 +71,16 @@ export function OfferSheet({
     run,
     showCheckFailure,
   } = useSheetOperation<OfferQuote>(copy.loading);
-  /** What the chain says now: the current offer, and whether this app can price the edition. */
   const [current, setCurrent] = useState<EditionOffer | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [priceText, setPriceText] = useState("");
   const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
-  // The sale was closed in this sheet: the heading and the row say so, not "Price set" and "Free".
   const [closed, setClosed] = useState(false);
   const token = priceToken();
-  /** Set means a price change confirmed in this sheet; the flow is finished. */
+  /** Non-null once a change confirms; the flow is finished. */
   const [saved, setSaved] = useState<EditionOffer | null>(null);
 
-  /** Read the edition's price. Opens no wallet, so it runs on its own. */
+  /** Read the current price. Opens no wallet. */
   useEffect(() => {
     let live = true;
     const id = ++request.current;
@@ -102,8 +96,7 @@ export function OfferSheet({
         if (!live || id !== request.current) return;
         setSupported(next.supported);
         setCurrent(next.offer);
-        // The field starts at the price that is already set, so leaving it alone changes nothing
-        // and clearing it is how a creator makes the edition free again.
+        // Prefill the current price; clearing it makes the edition free.
         const offer = next.offer;
         setPriceUnit(offer?.kind === "token" ? "token" : "sol");
         const known = priceToken();
@@ -122,7 +115,7 @@ export function OfferSheet({
     };
   }, [edition.edition]);
 
-  /** "Continue": prepare the change and show what it would cost. Nothing is signed here. */
+  /** Prepare the change and show its cost. Signs nothing. */
   async function review() {
     if (running.current || !supported || finished) return;
     if (isOfferWorking(edition.edition)) {
@@ -143,7 +136,7 @@ export function OfferSheet({
     }
     return run(async () => {
       setError("");
-      // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
+      // Cleared first so a refusal cannot leave the old estimate up.
       clearQuote();
       setStatus("");
       try {
@@ -151,7 +144,6 @@ export function OfferSheet({
         setQuote(next);
       } catch (e) {
         clearQuote();
-        // A cost check signs nothing, so nothing can have changed.
         showCheckFailure(e, {
           timedOut: walletTimeout.offerCostCheck,
           cancelled: copy.cancelled,
@@ -161,7 +153,7 @@ export function OfferSheet({
     });
   }
 
-  /** "Close sale": review closing, simulated and costed. Nothing is signed here. */
+  /** Simulate and cost closing the sale. Signs nothing. */
   async function reviewClose() {
     if (running.current || !supported || finished) return;
     return run(async () => {
@@ -177,7 +169,6 @@ export function OfferSheet({
     });
   }
 
-  /** "Set price": the one tap that opens the wallet to sign. */
   async function send() {
     if (!quote || currentQuote.current !== quote) return;
     return run(async () => {
@@ -197,9 +188,8 @@ export function OfferSheet({
         onSaved?.();
       } catch (e) {
         clearQuote();
-        // Seed Vault broadcasts first and answers only when its success screen is closed, so a
-        // timeout usually means the price is already set. The re-read below is what decides, never
-        // the error.
+        // Seed Vault broadcasts first and answers only when its success screen closes, so a timeout
+        // usually means the price is set. The re-read below decides, not the error.
         const { cancelled, timedOut, quiet } = walletOutcome(e);
         if (timedOut) setStatus(walletTimeout.offerChecking);
         const after = await getOffer(edition).catch(() => null);
@@ -207,8 +197,7 @@ export function OfferSheet({
           setSupported(after.supported);
           setCurrent(after.offer);
         }
-        // A fresh read can resolve an approval whose answer was lost, and then supersedes the
-        // error. Checked as `offer.ts` does: the approved price, or a closed sale.
+        // Landed if the chain shows the approved price or a closed sale (as `offer.ts` checks).
         const landed =
           !!after &&
           (quote.action === "close" ? !after.supported : after.supported && samePrice(after.offer, quote.price));
@@ -263,7 +252,6 @@ export function OfferSheet({
           >
             <NetworkLabel label={devnet ? copy.networkTest : copy.network} />
             <Text style={sheetStyles.title}>{closed ? copy.headingClosed : finished ? copy.headingSet : copy.heading}</Text>
-            {/* Which edition this price belongs to, in its own words. */}
             <Text style={sheetStyles.readout}>{edition.title}</Text>
             <View style={sheetStyles.box}>
               <Row

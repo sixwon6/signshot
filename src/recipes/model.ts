@@ -1,19 +1,15 @@
 /**
- * The recipe model: a native stage manifest (schema 1) plus an optional colour LUT, handed to
- * `SeekerCamera` verbatim through `src/recipes/apply.ts`. Recipes stay on the phone.
- *
- * {@link STAGES} mirrors native `ShaderGen.STAGE_PARAMS` / `STAGE_SCALING` so the UI only asks for
- * parameters and ranges native accepts.
+ * A recipe is a native stage manifest (schema 1) plus an optional LUT, passed to native verbatim.
+ * {@link STAGES} must mirror native `ShaderGen.STAGE_PARAMS` / `STAGE_SCALING`.
  */
 import { hasUnsafeText } from "../../publications/core/details";
 
-/** [strength 0..100, parameter value] — the renderer's own curve domain (`Profile.kt#evalCurve`). */
+/** [strength 0..100, value], as `Profile.kt#evalCurve`. */
 type CurvePoint = [number, number];
 
-/** The one scaling law each stage type may declare; anything else fails native validation. */
 type ScalingLaw = "invariant" | "frame-relative" | "reference-pixel";
 
-/** Every stage type in the native registry. The colour LUT is not a stage; it is `Recipe.lut`. */
+/** The LUT is not a stage; see `Recipe.lut`. */
 export type StageType =
   | "resolutionSoften"
   | "sharpen"
@@ -31,12 +27,12 @@ export type StageType =
 interface RecipeStage {
   type: StageType;
   scaling: ScalingLaw;
-  /** Static values. A parameter also named in intensityCurve is driven by the curve instead. */
+  /** Overridden by `intensityCurve` where both name a parameter. */
   params: Record<string, number>;
   intensityCurve?: Record<string, CurvePoint[]>;
 }
 
-/** The native manifest, unchanged. `profileId` is the recipe's id; it is never published. */
+/** `profileId` is the recipe id; never published. */
 export interface RecipeManifest {
   schema: 1;
   profileId: string;
@@ -48,48 +44,44 @@ export interface RecipeManifest {
 }
 
 export interface Recipe {
-  /** Always equal to `manifest.profileId`. Starters are `rec.*`; the phone's own look keeps `prof.neutral`. */
+  /** Equals `manifest.profileId`. Starters are `rec.*`; the neutral look is `prof.neutral`. */
   id: string;
   name: string;
   manifest: RecipeManifest;
-  /** base64 RGBA8 3D LUT, or null. Present exactly when `manifest.lut` is declared. */
+  /** base64 RGBA8 3D LUT; present iff `manifest.lut` is declared. */
   lut: string | null;
-  /** A shipped starter: never stored, never renamed, never deleted. */
+  /** Shipped starter: never stored, renamed or deleted. */
   builtIn: boolean;
 }
 
-/** What a slider is counting, so the editor can format a value without knowing the stage. */
 type ParamUnit =
-  /** 0..1-ish, shown as a percentage. */
+  /** ~0..1, shown as a percentage. */
   | "unit"
-  /** -1..1, zero in the middle. */
+  /** -1..1. */
   | "signed"
-  /** A multiplier around 1. */
+  /** Multiplier around 1. */
   | "factor"
   /** Pixels at the 4000 px reference long edge (`GlRenderer.REF_LONG_EDGE`). */
   | "refPixels"
-  /** A fraction of the frame's short edge. */
+  /** Fraction of the frame's short edge. */
   | "frame";
 
 export interface ParamSpec {
   stage: StageType;
   param: string;
-  /** One word. */
   label: string;
   unit: ParamUnit;
   min: number;
   max: number;
   step: number;
-  /** The value at which this parameter does nothing. */
   neutral: number;
 }
 
 interface StageSpec {
   type: StageType;
-  /** One word. */
   label: string;
   scaling: ScalingLaw;
-  /** True when the renderer applies this stage at source-sample time, wherever it sits. */
+  /** Applied while sampling the source, regardless of position. */
   sampleTime: boolean;
   params: readonly ParamSpec[];
 }
@@ -106,9 +98,8 @@ const spec = (
 ): ParamSpec => ({ stage, param, label, unit, min, max, step, neutral });
 
 /**
- * The parameter table, in the order a recipe's stages are held and shown. Sample-time stages come
- * first because the renderer applies them while sampling the source wherever they sit; vignette
- * precedes grain so noise lies on top of darkened corners. The LUT runs before every stage.
+ * In graph order. Sample-time stages first (applied at sampling anyway); vignette before grain so
+ * noise sits on top of darkened corners. The LUT runs before every stage.
  */
 export const STAGES: readonly StageSpec[] = [
   {
@@ -142,12 +133,10 @@ export const STAGES: readonly StageSpec[] = [
     sampleTime: true,
     params: [
       spec("chromaSmear", "amount", "Amount", "unit", 0, 1, 0.01, 0),
-      // The 10-90 % chroma transition. The ceiling sits just under where a 3264 px still's
-      // half-resolution chroma planes are sampled more than two texels apart (29.4 at 13 taps):
-      // past that the still shows a ribbed trail the preview does not.
-      // `scripts/check-smear.mjs` measures both and reports where the taps stop overlapping.
+      // 10-90 % chroma transition. Max stays under 29.4, where a 3264 px still's half-res chroma
+      // taps (13) exceed two texels apart and ribbing appears. See `scripts/check-smear.mjs`.
       spec("chromaSmear", "width", "Width", "refPixels", 0, 28, 0.5, 24),
-      // Chroma delay: rightward in the upright picture, never leftward.
+      // Rightward only, in the upright picture.
       spec("chromaSmear", "shift", "Shift", "refPixels", 0, 12, 0.5, 0),
     ],
   },
@@ -238,7 +227,6 @@ export const STAGES: readonly StageSpec[] = [
   },
 ];
 
-/** Stage types in graph order. */
 const STAGE_ORDER: readonly StageType[] = STAGES.map((s) => s.type);
 
 const SPEC_OF = new Map<StageType, StageSpec>(STAGES.map((s) => [s.type, s]));
@@ -257,7 +245,6 @@ function paramSpec(type: StageType, param: string): ParamSpec {
 
 const rank = (type: StageType) => STAGE_ORDER.indexOf(type);
 
-/** Every parameter at its neutral value: the stage present but doing nothing. */
 function neutralStage(type: StageType): RecipeStage {
   const s = stageSpec(type);
   const params: Record<string, number> = {};
@@ -265,22 +252,17 @@ function neutralStage(type: StageType): RecipeStage {
   return { type: s.type, scaling: s.scaling, params };
 }
 
-/**
- * What the look that adds nothing is called. On a phone it is the phone's own camera, so the app
- * names it for the phone before anything lists the looks (`src/recipes/deviceLook.ts`, imported
- * first by index.js). Nothing else sets it, so the build gates see the shipped name.
- */
+/** Set once by `deviceLook.ts` before the looks are listed; build gates see the default. */
 let neutralName = "Phone";
 export function setNeutralName(name: string | null): void {
   if (!name) return;
   try {
     neutralName = normalizeRecipeName(name);
   } catch {
-    // A model string no recipe could be called: the shipped name stays.
   }
 }
 
-/** The phone's own picture: no stages, no LUT. The manifest is pinned byte for byte so its `capture_pipeline_id` is stable. */
+/** Manifest pinned byte for byte so its `capture_pipeline_id` is stable. */
 export function neutralRecipe(): Recipe {
   return {
     id: "prof.neutral",
@@ -300,9 +282,8 @@ export function neutralRecipe(): Recipe {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /**
- * `recipe` with one parameter set directly, keeping its id. A missing stage is inserted in graph
- * order; this parameter's intensityCurve is dropped so strength cannot rewrite the chosen value.
- * The camera uses this, so a photo taken mid-edit records the same `profileId` the store saves.
+ * Sets one parameter, keeping the id. Inserts a missing stage in graph order and drops that
+ * parameter's curve so strength can't override it.
  */
 export function setParam(
   recipe: Recipe,
@@ -329,10 +310,7 @@ export function setParam(
   return next;
 }
 
-/**
- * The same move as an unsaved recipe with a content-hash id (`rec.unsaved.<hash>`), so a starter's
- * id is never recorded against a manifest that is not the starter's. Develop uses this.
- */
+/** Like `setParam` but with a content-hash id, so a starter's id never labels a modified manifest. */
 export function withParam(
   recipe: Recipe,
   stage: StageType,
@@ -346,7 +324,7 @@ export function withParam(
   return next;
 }
 
-/** FNV-1a over the recipe's content: two identical edits share an id, two different never do. */
+/** FNV-1a over stages and LUT. */
 function unsavedId(recipe: Pick<Recipe, "manifest" | "lut">): string {
   const text = JSON.stringify(recipe.manifest.stages) + "|" + (recipe.lut ?? "");
   let h = 0x811c9dc5;
@@ -357,7 +335,7 @@ function unsavedId(recipe: Pick<Recipe, "manifest" | "lut">): string {
   return `rec.unsaved.${h.toString(16).padStart(8, "0")}`;
 }
 
-/** Piecewise-linear read of an intensityCurve at `at` (0..100), or `fallback` without one. */
+/** Piecewise-linear; `at` is 0..100. */
 function evalCurve(curve: CurvePoint[] | undefined, fallback: number, at: number): number {
   if (!curve || curve.length === 0) return fallback;
   if (at <= curve[0][0]) return curve[0][1];
@@ -369,11 +347,7 @@ function evalCurve(curve: CurvePoint[] | undefined, fallback: number, at: number
   return curve[curve.length - 1][1];
 }
 
-/**
- * The value a parameter actually has at `strength` (0..1): its curve read at that strength the
- * way the renderer reads it, else its static value, else neutral. This is what a slider shows;
- * moving the slider then bakes the number through `withParam`.
- */
+/** Value at `strength` (0..1) as the renderer computes it: curve, else static, else neutral. */
 export function effectiveParam(recipe: Recipe, spec: ParamSpec, strength: number): number {
   const stage = recipe.manifest.stages.find((s) => s.type === spec.stage);
   if (!stage) return spec.neutral;
@@ -382,7 +356,7 @@ export function effectiveParam(recipe: Recipe, spec: ParamSpec, strength: number
   return evalCurve(stage.intensityCurve?.[spec.param], typeof held === "number" ? held : spec.neutral, at);
 }
 
-/** True when two recipes develop a photograph identically (same stages and LUT); names and ids are ignored. */
+/** Same stages and LUT; ignores names and ids. */
 export function sameLook(a: Recipe, b: Recipe): boolean {
   return (
     a.lut === b.lut &&
@@ -390,7 +364,7 @@ export function sameLook(a: Recipe, b: Recipe): boolean {
   );
 }
 
-/** True when nothing in this stage moves the picture, at any strength. */
+/** No effect at any strength. */
 export function isNeutralStage(stage: RecipeStage): boolean {
   return stageSpec(stage.type).params.every((p) => {
     const curve = stage.intensityCurve?.[p.param];
@@ -399,10 +373,9 @@ export function isNeutralStage(stage: RecipeStage): boolean {
   });
 }
 
-/** The bound on a recipe name, in Unicode code points. */
+/** In code points. */
 export const RECIPE_NAME_LIMIT = 32;
 
-/** A recipe name as it may be stored: trimmed, present, bounded, printable. */
 export function normalizeRecipeName(input: unknown): string {
   if (typeof input !== "string") throw new Error("A recipe needs a name.");
   const name = input.trim();
@@ -412,10 +385,7 @@ export function normalizeRecipeName(input: unknown): string {
   return name;
 }
 
-/**
- * Refuses anything the renderer would refuse, and anything outside the parameter table, BEFORE
- * it reaches the GL thread or the store. Throws the first problem, naming it.
- */
+/** Rejects anything native or the parameter table would, before it reaches the GL thread or store. */
 export function validateRecipe(recipe: Recipe): void {
   const m = recipe.manifest;
   if (m.schema !== 1) throw new Error("recipe: manifest schema must be 1");

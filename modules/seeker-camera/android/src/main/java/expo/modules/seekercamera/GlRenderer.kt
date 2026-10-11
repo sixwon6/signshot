@@ -42,8 +42,7 @@ class GlRenderer {
     private const val MAX_JPEG_BYTES = 4 * 1024 * 1024
     private val JPEG_QUALITY_LADDER = intArrayOf(95, 92, 89, 86, 83, 80)
 
-    // Shared 2-thread encode pool: the GL thread is blocked for readback only, never
-    // for Bitmap creation / flip / JPEG encode / digest. Process-lifetime, shared across renderers.
+    // Process-wide encode pool: the GL thread blocks on readback only, never on encode or digest.
     private val ENCODE_POOL = Executors.newFixedThreadPool(2) { r ->
       Thread(r, "seeker-encode").apply { isDaemon = true }
     }
@@ -60,8 +59,7 @@ class GlRenderer {
   private var surfaceW = 0
   private var surfaceH = 0
   private var glReady = false
-  // Non-null once init failed: nothing will ever drain the pending queue, so later applies must
-  // fail immediately rather than leave a JS promise hanging.
+  // Set when init fails: nothing drains the pending queue, so later applies fail fast.
   private var glFailed: String? = null
 
   private var program = 0
@@ -81,7 +79,7 @@ class GlRenderer {
   private val pendingApplies = mutableListOf<(String?, String?) -> Unit>()
   @Volatile var capturePipelineId: String = "sp/${ShaderGen.RENDERER_VERSION}/none/none@0/cal-none"
     private set
-  // Readable off the GL thread for the capture sidecar record.
+  // Read off the GL thread for the sidecar.
   @Volatile var profileId: String = "none"
     private set
   @Volatile var profileVersion: Int = 0
@@ -89,10 +87,8 @@ class GlRenderer {
   @Volatile var intensity: Float = 0.6f
   @Volatile var rotationDegrees: Int = 90
   /**
-   * Physical phone orientation, from the view's orientation listener. The preview deliberately
-   * ignores it when rotating the picture (the viewfinder is sensor-upright, so the world turns on
-   * screen as the phone turns), but an anisotropic stage must run along the axis the STILL will
-   * have, so uScanAxis adds this in. The still passes its own shutter snapshot instead.
+   * Physical phone orientation. The preview stays sensor-upright, but anisotropic stages must run
+   * along the still's axis, so the preview's uScanAxis adds this. The still uses its shutter snapshot.
    */
   @Volatile var deviceDegrees: Int = 0
 
@@ -184,8 +180,7 @@ class GlRenderer {
       if (released) { onDone("renderer released", null); return@post }
       glFailed?.let { onDone(it, null); return@post }
       if (!glReady) {
-        // Resolving now would return a stale capturePipelineId. Queue: the latest profile wins and
-        // every caller resolves with the id in force once start() applies it.
+        // Queue until start(): resolving now would return a stale capturePipelineId. Latest wins.
         pendingProfile = p
         pendingApplies.add(onDone)
         return@post
@@ -222,7 +217,6 @@ class GlRenderer {
       programSrc = frag
       uniformLocations.clear()
     }
-    // LUT on unit 3 as TEXTURE_3D
     if (p.lutSize > 0 && p.lutRgba != null && p.lutDigest != lutUploaded) {
       if (lutTexId == 0) {
         val t = IntArray(1); GLES30.glGenTextures(1, t, 0); lutTexId = t[0]
@@ -309,10 +303,7 @@ class GlRenderer {
     val styledPath: String, val styledSha256: String,
   )
 
-  /**
-   * @param intensityOverride the value snapshotted at shutter, in 0..1. The still must render the
-   * intensity the sidecar records; a drag landing mid-capture would otherwise desync the two.
-   */
+  /** @param intensityOverride shutter snapshot, 0..1, so the still matches the sidecar's intensity. */
   fun renderStill(
     image: Image, outDir: File, baseName: String, intensityOverride: Float, rotationOverride: Int,
     onDone: (Result<StillFiles>) -> Unit,
@@ -403,8 +394,7 @@ class GlRenderer {
         Log.e(TAG, "still render", e)
         onDone(Result.failure(e))
       } finally {
-        // A throw must never leave the offscreen FBO bound: the preview would render into it
-        // forever (permanently black viewfinder).
+        // Never leave the offscreen FBO bound, or the preview renders into it (black viewfinder).
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         if (colorTex[0] != 0) GLES30.glDeleteTextures(1, colorTex, 0)
         if (fbo[0] != 0) GLES30.glDeleteFramebuffers(1, fbo, 0)
@@ -428,9 +418,7 @@ class GlRenderer {
         applyProfileOnThread(p, edited = true)
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeFile(source.absolutePath, bounds)
-        // Preserve every source pixel for the 4000x3000 native capture. Reject oversized
-        // sources rather than silently exporting a smaller photograph. Serial edit jobs and
-        // explicit buffer lifetimes keep a full-size edit within a bounded memory budget.
+        // Full resolution only: refuse anything above the 4000x3000 capture rather than downscale.
         require(bounds.outWidth in 1..4000 && bounds.outHeight in 1..4000 &&
           bounds.outWidth.toLong() * bounds.outHeight <= 12_000_000L) {
           "Full-resolution editing supports photos up to 4000 pixels and 12 megapixels"
@@ -467,8 +455,7 @@ class GlRenderer {
         GLES30.glReadPixels(0, 0, w, h, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, bytes)
         check(GLES30.glGetError() == GLES30.GL_NO_ERROR) { "Photo edit rendering failed" }
 
-        // Release the two full-size GPU images before allocating the JPEG bitmap. Flip the
-        // readback in place using two rows, avoiding another full-frame bitmap during edits.
+        // Free the full-size GPU images before the JPEG bitmap; flip in place to avoid another frame copy.
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glDeleteTextures(1, texture, 0); texture[0] = 0
         GLES30.glDeleteFramebuffers(1, fbo, 0); fbo[0] = 0
@@ -541,8 +528,7 @@ class GlRenderer {
       bmp.recycle()
     }
     try {
-      // Enforce the 4 MB cap before writing, since the returned hash covers these exact bytes:
-      // walk quality down until the frame fits (detailed or noisy frames can hit this); fail below q80.
+      // Cap before writing so the hash covers the stored bytes; step quality down, fail below q80.
       var bytes: ByteArray? = null
       for (q in JPEG_QUALITY_LADDER) {
         val bos = ByteArrayOutputStream(MAX_JPEG_BYTES / 2)
@@ -561,7 +547,6 @@ class GlRenderer {
       val finalBytes = bytes ?: throw IOException(
         "still exceeds ${MAX_JPEG_BYTES}B even at q${JPEG_QUALITY_LADDER.last()} for $name")
       FileOutputStream(path).use { it.write(finalBytes) }
-      // Digest the written array, so the hash covers exactly the bytes on disk.
       return hexOf(MessageDigest.getInstance("SHA-256").digest(finalBytes))
     } finally {
       flipped.recycle()
@@ -716,10 +701,9 @@ class GlRenderer {
   }
 
   /**
-   * @param intensityOverride non-null on the still path only (shutter snapshot); preview keeps
-   * reading the live @Volatile so the dial stays frame-tight.
-   * @param scanRotation the rotation the OUTPUT picture will be upright at, which the preview
-   * alone differs on: it draws at the sensor rotation but must smear along the still's horizontal.
+   * @param intensityOverride still path only (shutter snapshot); the preview reads the live value.
+   * @param scanRotation rotation at which the output is upright; differs from frameRotation only
+   * in the preview, which draws at sensor rotation but must smear along the still's horizontal.
    */
   private fun draw(styled: Boolean, frameW: Float, frameH: Float, intensityOverride: Float? = null,
     frameRotation: Int = rotationDegrees, scanRotation: Int = frameRotation) {
@@ -728,8 +712,6 @@ class GlRenderer {
     GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, quadVbo)
     GLES30.glEnableVertexAttribArray(0)
     GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, 0)
-    // Locations are a property of the linked program, so they are looked up once per program
-    // rather than by name on every frame (`uniformLocations` is cleared when one is built).
     fun uni(name: String) =
       uniformLocations.getOrPut(name) { GLES30.glGetUniformLocation(program, name) }
     GLES30.glUniform1i(uni("uTexY"), 0)
@@ -744,11 +726,9 @@ class GlRenderer {
     GLES30.glUniform2f(uni("uFrameSize"), if (rotated) frameH else frameW, if (rotated) frameW else frameH)
     // uRefScale is rotation-invariant: the long edge is the long edge either way.
     GLES30.glUniform1f(uni("uRefScale"), maxOf(frameW, frameH) / REF_LONG_EDGE)
-    // The upright picture's rightward direction, in source uv. From VERTEX_SRC: at rotation 0 uv
-    // is (x right, y down) of the upright picture, and 90/180/270 rewrite it to (uv.y, 1-uv.x) /
-    // (1-uv.x, 1-uv.y) / (1-uv.y, uv.x), whose derivative along rightward is (0,-1) / (-1,0) /
-    // (0,1). Set for every program: a shader without an anisotropic stage has no such uniform, and
-    // glUniform on location -1 is ignored.
+    // Upright picture's rightward direction in source uv: the derivative of VERTEX_SRC's rotation
+    // remap (90: (uv.y, 1-uv.x), 180: (1-uv.x, 1-uv.y), 270: (1-uv.y, uv.x)). Programs without an
+    // anisotropic stage get location -1, which glUniform ignores.
     when (scanRotation) {
       90 -> GLES30.glUniform2f(uni("uScanAxis"), 0f, -1f)
       180 -> GLES30.glUniform2f(uni("uScanAxis"), -1f, 0f)
@@ -759,8 +739,6 @@ class GlRenderer {
     if (p != null) {
       GLES30.glUniform1f(uni("uLutSize"), p.lutSize.toFloat())
       GLES30.glUniform1f(uni("uLutMix"), p.evalCurve(p.lutMixCurve, 1f, i100))
-      // Uniform names come from `stageUniforms`, built when the profile was applied: a name built
-      // here would be a String allocated per parameter per frame.
       for (idx in p.stages.indices) {
         val st = p.stages[idx]
         for ((param, name) in stageUniforms[idx]) {

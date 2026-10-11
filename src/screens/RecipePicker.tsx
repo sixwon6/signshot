@@ -1,8 +1,6 @@
 /**
- * The look row, in store order: the phone's own look, the starters, one's own recipes oldest
- * first, then `+`. Only one's own recipes offer a long press. The row bleeds to the screen's edges
- * and keeps the look in force scrolled into view. No state of its own: the recipes are
- * `useRecipes`', and the refs only track scroll positions.
+ * Horizontal row of looks in store order, then `+`. User recipes get a long-press menu. Keeps the
+ * selected look scrolled into view. Stateless; refs only track scroll geometry.
  */
 import { useEffect, useRef } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
@@ -12,22 +10,20 @@ import { Chip } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
 
 interface RecipePickerProps {
-  /** The phone's own look and the starters, then the photographer's own, in the order they are shown. */
   choices: readonly Recipe[];
-  /** The recipe in force. */
   selected: Recipe | null;
   disabled?: boolean;
-  /** What a second tap on the look in force leads to, spoken with its name. Absent in AUTO. */
+  /** Accessibility label for the selected chip, describing a second tap. Absent in AUTO. */
   againHint?: (name: string) => string;
   onChoose: (recipe: Recipe) => void;
-  /** Absent where a new recipe cannot be made: the `+` is absent with it. */
+  /** Omit to hide `+`. */
   onCustom?: () => void;
   onOptions: (recipe: Recipe) => void;
-  /** How far the row bleeds past its parent on each side: the parent's own padding. */
+  /** Bleed past the parent on each side; pass the parent's padding. */
   bleed?: { left: number; right: number };
 }
 
-/** A small chip is 32 tall; the touch around it makes up the fingertip. */
+/** Pads a 32 dp chip to a 44 dp touch target. */
 const HIT = { top: 6, bottom: 6 };
 
 export function RecipePicker({
@@ -45,7 +41,7 @@ export function RecipePicker({
   const offset = useRef(0);
   const slots = useRef<Record<string, { x: number; width: number }>>({});
 
-  /** Brings the look in force into view, with a chip's gap of air, and leaves it if it already is. */
+  /** Scrolls the selected chip into view with a small margin; no-op if already visible. */
   const reveal = (animated: boolean) => {
     const slot = selected === null ? undefined : slots.current[selected.id];
     if (!slot || viewport.current === 0) return;
@@ -57,7 +53,7 @@ export function RecipePicker({
     }
   };
   const selectedId = selected?.id;
-  // Only a change of look moves the row; `reveal` reads the rest from refs.
+  // Only a selection change scrolls; `reveal` reads everything else from refs.
   useEffect(() => reveal(true), [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -74,7 +70,7 @@ export function RecipePicker({
         viewport.current = event.nativeEvent.layout.width;
         reveal(false);
       }}
-      // The content is sized only now; a scroll asked for before this is clamped to the start.
+      // Scrolls requested before content sizing are clamped to 0, so retry here.
       onContentSizeChange={() => requestAnimationFrame(() => reveal(false))}
       testID="recipe-row"
     >

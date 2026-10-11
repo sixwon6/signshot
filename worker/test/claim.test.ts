@@ -343,8 +343,7 @@ describe("genesis token", () => {
     chain.lag = 40; // a slow confirmed bank
     const tx = await claimTx(w, holder, e);
     expect((await claim(w, holder, e, tx.wire)).status).toBe(200);
-    // 150 blocks on: the first transaction's blockhash is past its life at "processed", but the
-    // confirmed height (lagging by 40) has not passed the stored bound. Still held.
+    // Past the blockhash's life at "processed", but confirmed (40 behind) is not past the bound.
     advance(chain, 152);
     expect((await claim(w, holder, e, (await claimTx(w, holder, e)).wire)).body.error).toBe("genesis-pending");
     // Once the confirmed bank is past the bound, the unlanded claim is released.

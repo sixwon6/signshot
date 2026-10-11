@@ -1,12 +1,9 @@
-// Builds the dApp Store APK: release variant, arm64-v8a only (the Seeker is arm64; debug builds keep
-// the emulator's x86_64), with R8 and resource shrinking on via gradle.properties.
+// Builds the dApp Store APK: release variant, arm64-v8a only, R8 and resource shrinking on.
 //
-// Signed with the upload key, which android/app/build.gradle reads from the four SIGNSHOT_UPLOAD_*
-// properties in ~/.gradle/gradle.properties; without them the packaging task fails. The debug
-// keystore is committed and the store rejects debug-signed APKs, so the signer is verified below
-// against dapp-store/signing-certificate.json by fingerprint (the key's subject is CN=Era Shot; the
-// fingerprint, not the display name, is the Android identity). Store builds never go through EAS:
-// eas.json's dapp-store profile exists so EAS never signs with a key of its own.
+// Signed with the upload key from the SIGNSHOT_UPLOAD_* properties in ~/.gradle/gradle.properties.
+// The debug keystore is committed and the store rejects debug-signed APKs, so the signer is
+// verified against dapp-store/signing-certificate.json by SHA-256 fingerprint, not subject name.
+// Store builds never go through EAS; eas.json's dapp-store profile only stops EAS signing.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -19,14 +16,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const android = resolve(root, "android");
 const wrapper = resolve(android, process.platform === "win32" ? "gradlew.bat" : "gradlew");
 
-/**
- * `release:check` runs first: it resolves the cluster this bundle will use, refuses env files and
- * unflagged devnet builds, and writes .expo/release/config.json.
- * Arguments pass through, e.g. `npm run release:apk -- --allow-cluster devnet`.
- */
+// release:check runs first; arguments pass through (`npm run release:apk -- --allow-cluster devnet`).
 const passthrough = process.argv.slice(2);
-// This Node and tsx by path, not `npm`: the same whether run through npm or directly, and no shell
-// is needed (on Windows `npm` is `npm.cmd`, which Node will not spawn without one).
+// tsx by path, not via npm: no shell needed (Windows `npm.cmd` cannot be spawned without one).
 const TSX_CLI = resolve(root, "node_modules", "tsx", "dist", "cli.mjs");
 const gate = spawnSync(
   process.execPath,
@@ -38,18 +30,18 @@ if (gate.error || (gate.status ?? 1) !== 0) {
   process.exit(gate.status ?? 1);
 }
 
-// The gate ran first, but Expo's bundler reads these files again when Gradle reaches it.
+// Re-checked: Expo's bundler reads env files again when Gradle reaches it.
 const envFiles = refusedEnvFiles(readdirSync(root));
 if (envFiles.length) {
   console.error(`\nrelease:apk refused — ${envFiles.join(", ")} appeared after release:check. Move them and run again.`);
   process.exit(1);
 }
 
-// A failed build must not leave last time's APK sitting where a human would pick it up.
+// A failed build must not leave a stale APK behind.
 const APK = resolve(android, "app", "build", "outputs", "apk", "release", "app-release.apk");
 rmSync(APK, { force: true });
-// No environment value is an input of the bundle task, so Gradle would call an earlier build's
-// bundle up to date. Without its outputs the task must run; the nonce then proves it did.
+// Env values are not inputs of the bundle task, so Gradle may reuse a stale bundle. Deleting its
+// outputs forces a rerun; the nonce proves it happened.
 for (const kind of ["assets", "res"])
   rmSync(resolve(android, "app", "build", "generated", kind, "react", "release"), { recursive: true, force: true });
 const nonce = randomBytes(16).toString("hex");
@@ -67,7 +59,6 @@ const r = spawnSync(
 if (r.error) console.error(`could not run ${wrapper}: ${r.error.message}`);
 if ((r.status ?? 1) !== 0) process.exit(r.status ?? 1);
 
-// The bundle inside the APK, against this run's environment.
 let problem;
 try {
   const bundle = readZipEntry(readFileSync(APK), "assets/index.android.bundle");
@@ -83,9 +74,7 @@ if (problem) {
   process.exit(1);
 }
 
-// The store's own check (docs.solanamobile.com/dapp-store/build-and-sign-an-apk), run here so
-// no artifact leaves this script unverified: the signer must be the upload key, never the
-// committed debug key.
+// The store's signer check (docs.solanamobile.com/dapp-store/build-and-sign-an-apk): upload key only.
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
 const toolsDir = sdk ? resolve(sdk, "build-tools") : null;
 const newest = toolsDir && existsSync(toolsDir) ? readdirSync(toolsDir).sort().at(-1) : undefined;

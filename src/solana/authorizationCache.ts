@@ -8,32 +8,27 @@ import type {
 import { CHAIN } from "./cluster";
 
 /**
- * The MWA authorization cache, chain-scoped and kept in `expo-secure-store`.
- *
- * wallet-ui's AsyncStorage cache is not usable: it is not chain-scoped (the Seeker wallet silently
- * closes the session when handed another chain's token), `@wallet-ui/react-native-kit` 4.3.0 does
- * not export it at runtime, and it stores the token in plaintext. This mirrors its JSON shape and
- * `address` reviver, so the provider's store reads and writes it unchanged.
+ * Chain-scoped MWA authorization cache in `expo-secure-store`. Replaces wallet-ui's AsyncStorage
+ * cache, which is plaintext and not chain-scoped (Seed Vault silently closes the session when handed
+ * another chain's token). Mirrors its JSON shape and `address` reviver.
  */
 
 /**
- * The Keystore alias for this cache, separate from `es.uploadKey`: entries sharing a service share
- * an AES key, so this entry can never invalidate the upload seed's. No `requireAuthentication`:
- * the cache is read at cold start, outside any user gesture.
+ * Separate Keystore alias from `es.uploadKey` (entries in one service share an AES key). No
+ * `requireAuthentication`: read at cold start, outside any user gesture.
  */
 const AUTHORIZATION_KEYCHAIN_SERVICE = "es.wallet";
 
 /** SecureStore rejects `:` in keys (`/^[\w.-]+$/`), so the chain id's colon becomes a hyphen. */
 const AUTHORIZATION_SECURE_PREFIX = "es.wallet.authorization.v1";
 
-/** SecureStore's own key rule, mirrored so a bad spelling fails here rather than in native. */
+/** Mirrors SecureStore's rule so a bad key fails here, not in native. */
 const SECURE_STORE_KEY = /^[\w.-]+$/;
 
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainService: AUTHORIZATION_KEYCHAIN_SERVICE,
 };
 
-/** Where chain `chain`'s authorization is stored. */
 function authorizationSecureStoreKey(chain: string): string {
   const key = `${AUTHORIZATION_SECURE_PREFIX}.${chain.replace(/:/g, "-")}`;
   if (!SECURE_STORE_KEY.test(key)) {
@@ -42,7 +37,7 @@ function authorizationSecureStoreKey(chain: string): string {
   return key;
 }
 
-/** wallet-ui's reviver, verbatim in behaviour: `address` fields are kit `Address`es, not strings. */
+/** Same as wallet-ui's reviver: `address` fields become kit `Address`es. */
 function cacheReviver(key: string, value: unknown): unknown {
   if (key === "address" && typeof value === "string") {
     return address(value);
@@ -66,9 +61,8 @@ class ChainScopedAuthorizationCache implements WalletAuthorizationCache {
     try {
       stored = await SecureStore.getItemAsync(this.secureKey, SECURE_STORE_OPTIONS);
     } catch {
-      // A value the Keystore can no longer decrypt (a restored device, a rotated key) rejects
-      // rather than returning null. Losing the token costs exactly one authorization prompt, so
-      // drop the unreadable entry instead of carrying it forever.
+      // SecureStore throws on decrypt failures other than an invalidated key or a reinstall (those
+      // it deletes and reads as null). Dropping the entry costs one authorization prompt.
       await this.clear();
       return undefined;
     }
@@ -76,15 +70,13 @@ class ChainScopedAuthorizationCache implements WalletAuthorizationCache {
     try {
       return JSON.parse(stored, cacheReviver) as WalletAuthorization;
     } catch {
-      // A corrupt cache means "not authorized"; delete it so it is not re-read on every connect.
       await this.clear();
       return undefined;
     }
   }
 
   async set(value: WalletAuthorization | undefined): Promise<void> {
-    // The store routes "no authorization" to clear(), but the interface allows set(undefined),
-    // and `JSON.stringify(undefined)` is not a string SecureStore accepts.
+    // The interface allows set(undefined); `JSON.stringify(undefined)` isn't a string.
     if (value === undefined) {
       await this.clear();
       return;
@@ -93,8 +85,5 @@ class ChainScopedAuthorizationCache implements WalletAuthorizationCache {
   }
 }
 
-/**
- * The single cache instance passed to `MobileWalletProvider`. Module-level: the provider rebuilds
- * its authorization store whenever the `cache` prop changes identity.
- */
+/** Module-level: the provider rebuilds its store whenever `cache` changes identity. */
 export const authorizationCache: WalletAuthorizationCache = new ChainScopedAuthorizationCache(CHAIN);

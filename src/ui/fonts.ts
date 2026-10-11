@@ -1,12 +1,9 @@
 /**
- * The bundled OFL typefaces (licences in `assets/fonts/`). `useAppFonts` reports ready even when
- * loading fails, so the splash never hangs and Android's system font is used instead.
+ * Bundled OFL typefaces (licences in `assets/fonts/`). `useAppFonts` reports ready even on failure
+ * so the splash never hangs; Android falls back to the system font.
  */
 import { useFonts, type FontSource } from "expo-font";
 
-/**
- * Family names registered with the platform, used by the type scale and UI primitives.
- */
 export const fonts = {
   /** Display and titles. Space Grotesk Medium (500). */
   display: "SpaceGrotesk-Medium",
@@ -22,7 +19,6 @@ export const fonts = {
 
 type FontFamily = (typeof fonts)[keyof typeof fonts];
 
-/** The bundled assets, resolved by Metro. One entry per family in `fonts`. */
 const fontAssets: Record<FontFamily, FontSource> = {
   "SpaceGrotesk-Medium": require("../../assets/fonts/SpaceGrotesk-Medium.ttf"),
   "Manrope-Regular": require("../../assets/fonts/Manrope-Regular.ttf"),
@@ -31,7 +27,6 @@ const fontAssets: Record<FontFamily, FontSource> = {
   "IBMPlexMono-Medium": require("../../assets/fonts/IBMPlexMono-Medium.ttf"),
 };
 
-/** Load every bundled face once, at app start. */
 export function useAppFonts(): boolean {
   const [loaded, error] = useFonts(fontAssets);
   return loaded || error != null;

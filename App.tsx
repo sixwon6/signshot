@@ -10,9 +10,8 @@ import { authorizationCache } from "./src/solana/authorizationCache";
 import { colors } from "./src/ui/theme";
 import { useAppFonts } from "./src/ui/fonts";
 
-// The splash stays up until the typefaces are in memory, so no screen ever paints in the system
-// font and then reflows. `useAppFonts` reports ready on failure too — a face that will not load
-// leaves the app on Android's own font rather than on a blank screen.
+// Hold the splash until fonts load so nothing paints in the system font and reflows.
+// `useAppFonts` also reports ready on failure, falling back to the system font.
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function App() {

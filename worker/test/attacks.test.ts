@@ -1,8 +1,4 @@
-/**
- * Independent review: attacks on the co-signer, written as tests. Every test passes when the
- * attack is refused. The two that were named "VULN" (they passed while the attack succeeded) now
- * expect refusal: "FIXED (A1)" and "FIXED (A2)".
- */
+/** Attacks on the co-signer as tests; each passes when the attack is refused. */
 import { env as cfEnv } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -21,9 +17,8 @@ import {
 interface World { rpc: FakeRpc; env: Env; deps: Deps; cosigner: TestKey; fresh: Set<string> }
 
 /**
- * Like claim.test's world, but the fake RPC honours commitment for isBlockhashValid: a blockhash in
- * `fresh` is valid at "processed" and not yet known at "confirmed" (the confirmed bank lags the tip
- * by a few hundred ms to seconds; measured on devnet: 0.4-3 s).
+ * Like claim.test's world, but isBlockhashValid honours commitment: a blockhash in `fresh` is valid
+ * at "processed" and not yet at "confirmed" (confirmed lags the tip ~0.4-3 s on devnet).
  */
 async function world(): Promise<World> {
   const rpc = fakeRpc();
@@ -83,7 +78,7 @@ async function claim(w: World, key: TestKey, editionAddress: string, wire: Uint8
 beforeEach(() => forgetCheckedEndpoints());
 
 describe("pending-release race (index.ts pendingStanding asks 'confirmed', new claims are accepted at 'processed')", () => {
-  it("FIXED (A1): one SGT gets one co-signed claim even when the next arrives before the first blockhash is confirmed", async () => {
+  it("one SGT gets one co-signed claim even when the next arrives before the first blockhash is confirmed", async () => {
     const w = await world();
     const holder = await newKey();
     const e = await edition(w);
@@ -120,7 +115,7 @@ describe("pending-release race (index.ts pendingStanding asks 'confirmed', new c
 });
 
 describe("unauthenticated cost (index.ts claim step 4-5)", () => {
-  it("FIXED (A2): a fresh keypair with no SGT, a nonexistent edition and a random blockhash costs no D1 write and no Helius V2 call", async () => {
+  it("a fresh keypair with no SGT, a nonexistent edition and a random blockhash costs no D1 write and no Helius V2 call", async () => {
     const w = await world();
     const attacker = await newKey(); // free to make, as many as wanted
     const fakeEdition = await randomAddress(); // nothing on chain

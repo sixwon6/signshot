@@ -1,26 +1,16 @@
 /**
- * The device-attestation part of a published document (`signshot-attestation/1`).
+ * Device attestation in a published document (`signshot-attestation/1`, under `properties.signshot`).
  *
- * At publish time the phone's keystore generates a fresh hardware-backed key whose attestation
- * challenge is the SHA-256 of a canonical MANIFEST naming this exact publication (edition address,
- * creator, nonce, image fingerprint, capture fingerprints), signs the manifest with that key, and
- * the certificate chain plus signature go into the document under `properties.signshot`. The
- * manifest names the candy machine and the image hash it holds, so the evidence cannot be
- * transplanted: a certificate from another key, phone or publication carries a different
- * challenge and fails here.
+ * At publish time the keystore makes a fresh hardware-backed key whose attestation challenge is
+ * SHA-256 of a canonical manifest naming this publication (edition, creator, nonce, image and
+ * capture hashes), and signs the manifest with it. Evidence from another key, phone or
+ * publication carries a different challenge and fails.
  *
- * What the reader checks, from the document alone: the manifest names this publication; the leaf
- * certificate's challenge is the manifest's hash; the manifest signature verifies under the leaf
- * key; the key is hardware-backed with an attested device identity; and the chain is signed down
- * from one of Google's published attestation roots. That is structure, not yet a device claim.
+ * `readAttestationBundle` checks structure only (manifest, challenge, signature, hardware key,
+ * Google root). `deviceVerdict` adds release app/signer, locked verified boot, validity at the
+ * on-chain publication time and revocation; the last two need the network (`attestationCheck.ts`).
  *
- * A screen names the device only after `deviceVerdict` has also found: the attested app is
- * exactly the release package signed by exactly the release key; verified boot with a locked
- * bootloader; every certificate valid at the edition's on-chain publication time; and no
- * certificate on Google's revocation list. The last two need the network
- * (`attestationCheck.ts`), and a reader that cannot reach it says so rather than guessing.
- *
- * What none of it says: that the camera sensor produced the image, or anything about the scene.
+ * None of this says the camera sensor produced the image.
  */
 
 import { getBase64Encoder } from "@solana/kit";
@@ -40,18 +30,15 @@ export const ATTESTATION_SCHEMA = "signshot-attestation/1" as const;
 
 const HEX32 = /^[a-f0-9]{64}$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-/** Chains seen on the Seeker are five certificates; a bound keeps a hostile document small. */
+/** Seeker chains are five certificates; the bound keeps a hostile document small. */
 const MAX_CERTIFICATES = 8;
 /** The parser's 8192-byte certificate cap, as base64. */
 const MAX_CERTIFICATE_BASE64 = 10924;
 const MAX_SIGNATURE_BASE64 = 128;
-/**
- * The largest bundle the app will write. Turbo's free tier takes a 100 KiB data item and a real
- * bundle is about 6 KB, so this only stops a freak chain from making a photograph unpublishable.
- */
+/** Largest bundle the app writes. A real one is ~6 KB; Turbo's free tier caps a data item at 100 KiB. */
 export const MAX_BUNDLE_BYTES = 32 * 1024;
 
-/** The signed claim. Every value is a string or a safe integer, so the JCS subset applies. */
+/** The signed claim. Strings and safe integers only, so the JCS subset applies. */
 export interface AttestationManifest {
   schema: typeof ATTESTATION_SCHEMA;
   cluster: Cluster;
@@ -72,7 +59,7 @@ export interface AttestationManifest {
   height: number;
 }
 
-/** What the document carries. `certificates[0]` is the attestation key's own certificate. */
+/** `certificates[0]` is the attestation key's own certificate. */
 export interface AttestationBundle {
   schema: typeof ATTESTATION_SCHEMA;
   manifest: AttestationManifest;
@@ -112,11 +99,8 @@ export function securityLevelName(s: AttestationSummary): string {
 }
 
 /**
- * The Metaplex-standard `attributes` a document carries beside the evidence, so a wallet or
- * explorer shows the device without parsing certificates: the Device trait, and only when the full
- * device verdict passed as the document was sealed (`deviceVerdict`: the release app and signer,
- * verified boot on a locked bootloader, no certificate revoked, every one valid then). A wallet
- * shows its traits as fact, so otherwise there are none. Re-derived on read (`checkAttributes`).
+ * Metaplex `attributes`: the Device trait, only when `deviceVerdict` passed at sealing time.
+ * Wallets show traits as fact, so otherwise none. Re-derived on read (`checkAttributes`).
  */
 export function attestationAttributes(s: AttestationSummary, verified: boolean): { trait_type: string; value: string }[] {
   return verified ? [{ trait_type: "Device", value: deviceName(s) }] : [];
@@ -157,10 +141,9 @@ function readManifest(value: unknown, expected: ManifestCommitment): Attestation
 }
 
 /**
- * Read and check a bundle against verified chain state. Returns what a screen may say. Throws
- * on any structural problem, a manifest that names a different publication, a challenge that is
- * not the manifest's hash, a signature that does not verify, a software-only key, or a chain
- * that does not reach a Google attestation root. `trustedRootKeys` is for tests only.
+ * Check a bundle against verified chain state. Throws on bad structure, a manifest for another
+ * publication, a wrong challenge or signature, a software key, or a chain not reaching a Google
+ * root. `trustedRootKeys` is for tests only.
  */
 export function readAttestationBundle(
   value: unknown,
@@ -213,10 +196,8 @@ export function readAttestationBundle(
 }
 
 /**
- * The `attributes` a document may carry for this summary, or a refusal. A document
- * (`metadata()`) carries none, or the Device trait; the reader cannot re-run the network half of
- * the verdict, so it holds the trait to the half it can: a chain from another app, or from a
- * phone without verified boot and a locked bootloader, never names a device.
+ * Throws unless `attributes` is empty or the Device trait. The reader can only re-run the offline
+ * half of the verdict, so the trait is refused only when that half refuses.
  */
 export function checkAttributes(value: unknown, summary: AttestationSummary) {
   const allowed = deviceVerdict(summary, null, null).status === "refused"
@@ -227,31 +208,21 @@ export function checkAttributes(value: unknown, summary: AttestationSummary) {
     fail("attributes do not match the certificate");
 }
 
-// ---------------------------------------------------------------------------------------------
-// The verdict: what a screen may say about a chain the reader accepted
+// --- Device verdict ---
 
-/**
- * The release build, from `dapp-store/signing-certificate.json` (the key the dApp Store APK and
- * `.well-known/assetlinks.json` are signed with). The one pin the verifier and the app compare the
- * attested app against; a debug or test build attests another signer.
- */
+/** The release APK's package and signing key (also in `.well-known/assetlinks.json`). */
 export const RELEASE_APP: { readonly packageName: string; readonly signerDigest: string } = {
   packageName: signingCertificate.packageName,
   signerDigest: signingCertificate.sha256,
 };
 
 /**
- * Google's revocation list, by the dictionary key it files a serial under: the documented key is
- * lowercase hex without leading zeros, and the live list also keys entries by DECIMAL serial
- * (977 of 1,755 keys were digits only as of 2026-09-24), so both spellings are looked up.
- * `parseRevocationList` skips an entry filed under any other key.
+ * Google's revocation list by serial key. Documented as lowercase hex without leading zeros, but
+ * the live list also uses decimal serials, so both spellings are looked up.
  */
 export type RevocationList = ReadonlyMap<string, { status: string; reason?: string }>;
 
-/**
- * Every entry the list holds for this chain, as `[key, status]`. `serial` is the reader's own
- * lowercase hex (`serialHex` in `src/seeker/keyAttestation.ts`), so its decimal spelling is exact.
- */
+/** Every list entry for this chain, as `[key, status]`. `serial` is already lowercase hex. */
 export function revocationHits(s: AttestationSummary, list: RevocationList): [string, string][] {
   const hits: [string, string][] = [];
   for (const { serial } of s.certificates) {
@@ -264,7 +235,7 @@ export function revocationHits(s: AttestationSummary, list: RevocationList): [st
   return hits;
 }
 
-/** The short reasons a screen puts after "Not accepted:". Labels, not explanations. */
+/** Shown after "Not accepted:". */
 export const DEVICE_REFUSAL = {
   app: "another app",
   unlocked: "bootloader unlocked",
@@ -277,38 +248,21 @@ export const DEVICE_REFUSAL = {
   expiredDraft: "expired",
 } as const;
 
-/**
- * `verified`: every rule holds and the device may be named. `refused`: one definitely does not.
- * `unchecked`: nothing refused, but the publication time or the revocation list was out of reach,
- * so nothing is claimed ("Couldn't check.").
- */
+/** `unchecked`: nothing refused, but the publication time or revocation list was unavailable. */
 export type DeviceVerdict =
   | { status: "verified" }
   | { status: "refused"; reason: string }
   | { status: "unchecked" };
 
 /**
- * Whether a screen may name the attested device. `summary` is what `readAttestationBundle`
- * accepted (structure, challenge, signature, hardware key, a pinned Google root). On top of that:
- *
- *  - the attested app is exactly `RELEASE_APP`: one package, one signer. The keystore attests
- *    every package of the calling UID and every signer, so a shared-UID neighbour or a second
- *    signer would otherwise ride along;
- *  - verified boot and a locked bootloader;
- *  - every certificate valid at `at`, the edition's ON-CHAIN publication time (`publicationTime`),
- *    or now for a draft not yet sent. Never the capture time, which the phone asserts. Google:
- *    "It's critical ... that Remote Key Provisioning (RKP) certificates continue to have their
- *    validity period checked"; the Seeker's RKP device certificate lives 13 days. Checked for
- *    every chain, including the RSA root's, which is stricter than Google asks for pre-2021
- *    factory keys, none of which is a Seeker;
- *  - no certificate on Google's revocation list, for EITHER root. Leaked factory keyboxes chain
- *    to the RSA root, and Google's docs say to check "the status of each certificate in an
- *    attestation chain"; they do not exempt chains ending at Key Attestation CA1, and Google's
- *    own verifier (github.com/android/keyattestation) checks the list on every path.
- *
- * "verified" then names the device the hardware list attests (`deviceName`): the Seeker line only
- * for Solana Mobile Inc. / Seeker. `at` or `list` null means it could not be fetched. A definite
- * refusal from any rule that could run wins over "unchecked".
+ * Whether a screen may name the attested device, on top of `readAttestationBundle`:
+ *  - exactly one package and one signer, both `RELEASE_APP` (the keystore attests every package
+ *    of the UID and every signer, so a shared-UID app or extra signer would ride along);
+ *  - verified boot, locked bootloader;
+ *  - every certificate valid at `at`: the on-chain publication time, or now for an unsent draft,
+ *    never the phone-asserted capture time (RKP device certificates live ~13 days);
+ *  - no certificate revoked, for either root (leaked keyboxes chain to the RSA root).
+ * `at`/`list` null means unavailable; a definite refusal wins over "unchecked".
  * https://developer.android.com/privacy-and-security/security-key-attestation
  */
 export function deviceVerdict(s: AttestationSummary, at: Date | null, list: RevocationList | null): DeviceVerdict {
@@ -318,7 +272,6 @@ export function deviceVerdict(s: AttestationSummary, at: Date | null, list: Revo
     return refused(DEVICE_REFUSAL.app);
   if (!s.deviceLocked) return refused(DEVICE_REFUSAL.unlocked);
   if (s.verifiedBoot !== "verified") return refused(DEVICE_REFUSAL.boot);
-  // The reader never returns fewer than two; a summary without its chain is nothing to vouch for.
   if (!Array.isArray(s.certificates) || s.certificates.length < 2) return { status: "unchecked" };
   if (at) {
     const t = at.getTime();
@@ -334,10 +287,8 @@ export function deviceVerdict(s: AttestationSummary, at: Date | null, list: Revo
 }
 
 /**
- * How close to expiry a draft's chain may be when its document goes into a transaction. A draft's
- * attestation is made when the draft is built and the draft is reused, while the device and
- * intermediate certificates live days to weeks; a document sealed after they expire would fail
- * `deviceVerdict` forever. Inside this margin the send path attests again (`src/prints/creator.ts`).
+ * A reused draft's chain may expire before send, and a document sealed with an expired chain fails
+ * `deviceVerdict` forever; within this margin the send path re-attests (`src/prints/creator.ts`).
  */
 export const ATTESTATION_RENEW_MS = 24 * 60 * 60 * 1000;
 

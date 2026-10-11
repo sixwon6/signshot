@@ -1,25 +1,16 @@
 /**
- * Android key attestation, read and checked from the certificate chain the phone's keystore
- * produced. Runtime-free on purpose: the app reads every edition it shows through this, and the
- * off-device verifier in `scripts/verify-attestation.ts` reads the same bytes with the same code.
+ * Android key attestation: X.509 parsing and chain verification in pure JS, shared with the
+ * off-device verifier (`scripts/verify-attestation.ts`).
+ * https://source.android.com/docs/security/features/keystore/attestation
  *
- * What is done here, in pure JavaScript:
- *  - X.509 parsing: public key (P-256, P-384 or RSA), names, validity, basic constraints, the
- *    signature, and the key attestation extension (OID 1.3.6.1.4.1.11129.2.1.17) — security
- *    level, challenge, root of trust, attested device identity, calling app.
- *  - Chain verification: each certificate issued and signed by the next (ECDSA P-256/P-384 with
- *    SHA-256/384, or RSA PKCS#1 v1.5 with SHA-256/384), issuers marked CA, the last one
- *    self-signed and its public key one of Google's published attestation roots (pinned below by
- *    SPKI SHA-256; the PEM is in `scripts/attestation-roots.pem`).
+ * Parses the public key (P-256, P-384, RSA), validity, basic constraints and the attestation
+ * extension (OID 1.3.6.1.4.1.11129.2.1.17). Verifies each link (ECDSA or RSA PKCS#1 v1.5, SHA-256/384),
+ * issuers are CAs, and the root is a pinned Google root (PEM in `scripts/attestation-roots.pem`).
  *
- * What is NOT done here: certificate validity windows and revocation. Both need a reference time
- * (Google's device and intermediate certificates live for days) and the network; every reader
- * applies them through `deviceVerdict` (`publications/core/attestation.ts`), at the edition's
- * on-chain publication time, before it names a device.
+ * NOT checked here: validity windows and revocation. They need a reference time and the network;
+ * `deviceVerdict` (`publications/core/attestation.ts`) applies them at on-chain publication time.
  *
- * Every read is a bounded DER walk that refuses indefinite lengths, truncated values and
- * anything not exactly where X.509 puts it; anything malformed throws an `Error` whose message
- * begins `attestation:`. https://source.android.com/docs/security/features/keystore/attestation
+ * Strict, bounded DER: indefinite lengths, truncation and non-minimal encodings throw `attestation:`.
  */
 
 import { p256, p384 } from "@noble/curves/nist.js";
@@ -34,10 +25,7 @@ const RSA_ENCRYPTION_OID = "1.2.840.113549.1.1.1";
 const P256_OID = "1.2.840.10045.3.1.7";
 const P384_OID = "1.3.132.0.34";
 
-/**
- * Google's Android key attestation roots, as SHA-256 of their SubjectPublicKeyInfo DER. The
- * four RSA roots published over the years share one key; the EC root began signing in 2026.
- */
+/** SHA-256 of each root's SPKI DER. Google's four published RSA roots share one key. */
 export const GOOGLE_ATTESTATION_ROOT_KEYS: readonly string[] = [
   "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae", // RSA-4096, serial f92009e853b6b045
   "3ee44512a1af2beb39c889490c60ea3f82e43f5d5a5532f5ab9419f676cd07ec", // P-384, Key Attestation CA1
@@ -56,7 +44,7 @@ function fail(what: string): never {
   throw new Error(`attestation: ${what}`);
 }
 
-/** Parse one element at `offset`; returns it and the offset after it. */
+/** Returns the element and the offset after it. */
 function element(bytes: Uint8Array, offset: number): [Der, number] {
   if (offset >= bytes.length) fail("truncated element");
   const first = bytes[offset];
@@ -94,7 +82,6 @@ function element(bytes: Uint8Array, offset: number): [Der, number] {
   ];
 }
 
-/** Every element inside a constructed value, in order. */
 function children(der: Der): Der[] {
   if (!der.constructed) fail("expected a constructed value");
   const out: Der[] = [];
@@ -107,7 +94,7 @@ function children(der: Der): Der[] {
   return out;
 }
 
-/** The one element a byte string holds, with nothing after it. */
+/** Exactly one element, no trailing bytes. */
 function whole(bytes: Uint8Array, what: string): Der {
   const [d, end] = element(bytes, 0);
   if (end !== bytes.length) fail(`trailing bytes after ${what}`);
@@ -178,10 +165,7 @@ function bitString(der: Der): Uint8Array {
   return b.subarray(1);
 }
 
-/**
- * UTF-8 text from an OCTET STRING. Refuses control, bidi, zero-width and other characters this
- * project keeps out of every published string, because this text reaches screens and wallets.
- */
+/** Rejects control, bidi and zero-width characters: this text reaches screens and wallets. */
 function text(der: Der): string {
   const b = octets(der);
   if (b.length > 128) fail("device identifier too long");
@@ -237,7 +221,7 @@ export interface KeyDescription {
   hardwareDevice: AttestedDevice | null;
   osVersion: number | null;
   osPatchLevel: number | null;
-  /** The calling app, as the keystore daemon asserted it (software-enforced by design). */
+  /** Asserted by the keystore daemon, so software-enforced by design. */
   application: { packages: { name: string; version: number }[]; signerDigests: string[] } | null;
 }
 
@@ -247,16 +231,15 @@ export type PublicKey =
 
 export interface ParsedCertificate {
   publicKey: PublicKey;
-  /** SHA-256 of the SubjectPublicKeyInfo DER: what root pinning compares. */
+  /** SHA-256 of the SPKI DER, for root pinning. */
   spkiHash: string;
-  /** Serial number as lowercase hex without leading zeros. */
+  /** Lowercase hex, no leading zeros. */
   serialHex: string;
   notBefore: Date;
   notAfter: Date;
-  /** Whether basic constraints mark this certificate as a CA. */
   isCa: boolean;
   keyDescription: KeyDescription | null;
-  /** For chain verification: what was signed, how, and the signature. */
+  /** For chain verification. */
   tbs: Uint8Array;
   issuer: Uint8Array;
   subject: Uint8Array;
@@ -327,8 +310,7 @@ function readKeyDescription(bytes: Uint8Array): KeyDescription {
     if (state >= BOOT_STATES.length) fail("unknown boot state");
     rootOfTrust = { deviceLocked: boolean(r[1]), verifiedBootState: BOOT_STATES[state] };
   }
-  // The keystore daemon asserts the calling app, so the schema puts it in the software list. A
-  // hardware copy is not expected; one that disagrees is refused rather than chosen between.
+  // The calling app belongs in the software list. A disagreeing hardware copy is refused.
   const application = readApplication(software);
   const hardwareApplication = readApplication(hardware);
   if (hardwareApplication && JSON.stringify(hardwareApplication) !== JSON.stringify(application))
@@ -372,7 +354,6 @@ function readPublicKey(spki: Der): PublicKey {
   fail("unsupported public key algorithm");
 }
 
-/** Parse one X.509 certificate's DER. Throws on anything malformed. */
 export function parseCertificate(der: Uint8Array): ParsedCertificate {
   if (der.length > 8192) fail("certificate too large");
   const cert = whole(der, "the certificate");
@@ -431,7 +412,6 @@ export function parseCertificate(der: Uint8Array): ParsedCertificate {
   };
 }
 
-// ---------------------------------------------------------------------------------------------
 // Signatures
 
 /** DigestInfo prefixes for RSA PKCS#1 v1.5 (RFC 8017 §9.2 note 1). */
@@ -460,7 +440,7 @@ function modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
   return result;
 }
 
-/** RSASSA-PKCS1-v1_5 verification, constant-structure: the recovered encoding must be exact. */
+/** RSASSA-PKCS1-v1_5: the recovered encoding must match exactly. */
 function rsaVerify(key: { modulus: bigint; exponent: bigint }, hash: "sha256" | "sha384", message: Uint8Array, signature: Uint8Array): boolean {
   const k = Math.ceil(key.modulus.toString(16).length / 2);
   if (signature.length !== k) return false;
@@ -476,21 +456,20 @@ function rsaVerify(key: { modulus: bigint; exponent: bigint }, hash: "sha256" | 
 function ecVerify(key: { curve: "p256" | "p384"; point: Uint8Array }, hash: "sha256" | "sha384", message: Uint8Array, signature: Uint8Array): boolean {
   const curve = key.curve === "p256" ? p256 : p384;
   try {
-    // `lowS: false`: Android's keystore and OpenSSL do not normalise S, so half of all genuine
-    // signatures are high-S. Malleability is irrelevant here; the signature is not an id.
+    // Android keystore doesn't normalise S, so genuine signatures can be high-S. Malleability
+    // doesn't matter: the signature is not an id.
     return curve.verify(signature, digest(hash, message), key.point, { prehash: false, format: "der", lowS: false });
   } catch {
     return false;
   }
 }
 
-/** Does `signature` (DER ECDSA over SHA-256) sign `message` under the certificate's P-256 key? */
+/** DER ECDSA P-256 / SHA-256 only. */
 export function verifySignature(cert: ParsedCertificate, message: Uint8Array, signature: Uint8Array): boolean {
   return cert.publicKey.kind === "ec" && cert.publicKey.curve === "p256"
     && ecVerify(cert.publicKey, "sha256", message, signature);
 }
 
-/** Was `cert` signed by `issuer`'s key with the algorithm `cert` declares? */
 export function verifyIssued(cert: ParsedCertificate, issuer: ParsedCertificate): boolean {
   const alg = SIGNATURE_ALGORITHMS[cert.signatureAlgorithm];
   if (!alg || alg.kind !== issuer.publicKey.kind) return false;
@@ -501,11 +480,9 @@ export function verifyIssued(cert: ParsedCertificate, issuer: ParsedCertificate)
 }
 
 /**
- * Check a chain, leaf first: every certificate issued and signed by the next, every issuer a
- * CA, the last self-signed and its key one of `trustedRootKeys`. Throws naming the first link
- * that fails. Validity windows and revocation are deliberately not checked here (see the header).
- * `trustedRootKeys` is for tests only; `scripts/check-release-config.ts` compares the default with
- * Google's live root list.
+ * Leaf first. Throws naming the first failing link. No validity or revocation checks (see header).
+ * Override `trustedRootKeys` in tests only; `scripts/check-release-config.ts` checks the default
+ * against Google's live list.
  */
 export function verifyChain(chain: ParsedCertificate[], trustedRootKeys: readonly string[] = GOOGLE_ATTESTATION_ROOT_KEYS): void {
   if (chain.length < 2) fail("a chain needs at least two certificates");
@@ -520,7 +497,7 @@ export function verifyChain(chain: ParsedCertificate[], trustedRootKeys: readonl
     fail("the chain does not end at a Google attestation root");
 }
 
-/** The one binding this protocol relies on: the keystore challenge IS the manifest's SHA-256. */
+/** The protocol's binding: the keystore challenge is the manifest's SHA-256. */
 export function challengeMatches(cert: ParsedCertificate, message: Uint8Array): boolean {
   const k = cert.keyDescription;
   return !!k && bytesToHex(k.challenge) === bytesToHex(sha256(message));

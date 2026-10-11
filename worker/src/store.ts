@@ -1,42 +1,26 @@
 /**
- * The claims table (D1) and the order of "record" and "sign".
+ * Claims table (D1).
  *
- * RECORD FIRST, THEN SIGN. A row `(cluster, edition, sgt_mint)` is written as `pending` before
- * the co-signature exists. A crash after the write leaves a pending row and no signature: the
- * SGT is held back until that row is released, never claimed twice. Writing after signing would
- * let a crash between the two hand out a signature with no record.
+ * RECORD FIRST, THEN SIGN. The `(cluster, edition, sgt_mint)` row is written `pending` before the
+ * co-signature exists, so a crash can hold an SGT back but never let it claim twice.
  *
- * EVERY ROW CARRIES AN UPPER BOUND ON ITS TRANSACTION'S LAST VALID BLOCK HEIGHT. When the claim
- * is signed, its blockhash is valid at "processed" on a node whose context slot is S, so the
- * blockhash's own block height is at most that node's block height H (read with
- * `minContextSlot: S`, so no lagging node answers), and the transaction can land no later than
- * block height H + 150. The row stores H + 151.
+ * LAST VALID HEIGHT BOUND. At signing, the blockhash is valid at "processed" on a node at context
+ * slot S; that node's block height H (read with `minContextSlot: S`) bounds the blockhash's, so the
+ * transaction lands by H + 150. The row stores H + 151.
  *
  * A PENDING ROW IS RELEASED ONLY WHEN ITS TRANSACTION CAN NO LONGER LAND:
- *   1. `getEpochInfo` at "confirmed" must report a block height PAST the stored bound (a
- *      confirmed height is real; a lagging node can only report a lower one, which holds the row
- *      longer, never shorter). Otherwise the transaction may still land: refuse.
- *   2. only then the transaction's own status is read (`getSignatureStatuses`, searching history)
- *      and the copy's address at "confirmed", both answered no earlier than the slot that answered
- *      step 1, so no node behind that point can answer "not there" for a claim that landed.
- *      Either one says it landed: the transaction found without an error, or a Core-owned or
- *      1-byte account at the copy's address (Core's burn leaves a 1-byte tombstone, which Core's
- *      permissionless fee sweep can leave System-owned). The status covers a copy since burned,
- *      swept and emptied by its keypair's holder; the account covers a node that has dropped the
- *      transaction from its history. The row is then marked `confirmed`: the SGT has had its copy.
- *   3. otherwise the row is taken over by a compare-and-swap on `claim_id`, and only the request
- *      that wins the swap signs.
- * Nothing can land between steps 1 and 2. It holds only because a claim never carries a durable
- * nonce (the transaction check allows only the claim layout's System Transfer, CreateAccount and
- * Allocate and names `AdvanceNonceAccount` as a refusal). The cluster cannot be lied about: the
- * blockhash must be valid on the stated cluster when the claim is signed.
+ *   1. "confirmed" `getEpochInfo` block height must be PAST the bound (a lagging node only reports
+ *      lower, holding the row longer). Otherwise refuse.
+ *   2. Then read the signature status (searching history) and the copy's account at "confirmed",
+ *      both no earlier than step 1's slot. Landed if the transaction is found without error, or the
+ *      copy's address holds a Core-owned or 1-byte account (Core's burn tombstone, which a fee
+ *      sweep can leave System-owned). Landed: mark `confirmed`.
+ *   3. Otherwise take the row over by compare-and-swap on `claim_id`; only the winner signs.
+ * Steps 1-2 are race-free only because claims never carry a durable nonce (refused by the
+ * transaction check). The blockhash must be valid on the stated cluster at signing.
  *
- * The app broadcasts the co-signed transaction itself and reports nothing back, so this chain
- * check is the only source of truth about whether a claim landed.
- *
- * Trade-off: a claim whose transaction failed or was never sent holds its SGT for up to about
- * 150 blocks plus the confirmed bank's lag (roughly 60–90 s), then the next attempt takes the row
- * over. Nothing burns an SGT's claim without a copy on chain.
+ * The app broadcasts and reports nothing back; this chain check is the only truth about landing.
+ * A failed or unsent claim holds its SGT ~150 blocks plus confirmed lag (~60-90 s).
  */
 
 import type { Cluster } from "./rpc";
@@ -52,7 +36,7 @@ export interface ClaimRow {
   last_valid_height: number;
   /** Hex sha256 of the message bytes as received. */
   message: string;
-  /** The transaction's id: the wallet's signature, base58. Null on rows older than the column. */
+  /** Wallet signature (transaction id), base58. Null on rows that predate the column. */
   signature: string | null;
   claim_id: string;
   status: "pending" | "confirmed";
@@ -99,7 +83,7 @@ export async function confirmClaim(db: D1Database, row: ClaimRow): Promise<void>
   ).bind(row.cluster, row.edition, row.sgt_mint, row.claim_id).run();
 }
 
-/** Spent nonces past their expiry can go: an expired nonce is refused before it is looked up. */
+/** Safe: expired nonces are refused before lookup. */
 export async function pruneNonces(db: D1Database, nowSeconds: number): Promise<void> {
   await db.prepare("DELETE FROM used_nonces WHERE expires_at < ?1").bind(nowSeconds).run();
 }

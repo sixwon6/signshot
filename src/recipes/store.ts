@@ -9,21 +9,19 @@ import {
 import { DEFAULT_RECIPE_ID, DEFAULT_STRENGTH, STARTERS } from "./starters";
 
 /**
- * The photographer's saved recipes, starter overrides and last-used recipe, on this phone under one
- * key (`recipes.v1`). Starters themselves are never stored. Reads fail soft: an entry that no longer
- * validates is dropped so a corrupt recipe cannot take the camera down. Writes are validated first.
+ * Saved recipes, starter overrides and last-used, under one key. Starters are never stored. Entries
+ * that no longer validate are dropped on read so a corrupt recipe can't take the camera down.
  */
 
 const RECIPE_STORE_KEY = "recipes.v1";
 
-/** Where the camera was left. */
 interface LastUsed {
   recipeId: string;
-  /** 0..1, the global mix the renderer already applies. */
+  /** Global mix, 0..1. */
   strength: number;
 }
 
-/** A starter as the photographer has set it. Reset removes it and the shipped values return. */
+/** User edits to a starter; Reset deletes it. */
 interface Override {
   manifest: Recipe["manifest"];
   lut: string | null;
@@ -64,7 +62,7 @@ async function read(): Promise<StoredState> {
       validateRecipe(recipe);
       if (!isBuiltIn(recipe.id) && !recipes.some((r) => r.id === recipe.id)) recipes.push(recipe);
     } catch {
-      // Dropped: an entry the parameter table no longer recognises.
+      // No longer valid against the parameter table.
     }
   }
   const overrides: Record<string, Override> = {};
@@ -77,7 +75,7 @@ async function read(): Promise<StoredState> {
       validateRecipe(recipe);
       overrides[id] = { manifest: recipe.manifest, lut: recipe.lut };
     } catch {
-      // Dropped: an override the parameter table no longer recognises.
+      // No longer valid against the parameter table.
     }
   }
   const last = state.lastUsed;
@@ -88,7 +86,6 @@ async function read(): Promise<StoredState> {
   return { v: 1, recipes, overrides, lastUsed };
 }
 
-/** The starters as they are in force: shipped values, or the photographer's own settings. */
 function startersInForce(state: StoredState): Recipe[] {
   return STARTERS.map((starter) => {
     const o = state.overrides?.[starter.id];
@@ -100,13 +97,9 @@ async function write(state: StoredState): Promise<void> {
   await AsyncStorage.setItem(RECIPE_STORE_KEY, JSON.stringify(state));
 }
 
-/**
- * Every read-modify-write goes through one queue, so two saves in flight cannot each read the
- * same state and the second silently drop the first's recipe.
- */
+/** Serialises read-modify-write so concurrent saves can't drop each other. */
 const serial = createSerialQueue();
 
-/** Writes the photographer's settings over a starter. It stays a starter; Reset brings it back. */
 export function setOverride(id: string, recipe: Recipe): Promise<Recipe> {
   return serial(async () => {
     const starter = STARTERS.find((r) => r.id === id);
@@ -122,7 +115,6 @@ export function setOverride(id: string, recipe: Recipe): Promise<Recipe> {
   });
 }
 
-/** Removes the photographer's settings from a starter and returns it as shipped. */
 export function clearOverride(id: string): Promise<Recipe> {
   return serial(async () => {
     const starter = STARTERS.find((r) => r.id === id);
@@ -140,7 +132,6 @@ export async function allRecipes(): Promise<Recipe[]> {
   return [...startersInForce(state), ...state.recipes];
 }
 
-/** One recipe by id, starter or saved, or null. */
 async function findRecipe(id: string): Promise<Recipe | null> {
   return (await allRecipes()).find((recipe) => recipe.id === id) ?? null;
 }
@@ -153,10 +144,7 @@ function freshId(taken: readonly { id: string }[]): string {
   throw new Error("Could not name a new recipe.");
 }
 
-/**
- * Saves `recipe` as a NEW recipe of the photographer's own, under `name`, and returns it with
- * the id it was given. Editing a starter and saving it therefore never touches the starter.
- */
+/** Always saves under a fresh id, so saving an edited starter never touches the starter. */
 export function saveRecipe(recipe: Recipe, name?: string): Promise<Recipe> {
   return serial(async () => {
     const state = await read();
@@ -174,7 +162,6 @@ export function saveRecipe(recipe: Recipe, name?: string): Promise<Recipe> {
   });
 }
 
-/** Writes new stage values into one of the photographer's own recipes. Starters are refused. */
 export function updateRecipe(id: string, recipe: Recipe): Promise<Recipe> {
   return serial(async () => {
     if (isBuiltIn(id)) throw new Error("A starter cannot be changed. Save a copy.");
@@ -208,7 +195,6 @@ export function renameRecipe(id: string, name: string): Promise<Recipe> {
   });
 }
 
-/** A name for a copy that still fits the bound. */
 function copyName(name: string): string {
   const suffix = " copy";
   const points = [...name];
@@ -216,14 +202,13 @@ function copyName(name: string): string {
   return `${points.length > room ? points.slice(0, room).join("").trimEnd() : name}${suffix}`;
 }
 
-/** Copies any recipe — starter or saved — into a new recipe of the photographer's own. */
 export async function duplicateRecipe(id: string, name?: string): Promise<Recipe> {
   const source = await findRecipe(id);
   if (!source) throw new Error("That recipe is gone.");
   return saveRecipe(source, name ?? copyName(source.name));
 }
 
-/** Removes a saved recipe. Returns whether it was there. Starters are refused. */
+/** Returns whether it existed. */
 export function deleteRecipe(id: string): Promise<boolean> {
   return serial(async () => {
     if (isBuiltIn(id)) throw new Error("A starter cannot be deleted.");
@@ -236,10 +221,7 @@ export function deleteRecipe(id: string): Promise<boolean> {
   });
 }
 
-/**
- * Where the camera was left: the recipe it was on and the strength dial. Falls back to the phone's
- * own look at the default strength, including when the remembered recipe has been deleted.
- */
+/** Falls back to the default recipe and strength, including when the remembered one was deleted. */
 export async function lastUsed(): Promise<LastUsed> {
   const state = await read();
   const fallback: LastUsed = { recipeId: DEFAULT_RECIPE_ID, strength: DEFAULT_STRENGTH };

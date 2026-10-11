@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-/**
- * "Stamp shares with my .skr name" — a per-device preference. Off by default: a stamp names a
- * person on a picture that leaves the phone, so it is opted into, never assumed.
- */
+/** Per-device, off by default: a stamp names a person on a picture that leaves the phone. */
 const KEY = "seeker.shareStamp.v1";
 
 export function useShareStampPref(): {

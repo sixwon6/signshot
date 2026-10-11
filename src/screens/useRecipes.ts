@@ -28,49 +28,45 @@ import { safeErrorText } from "../ui/errorText";
 import { camera as cameraCopy } from "../ui/copy";
 import { debounce, throttle, useDeferred } from "../timing";
 
-/**
- * The camera's recipe state. A move is saved under the id it already has (`setOverride` for a
- * starter, `updateRecipe` for one's own), so a photo taken mid-edit records the right `profileId`.
- */
+// Recipe state for the camera. Edits save under the existing id (`setOverride` for starters,
+// `updateRecipe` for user recipes) so a photo taken mid-edit records the right `profileId`.
 
-/** A moved slider is on the viewfinder within this; a drag cannot ask for more than one per. */
+/** At most one live apply per this interval while dragging. */
 const APPLY_THROTTLE_MS = 60;
-/** A moved slider is written to the store this long after the last move. */
+/** Persist this long after the last slider move. */
 const PERSIST_DEBOUNCE_MS = 300;
 const LAST_USED_DEBOUNCE_MS = 400;
-/** Only an apply still running after this says so: a tap must not flash the whole camera. */
+/** Show the loading state only past this, so quick taps don't flash it. */
 const SLOW_APPLY_MS = 500;
-/** A fresh camera view is not up yet on a cold start; the apply waits for it this many times. */
+/** Retries while a fresh camera view isn't ready (cold start). */
 const APPLY_ATTEMPTS = 8;
 const APPLY_RETRY_MS = 250;
 
 interface RecipesInForce {
-  /** The phone's own look, the starters as the photographer has set them, then their own: the row, in order. */
+  /** Built-ins (with overrides), then user recipes, in display order. */
   choices: readonly Recipe[];
-  /** The recipe on the viewfinder, moves included. Null until the store has been read. */
+  /** Live recipe including unsaved edits; null until loaded. */
   recipe: Recipe | null;
-  /** The saved recipe it is being kept in. */
+  /** The saved recipe being edited. */
   origin: Recipe | null;
-  /** 0..1, the global mix. */
+  /** Global mix, 0..1. */
   strength: number;
-  /** An apply is in flight. */
   applying: boolean;
-  /** ...and has been long enough to say so. */
+  /** `applying` for longer than SLOW_APPLY_MS. */
   slowApply: boolean;
-  /** The phone's own look, untouched: the strength dial has nothing to mix. */
+  /** Unedited neutral look: strength has nothing to mix. */
   isClean: boolean;
-  /** Reset has somewhere to go. */
   canReset: boolean;
-  /** A recipe that would not reach the viewfinder: the camera's own notice, or "". */
+  /** Live apply failure, or "". */
   applyError: string;
-  /** The last write that was refused, for the sheet that asked for it, or "". */
+  /** Last failed store write, or "". */
   error: string;
   clearError(): void;
-  /** Another chip. Returns the stage to open when it was the chip already in force. */
+  /** Returns the stage to open when `next` is already selected; otherwise switches and returns null. */
   choose(next: Recipe): StageType | null;
   changeStrength(value: number): void;
   changeParam(stage: StageType, param: string, value: number): void;
-  /** Every action a sheet can ask for. Each resolves false with {@link error} set. */
+  /** Each resolves false with {@link error} set on failure. */
   create(name: string): Promise<boolean>;
   rename(target: Recipe, name: string): Promise<boolean>;
   duplicate(target: Recipe): Promise<boolean>;
@@ -83,14 +79,13 @@ export function useRecipes({
   generation,
   busy,
 }: {
-  /** The camera is on screen and allowed to run: nothing is applied until it is. */
+  /** Nothing is applied until true. */
   live: boolean;
-  /** Bumped to rebuild the camera view; the recipe goes back on the fresh one. */
+  /** Bumped on camera view rebuild; triggers a re-apply. */
   generation: number;
-  /** The shutter or a sheet is working: moves are refused rather than queued. */
+  /** While true, changes are refused rather than queued. */
   busy: boolean;
 }): RecipesInForce {
-  /** The starters as set by the photographer (shipped until edited), then their own. */
   const [inForce, setInForce] = useState<readonly Recipe[]>(STARTERS);
   const [mine, setMine] = useState<readonly Recipe[]>([]);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
@@ -102,12 +97,11 @@ export function useRecipes({
   const [applyError, setApplyError] = useState("");
   const [error, setError] = useState("");
 
-  /** The strength in force, read by the apply effect without making it depend on the dial. */
+  /** Lets the apply effect read strength without depending on it. */
   const strengthRef = useRef(strength);
   strengthRef.current = strength;
-  /** True while the change being applied came from a thumb rather than from a tap. */
+  /** True when the pending change came from a drag; only drags are throttled. */
   const dragging = useRef(false);
-  /** Puts a recipe on the viewfinder. `fromThumb` is the only thing the drag throttle reads. */
   const show = (next: Recipe, fromThumb = false) => {
     dragging.current = fromThumb;
     setRecipe(next);
@@ -119,7 +113,7 @@ export function useRecipes({
   const persistSoon = useDeferred(() => debounce(PERSIST_DEBOUNCE_MS));
   const rememberSoon = useDeferred(() => debounce(LAST_USED_DEBOUNCE_MS));
 
-  // Restore the last-used recipe and strength; a deleted recipe falls back to the phone's own look (`lastUsed`).
+  // Restore last-used recipe and strength; a deleted recipe falls back to the first (`lastUsed`).
   useEffect(() => {
     let alive = true;
     Promise.all([allRecipes(), lastUsed()])
@@ -142,8 +136,8 @@ export function useRecipes({
     };
   }, []);
 
-  // A rebuilt camera view has no recipe yet, hence the retry on "no active camera view". A tap
-  // applies at once; a drag is throttled (each apply crosses the bridge) and its last sample lands.
+  // A rebuilt view may not be ready yet, hence the retry. Taps apply immediately; drags are
+  // throttled (each apply crosses the bridge) and the last sample always lands.
   useEffect(() => {
     if (!live || recipe === null) return;
     let cancelled = false;
@@ -196,7 +190,7 @@ export function useRecipes({
     return () => clearTimeout(timer);
   }, [applying]);
 
-  // Where the camera was left, written back once the dial has rested — not on every drag sample.
+  // Debounced so drags don't write on every sample.
   useEffect(() => {
     if (recipe === null) return;
     rememberSoon.run(() => {
@@ -204,19 +198,17 @@ export function useRecipes({
     });
   }, [recipe, strength, rememberSoon]);
 
-  /** Every recipe in force, re-read after a write, so the chips show what is saved. */
   const refresh = useCallback(async () => {
     const all = await allRecipes();
     setInForce(all.filter((one) => one.builtIn));
     setMine(all.filter((one) => !one.builtIn));
   }, []);
 
-  // Develop saves recipes too: the chips are re-read when the camera comes back on screen.
+  // Develop can save recipes too, so re-read when the camera returns.
   useEffect(() => {
     if (live) void refresh().catch(() => {});
   }, [live, refresh]);
 
-  /** Runs a write, reports its message on failure, and says whether it went through. */
   const attempt = useCallback(async (work: () => Promise<void>): Promise<boolean> => {
     setError("");
     try {
@@ -237,7 +229,6 @@ export function useRecipes({
 
   const choose = (next: Recipe): StageType | null => {
     if (busy) return null;
-    // The chip already in force names its first moved stage; any other chip switches to it.
     if (origin?.id === next.id) {
       const first = (recipe ?? next).manifest.stages.find((s) => !isNeutralStage(s));
       return first ? first.type : STAGES[0].type;
@@ -271,7 +262,7 @@ export function useRecipes({
     });
   };
 
-  /** A starter goes back to how it shipped; one's own recipe to how it was when chosen. */
+  /** Starters revert to shipped; user recipes to their state when chosen. */
   const reset = () => {
     persistSoon.cancel();
     return attempt(async () => {
@@ -286,7 +277,7 @@ export function useRecipes({
     });
   };
 
-  /** `+`: the recipe exists under its name, neutral, before any slider moves. */
+  /** Saves a named neutral recipe before any slider moves. */
   const create = (name: string) =>
     attempt(async () => {
       const saved = await saveRecipe(neutralRecipe(), normalizeRecipeName(name));

@@ -1,10 +1,8 @@
 /**
- * The edition on its cluster, accepted by the app's own rule (`readEdition` in
- * publications/candy/edition.ts, reproduced here, not imported): the candy machine, its guard and
- * its collection must be exactly what the app's publishing leaves, and the guard must re-encode
- * byte for byte from the app's Seeker-only set with THIS key as its Third Party Signer. The
- * Worker never co-signs for an edition the app would not show as a normal edition, so its
- * signature cannot be borrowed for a guard that does not ask for it.
+ * Edition acceptance, mirroring `readEdition` in publications/candy/edition.ts (copied, not
+ * imported): candy machine, guard and collection must be exactly what publishing leaves, and the
+ * guard must re-encode byte for byte as the Seeker-only set with THIS key as Third Party Signer,
+ * so the signature cannot be borrowed for any other guard.
  *
  * Layouts (mpl-core-candy-machine, mpl-core):
  *   candy machine  discriminator, authority, mint_authority, collection, items_redeemed u64,
@@ -33,9 +31,8 @@ export const CANDY_GUARD_HEADER = 8 + 32 + 1 + 32;
 export const CANDY_MACHINE_HIDDEN_BYTES = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + (4 + 32) + 4 + (4 + 200) + 4 + 1 + 1 +
   (4 + 32) + (4 + 200) + 32;
 /**
- * The app's `NO_AUTHORITY`: the System Program's derived address for ["signshot", "no authority"],
- * which nobody can sign for. Both the candy machine's authority and the collection's update
- * authority are handed to it at publish.
+ * The app's `NO_AUTHORITY`: System Program PDA of ["signshot", "no authority"], unsignable. Holds
+ * the candy machine authority and the collection update authority after publish.
  */
 export const NO_AUTHORITY = "864BTg5dsR5DtBxPHm8uiU9GnRWL5V94AneqsnLRxgg8";
 const NAME_SUFFIX = " #$ID+1$";
@@ -183,16 +180,15 @@ export async function acceptEdition(edition: string, candyGuard: string, collect
     const amount = gr.u64(), mint = gr.key(), destinationAta = gr.key();
     price = { kind: "token", mint, amount, destinationAta };
   }
-  // The set the guard would hold for this price under this key; anything else (another key, a
-  // foreign destination, a group) differs somewhere.
+  // Any other key, destination or group fails the byte comparison.
   if (!sameBytes(g.subarray(CANDY_GUARD_HEADER), await seekerOnlyGuardData(publisher, price, cosigner))) {
     const tpsAt = CANDY_GUARD_HEADER + 8 + (price.kind === "sol" ? 40 : price.kind === "token" ? 72 : 0);
     const tps = g.length >= tpsAt + 32 ? keyDecoder.decode(g.subarray(tpsAt, tpsAt + 32)) : null;
     throw new Refused(tps !== cosigner ? "not-cosigned-edition" : "not-signshot-edition");
   }
 
-  // The collection: locked, named and pointed as the candy machine, no copy minted around it,
-  // exactly the three plugins publishing leaves.
+  // Collection: locked, same name and uri as the candy machine, mint count in step, exactly the
+  // three plugins publishing leaves.
   const cd = collection!.data;
   const c = readCollection(cd);
   if (c.updateAuthority !== NO_AUTHORITY || c.name !== title || c.uri !== uri || BigInt(c.numMinted) !== redeemed || c.external !== 0) not();

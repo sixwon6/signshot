@@ -8,10 +8,8 @@
  * bytes travel as the `data: Vec<u8>` argument of `initialize`/`update` and sit in the account
  * after its 73-byte header. `load` refuses any length that does not match exactly.
  *
- * Only the guards this app sets are encodable; every guard is sized, so a decoder that meets a
- * guard it does not decode still walks the bytes correctly and names it in `other`. Groups are
- * decoded (so foreign data reads) but this app never uses them: `edition.ts` accepts only an
- * account whose bytes re-encode exactly from one of its own guard sets.
+ * Only the guards this app sets are encodable. Every guard has a fixed size, so the decoder skips
+ * unknown ones and lists them in `other`. Groups decode but are never written.
  */
 
 import { getAddressDecoder, getAddressEncoder, type Address } from "@solana/kit";

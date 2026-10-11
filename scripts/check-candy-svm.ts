@@ -1,21 +1,18 @@
 /**
- * Numbered editions on Metaplex's deployed Core Candy Machine + Core Candy Guard, run end to end
- * in LiteSVM with no program of this app's own: `npx tsx scripts/check-candy-svm.ts`.
+ * Numbered editions on Metaplex's deployed Core Candy Machine + Core Candy Guard, end to end in
+ * LiteSVM: `npx tsx scripts/check-candy-svm.ts`.
  *
  *   env: SVM_HOST SVM_TOOLS_ROOT SVM_MAINNET_RPC
- *   Delete `.cache/svm/candy*` to read the programs from mainnet again.
+ *   Delete `.cache/svm/candy*` to re-read the programs from mainnet.
  *
- * The first run reads, once and read only, the executable data of Core Candy Machine, Core Candy
- * Guard and Metaplex Core from mainnet (`SVM_MAINNET_RPC`) into `.cache/svm/` (gitignored); the
- * RPC URL is never written down, and every later run checks the ELFs against their recorded
- * sha256.
+ * The first run dumps the Core Candy Machine, Core Candy Guard and Metaplex Core ELFs from mainnet
+ * into `.cache/svm/` (gitignored, RPC URL not recorded); later runs check them against the
+ * recorded sha256.
  *
- * Every edition flow goes as the app will send it: the client's draft is compiled with
- * SetComputeUnitLimit + SetComputeUnitPrice (`prepareForWallet`), a simulated wallet REWRITES it
- * (a new compute-unit price, the accounts reordered) and signs first, the client's `finish`
- * checks the returned message and adds the local keypairs' signatures, the server signs
- * Seeker-only claims last, and LiteSVM runs it with signature checks on. Hostile instructions (what
- * a publisher or a stranger could send by hand) are built here and say so.
+ * Transactions follow the app's path: `prepareForWallet` compiles the draft with compute-budget
+ * instructions, a simulated wallet rewrites it (new CU price, reordered accounts) and signs,
+ * `finish` checks the result and adds local signatures, the server signs Seeker-only claims last,
+ * and LiteSVM runs it with signature checks on. Hostile instructions are built by hand below.
  */
 
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -644,7 +641,7 @@ async function main() {
         derived === NO_AUTHORITY && (await noAuthorityAddress()) === NO_AUTHORITY && isOffCurveAddress(NO_AUTHORITY) && walked?.key === NO_AUTHORITY && walked.bump === bump);
       ok(`Core's create fee is ${CORE_CREATE_FEE} lamports`, CORE_CREATE_FEE === 1_500_000n);
 
-      // The wallet's freedom: price and order only.
+      // The wallet may change price and account order only.
       const w = await wallet();
       const dtx: DraftTransaction = { instructions: [transferSolInstruction(w, (await generateKeyPairSigner()).address, 1_000_000n)], localSigners: [] };
       const prepared = prepareForWallet(w.address, dtx, await lifetime(), BUDGET);
@@ -1109,7 +1106,7 @@ async function main() {
       };
       const me = (n = 5) => pair([10, 1, ...u32le(n), 0, 0], [0]);
       const roy = (to: Address, bps = 500, auth = [0]) => pair([0, bps & 255, bps >>> 8, ...u32le(1), ...keyBytes(to), 100, 0], auth);
-      await forged("the reviewer's set (UpdateDelegate[publisher], PermanentTransferDelegate(publisher), 100% royalty to another key)", (pub) =>
+      await forged("a hostile plugin set (UpdateDelegate[publisher], PermanentTransferDelegate(publisher), 100% royalty to another key)", (pub) =>
         [me(), roy(attacker, 10_000), pair([4, ...u32le(1), ...keyBytes(pub)], [2]), pair([7], [3, ...keyBytes(pub)])]);
       await forged("UpdateDelegate listing the publisher", (pub) => [me(), roy(pub), pair([4, ...u32le(1), ...keyBytes(pub)], [2])]);
       await forged("PermanentTransferDelegate", (pub) => [me(), roy(pub), pair([7], [3, ...keyBytes(pub)])]);
@@ -1125,8 +1122,8 @@ async function main() {
           localSigners: [...ed.tx[0].localSigners, extra] };
       });
 
-      // Why the collection carries no VerifiedCreators: the publisher signs one in during
-      // transaction 2 (Core accepts it), and then no copy can be created into the collection.
+      // No VerifiedCreators on the collection: if the publisher signs one in during transaction 2,
+      // Core accepts it and then rejects every copy created into the collection.
       {
         const vc = await build(terms(5));
         const second = vc.tx[1].instructions;
@@ -1269,7 +1266,7 @@ async function main() {
         within.outcome.ok && within.spent - within.cost.total === 40_000n, within.outcome);
       for (const [label, mutate, pattern] of [
         ["700,000 micro-lamports at 400,000 units (280,000 lamports)", withPrice(700_000n), /priority fee/],
-        ["the third review's 25,000,000,000 micro-lamports at 400,000 units (10 SOL)", withPrice(25_000_000_000n), /priority fee/],
+        ["25,000,000,000 micro-lamports at 400,000 units (10 SOL)", withPrice(25_000_000_000n), /priority fee/],
         ["u64-max price at 1,400,000 units", withPrice(0xffff_ffff_ffff_ffffn, 1_400_000), /priority fee/],
         ["a limit of 1,400,001 units", withPrice(0n, 1_400_001), /compute unit limit/],
       ] as const) {
@@ -1306,7 +1303,7 @@ async function main() {
       }
     }
 
-    // 12. The third review's cases.
+    // 12. Message equivalence, Core collection variants, duplicate numbers, failure classification.
     console.log("\n12. a real claim message against every change a wallet could make; Core collections; duplicate numbers; classification");
     {
       const e = await publish(terms(40, { kind: "sol", lamports: 5_000_000n }));

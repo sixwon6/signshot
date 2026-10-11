@@ -14,19 +14,12 @@ import {
 } from "../../publications/core/genesisToken";
 
 /**
- * Seeker Genesis Token (SGT) detection, per Solana Mobile's recipe
- * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token): a Token-2022 mint whose
- * metadata pointer and group membership name Solana Mobile's group. That check is
- * `seekerGenesisMember`, the same one every reader of a published document runs
- * (`publications/core/genesisToken.ts`).
+ * Seeker Genesis Token detection per
+ * https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token: a Token-2022 mint whose
+ * metadata pointer and group membership name Solana Mobile's group. Mainnet only. Readers re-check
+ * the recorded mint, so nothing trusts this lookup.
  *
- * Only accounts holding exactly one unit of a 0-decimal mint are looked at, as a held SGT does: an
- * SGT sent away leaves an open, empty account, and a wallet full of spam tokens costs no extra
- * mint reads. Frozen accounts are accepted (a held SGT is always frozen). Mainnet only. The mint
- * found here is what a publication records; whoever reads it checks it again, so nothing trusts
- * this lookup.
- *
- * Import the package root only: its `confidential` entry point pulls in WASM that Hermes cannot load.
+ * Import the token-2022 package root only: its `confidential` entry pulls in WASM Hermes can't load.
  */
 
 /** `getMultipleAccounts` takes at most 100 keys. */
@@ -34,7 +27,7 @@ const MINT_BATCH = 100;
 
 const base64Encoder = getBase64Encoder();
 
-/** Per client, for the session: the answer to "is this mainnet?". A failure is asked again. */
+/** Per-client mainnet check; failures are retried. */
 const mainnetClients = new WeakMap<object, Promise<void>>();
 
 function assertMainnetClient(rpc: Rpc<SolanaRpcApi>, abortSignal?: AbortSignal): Promise<void> {
@@ -53,10 +46,9 @@ function assertMainnetClient(rpc: Rpc<SolanaRpcApi>, abortSignal?: AbortSignal):
 }
 
 /**
- * The mint address of an SGT held by `owner` now, or null. A wallet can hold several: `preferred`
- * (the one found last time) when it is still among them, so the Seeker a wallet names stays the
- * same; otherwise the lowest member number. Throws on RPC failure, or when `rpc` is not mainnet,
- * so neither is mistaken for "does not hold one". `abortSignal` bounds every request made here.
+ * SGT mint held by `owner`, or null. With several, `preferred` if still held (keeps the named
+ * Seeker stable), else the lowest member number. Throws on RPC failure or non-mainnet `rpc` so
+ * neither reads as "holds none".
  */
 export async function findSeekerGenesisToken(
   rpc: Rpc<SolanaRpcApi>,
@@ -78,7 +70,7 @@ export async function findSeekerGenesisToken(
   const mints: Address[] = [];
   const seen = new Set<string>();
   for (const { account } of tokenAccounts) {
-    // One unit of a 0-decimal mint, as a held SGT is. Zero = a token account the SGT has left.
+    // A sent-away SGT leaves an empty account; this also skips spam without extra mint reads.
     const mint = singleUnitMint(account.data.parsed?.info);
     if (mint === null || seen.has(mint)) continue;
     seen.add(mint);
@@ -96,7 +88,7 @@ export async function findSeekerGenesisToken(
       .send({ abortSignal });
     for (let j = 0; j < batch.length; j++) {
       const raw = infos[j];
-      // The owner as well as the data: only the Token-2022 program can have written the extensions.
+      // Check the owner: only Token-2022 can have written the extensions.
       if (!raw || raw.owner !== TOKEN_2022_PROGRAM_ADDRESS) continue;
       const member = seekerGenesisMember(new Uint8Array(base64Encoder.encode(raw.data[0])), batch[j]);
       if (member !== null) found.push({ mint: batch[j], member });

@@ -3,12 +3,8 @@ import type { StoragePayment } from "../../publications/storage";
 import type { CoreDraft } from "../../publications/types";
 import { canPayStorage, quoteStorageTopUp } from "./creator";
 
-/**
- * The payment that buys a confirmed publication's storage again, priced while it is offered
- * (`canPayStorage`); null otherwise, and while the price is read or cannot be.
- */
+/** The storage payment quote while `canPayStorage` holds; null otherwise or until priced. */
 export function useStorageTopUp(draft: CoreDraft | null | undefined): StoragePayment | null {
-  // Everything the offer and the price depend on.
   const key = draft && canPayStorage(draft)
     ? `${draft.edition.edition}:${draft.storageError?.message}:${draft.storageFunding}:${draft.storageTopUp?.signature}`
     : null;

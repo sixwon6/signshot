@@ -104,7 +104,6 @@ interface PhotoEntry {
   error?: string;
 }
 
-/** Each photograph keeps one selected version and one lifecycle across capture, review and publication. */
 export function ReviewScreen() {
   const focused = useIsFocused();
   const active = useAppActive();
@@ -121,13 +120,10 @@ export function ReviewScreen() {
   >(null);
   const [busy, setBusy] = useState(false),
     [feedback, setFeedback] = useState("");
-  /** Recipe ids to names: the fallback for a camera frame whose sidecar records only the id. */
+  /** Recipe id -> name, for sidecars that record only the id. */
   const [recipeNames, setRecipeNames] = useState<Record<string, string>>({});
-  /**
-   * The open photograph's price, read from the chain rather than from its draft, so a price set
-   * from the Wallet screen or another device is the one shown here. `supported` is false for an
-   * edition this app cannot price (`getOffer`).
-   */
+  // Price read from chain, not the draft, so changes made elsewhere show. `supported` is false
+  // for editions this app can't price (`getOffer`).
   const [offer, setOffer] = useState<{
     edition: string;
     supported: boolean;
@@ -144,35 +140,26 @@ export function ReviewScreen() {
     stampPref = useShareStampPref();
   const session = useWalletSession();
   const detail = photos.find((p) => p.record.baseName === openBaseName);
-  /**
-   * A capture the camera just handed over. The list stays out of sight until its photograph
-   * opens, for three seconds at most, so the shutter leads to the photograph and nothing else.
-   */
+  // Capture just handed over by the camera. The list stays hidden until it opens (3 s max).
   const target = route.params?.photo;
   const awaited = useRef(target);
   awaited.current = target;
-  /** The capture whose three seconds are up. Kept by name, so the next capture starts unseen. */
+  /** Capture whose 3 s wait expired; keyed by name so the next capture starts hidden again. */
   const [waitedFor, setWaitedFor] = useState<string>();
   useEffect(() => {
     if (!target) return;
     const timer = setTimeout(() => setWaitedFor(target), 3000);
     return () => clearTimeout(timer);
   }, [target]);
-  /**
-   * The photograph the shutter just made, while it is the one open: it opens without the fade
-   * (which would show the list through it), the list stays unseen under it, and Develop is not
-   * offered, since its look was chosen a moment ago. Opened from Photos it is like any other.
-   */
+  // The just-taken photo opens without the fade (which would reveal the list) and hides Develop.
+  // Opened later from the grid, it behaves like any other.
   const [takenBaseName, setTakenBaseName] = useState<string | null>(null);
   const justTaken = !!detail && openBaseName === takenBaseName;
   const arriving = (!!target && waitedFor !== target && !detail) || justTaken;
-  /** The ratio of a camera version, known once its picture has loaded. */
   const [measured, setMeasured] = useState<{ uri: string; aspect: number } | null>(null);
 
-  /**
-   * True from the start of a full read until its list lands. A re-read of one photograph asked
-   * for meanwhile reads them all: alone it would cancel the list and leave the grid short.
-   */
+  // True during a full read. A single-photo reload requested meanwhile becomes a full read,
+  // since it would otherwise cancel the list and leave the grid short.
   const listing = useRef(false);
   const load = useCallback(async (only?: CaptureRecord) => {
     const record = listing.current ? undefined : only;
@@ -192,7 +179,7 @@ export function ReviewScreen() {
         ]);
         return { record, publication, ...selection };
       };
-      // The capture the camera handed over is read first, so its photograph opens at once.
+      // Read the handed-over capture first so it opens immediately.
       const first = record ? undefined : records.find((r) => r.baseName === awaited.current);
       if (first) {
         const entry = await readLocal(first);
@@ -200,7 +187,6 @@ export function ReviewScreen() {
         setPhotos((previous) =>
           previous.some((p) => p.record.baseName === first.baseName) ? previous : [entry, ...previous]);
       } else if (!record && awaited.current && id === request.current) {
-        // Not among the captures: there is nothing to open, now or on a later read.
         navigation.setParams({ photo: undefined });
       }
       await loadPhotosInStages<CaptureRecord, PhotoEntry>({
@@ -225,7 +211,6 @@ export function ReviewScreen() {
         setError(safeErrorText(e));
         if (!record) {
           listing.current = false;
-          // The captures could not be read: the hand-over ends here, and the error shows.
           if (awaited.current) navigation.setParams({ photo: undefined });
         }
       }
@@ -248,7 +233,7 @@ export function ReviewScreen() {
           setRecipeNames(Object.fromEntries(list.map((item) => [item.id, item.name])));
       })
       .catch(() => {
-        // A name is a nicety; the photograph and its status do not depend on it.
+        // Names are optional.
       });
     return () => {
       live = false;
@@ -290,7 +275,7 @@ export function ReviewScreen() {
     setTakenBaseName(null);
     setSheet(null);
     setFeedback("");
-    // Opening a photograph is the status check. There is no button for it.
+    // Opening a photo refreshes its status.
     void load(entry.record);
   }
   function close() {
@@ -329,8 +314,8 @@ export function ReviewScreen() {
       wallet: identity.wallet,
       name: identity.skrName,
     });
-    // Every share is a copy under `cacheDir/share`: expo-sharing's FileProvider grants read access
-    // it never revokes, so the originals under `filesDir/captures` are not addressable.
+    // Share copies under `cacheDir/share`: expo-sharing's FileProvider grants read access it
+    // never revokes, so originals in `filesDir/captures` must never be exposed.
     const source = selectedShareSource(r, entry.edit, d);
     const uri = stamp
       ? await SeekerCamera.stampSelectedShareCopy(
@@ -350,9 +335,9 @@ export function ReviewScreen() {
     });
   }
   /**
-   * One JSON file (metadata, image, signed data items, draft) for a confirmed publication whose
-   * upload is unfinished, re-hashed natively against its published image hash, then shared. There is
-   * no import. Items that cannot be rebuilt leave the rest of the bundle.
+   * Shares a JSON bundle (metadata, image, signed data items, draft) for a confirmed publication
+   * whose upload is unfinished. The image is re-hashed natively against the published hash.
+   * Items that can't be rebuilt are omitted.
    */
   async function exportBundle(entry: PhotoEntry) {
     const d = entry.publication.draft;
@@ -372,11 +357,10 @@ export function ReviewScreen() {
   }
   async function shareCard(entry: PhotoEntry) {
     const d = entry.publication.draft;
-    // The public link comes from the derived view, never rebuilt here.
     const url = entry.publication.view?.publicUrl;
     if (!d || !url) return;
     const qr = qrMatrix(url);
-    // Settings' `Add my .skr name`: the publisher's own name on the card, never anyone else's.
+    // Only ever stamps the publisher's own .skr name (Settings toggle).
     const stamp = photoShareStamp({
       publication: entry.publication,
       enabled: stampPref.enabled,
@@ -429,8 +413,7 @@ export function ReviewScreen() {
                 removeFiles: async (record) => {
                   await SeekerCamera.deleteCapture(record.baseName);
                   await savePhotoEdit(record);
-                  // Drop the stored draft too, or it stays unreachable for the life of the
-                  // install. Only after `deleteCapture` resolves.
+                  // Drop the draft too, or it is orphaned forever. Must follow `deleteCapture`.
                   await forgetPublicationDraft(record);
                 },
               });
@@ -460,12 +443,10 @@ export function ReviewScreen() {
     !d?.storageError ||
     d.storageError.retryable ||
     d.storageError.kind === "quota";
-  /**
-   * Confirmed but not uploaded: this phone holds the only copy. Not gated on `storageCanRetry`,
-   * because a non-retryable error is when the bytes most need a way off the device.
-   */
+  // Confirmed but not uploaded: the phone holds the only copy. Deliberately not gated on
+  // `storageCanRetry`; a non-retryable error is when export matters most.
   const canExportBundle = newPublished && canExportPublicationBundle(d);
-  /** An unfinished upload resumes once per opening of the photograph. No wallet is involved. */
+  /** Resume an unfinished upload once per open. Needs no wallet. */
   const resumedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!detail || !d || !newPublished || d.storage === "available") return;
@@ -478,13 +459,12 @@ export function ReviewScreen() {
         await load(detail.record);
       }
     });
-    // `perform` is a plain function of this render; the guards above are what matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, d, newPublished, storageCanRetry, load]);
   useEffect(() => {
     if (openBaseName === null) resumedFor.current = null;
   }, [openBaseName]);
-  /** Storage bought again, once the provider refused the upload or found its credit short. */
+  /** Non-null when the storage provider refused the upload or credit ran short. */
   const topUp = useStorageTopUp(newPublished ? d : null);
   async function payForStorage(entry: PhotoEntry) {
     const draft = entry.publication.draft;
@@ -497,7 +477,7 @@ export function ReviewScreen() {
       await load(entry.record);
     }
   }
-  /** The price of the open, published photograph. One read, and never a wallet. */
+  /** Read-only price fetch; no wallet. */
   useEffect(() => {
     if (!d || !newPublished) {
       setOffer(null);
@@ -510,7 +490,6 @@ export function ReviewScreen() {
         if (live) setOffer({ edition: key, ...next });
       },
       () => {
-        // An unreadable price shows nothing; nothing else on this photograph depends on it.
         if (live) setOffer(null);
       },
     );
@@ -518,7 +497,7 @@ export function ReviewScreen() {
       live = false;
     };
   }, [d, newPublished]);
-  /** A transaction that may still land is re-read every 4 s while its photograph is open. */
+  /** Poll a pending transaction every 4 s while open. */
   useEffect(() => {
     if (!focused || !active || detail?.publication.status !== "pending") return;
     const timer = setTimeout(() => void load(detail.record), 4000);
@@ -527,19 +506,18 @@ export function ReviewScreen() {
   const publishedCount = photos.filter(
     (p) => p.publication.status === "published",
   ).length;
-  // Two prints to a row on the 18 px gutter: the picture is the cell less the paper border, at
-  // a slightly landscape ratio.
+  // Two columns; picture is the cell minus the paper border, slightly landscape.
   const cellWidth = (width - space.gutter * 2 - GRID_GAP) / 2;
   const gridPicture = Math.max(
     96,
     Math.round((cellWidth - CAPTION_PAD * 2) * 0.9),
   );
-  /** What developed this photograph, by name: the saved version's recipe, else the capture's. */
+  /** Saved edit's recipe name, else the capture's. */
   const nameOf = (source: CaptureRecord, edit?: PhotoEdit): string | null =>
     developedRecipeName(edit) ??
     recipeNames[edit?.profileId ?? source.profileId] ??
     null;
-  /** A print's title: the published edition's own, else the recipe's name, else one word. */
+  /** Edition title, else recipe name, else "untitled". */
   const titleOf = (entry: PhotoEntry): string =>
     entry.publication.draft?.edition.title ??
     nameOf(entry.record, entry.edit) ??
@@ -555,12 +533,10 @@ export function ReviewScreen() {
         .filter(Boolean)
         .join(" · ")
     : "";
-  /** Null for a photograph nothing has been done to: the readout then ends at its size. */
+  /** Null for an untouched photo. */
   const detailStatus = detail ? photoStatus(detail.publication) : null;
-  /**
-   * The print takes the photograph's ratio (draft, else saved edit, else the loaded picture). The picture is
-   * capped in height and the paper narrows, so a portrait photo makes a portrait print.
-   */
+  // Aspect from draft, else saved edit, else the loaded image. Height is capped and width
+  // follows, so portraits stay portrait.
   const detailPixels = d
     ? { width: d.edition.width, height: d.edition.height }
     : detail?.edit
@@ -573,10 +549,7 @@ export function ReviewScreen() {
       : measured?.uri === detailUri
         ? measured.aspect
         : 3 / 4;
-  /**
-   * The price, only for the photograph it was read for: `offer` outlives one render of another
-   * photograph otherwise, and a price shown under the wrong picture is worse than none.
-   */
+  // `offer` can lag a render behind a photo switch; never show another edition's price.
   const currentOffer =
     offer && d && offer.edition === d.edition.edition ? offer : null;
   const priceLine =
@@ -653,7 +626,6 @@ export function ReviewScreen() {
                 variant="grid"
                 imageHeight={gridPicture}
               />
-              {/* Status sits under the paper, which carries graphite only. */}
               {mark && (
                 <Text
                   style={[
@@ -697,7 +669,6 @@ export function ReviewScreen() {
               disabled={busy}
             />
             <ScrollView contentContainerStyle={s.detailContent}>
-              {/* Uncropped: the one place a person checks what they actually took. */}
               <PhotoFrame
                 aspectRatio={detailAspect}
                 style={{
@@ -721,7 +692,6 @@ export function ReviewScreen() {
                 {d?.edition.description ? (
                   <Text style={s.moment}>{d.edition.description}</Text>
                 ) : null}
-                {/* Capture facts and status in one mono readout; publisher and edition are body text. */}
                 <Text style={s.meta}>
                   {metaLine}
                   {detailStatus && metaLine ? " · " : ""}
@@ -748,15 +718,14 @@ export function ReviewScreen() {
                 )}
                 {!!currentOffer?.reason && <Text style={s.body}>{currentOffer.reason}</Text>}
                 {!!currentOffer?.anomaly && <Text style={s.body}>{currentOffer.anomaly}</Text>}
-                {/* What a buyer pays for one of the remaining copies. Absent for a free edition. */}
+                {/* Absent for free editions. */}
                 {!!priceLine && <Text style={s.body}>{priceLine}</Text>}
               </View>
               {detail.publication.reason && (
                 <Text style={s.body}>{detail.publication.reason}</Text>
               )}
               {detail.error && <Text style={s.error}>{detail.error}</Text>}
-              {/* No status or upload buttons: status is read on open and while pending, and an
-                  unfinished upload resumes by itself. */}
+              {/* No refresh/upload buttons: status reloads on open and while pending; uploads auto-resume. */}
               {presentation?.publishLabel && (
                 <Pill
                   label={presentation.publishLabel}
@@ -772,8 +741,7 @@ export function ReviewScreen() {
                   onPress={() => void perform(() => shareCard(detail))}
                 />
               )}
-              {/* The creator's own control. Offered only where this app can price the edition;
-                  the sheet itself is where the amount is reviewed and approved. */}
+              {/* Only for editions this app can price. */}
               {knownPublished && d && currentOffer?.supported && (
                 <Pill
                   label={actions.price}
@@ -859,7 +827,7 @@ export function ReviewScreen() {
                     }
                   />
                 )}
-              {/* The only way an un-uploaded publication's bytes leave the phone. */}
+              {/* Only way an un-uploaded publication's bytes leave the phone. */}
               {canExportBundle && (
                 <Pill
                   label={busy ? actions.exportingBundle : actions.exportBundle}
@@ -877,7 +845,6 @@ export function ReviewScreen() {
                   onPress={() => setSheet("proof")}
                 />
               )}
-              {/* The destructive action sits apart, behind its own rule. */}
               <View style={s.danger}>
                 <Pill
                   label={actions.delete}
@@ -935,11 +902,11 @@ export function ReviewScreen() {
     </Screen>
   );
 }
-/** The gap between two prints in the grid, and the paper border a captioned print takes. */
+/** Grid gap and captioned-print border, in dp. */
 const GRID_GAP = 14;
 const CAPTION_PAD = 10;
 
-/** Imprinted under a print's title, in the phone's own locale: "12 SEP 2026". */
+/** Device-locale date, e.g. "12 Sep 2026". */
 function imprintDate(ms: number) {
   return new Date(ms).toLocaleDateString(undefined, {
     day: "2-digit",
@@ -951,12 +918,10 @@ const s = StyleSheet.create({
   header: { gap: 6, paddingBottom: space.lg },
   heading: { ...typeScale.display, color: colors.ink },
   count: { ...typeScale.label, color: colors.muted },
-  /** Purple is the sparse emphasis the tokens reserve for a count like this one. */
   countPublished: { color: colors.purpleText },
   grid: { gap: GRID_GAP, paddingBottom: space.lg, flexGrow: 1 },
   gridRow: { gap: GRID_GAP },
   cell: { flex: 1, maxWidth: "50%" },
-  /** A print's status, on the ground under the paper. Purple is the published emphasis. */
   gridMark: { ...typeScale.label, marginTop: space.sm },
   gridMarkPublished: { color: colors.purpleText },
   gridMarkAttention: { color: colors.ink },
@@ -979,7 +944,6 @@ const s = StyleSheet.create({
     color: colors.ink,
     textAlign: "center",
   },
-  /** Room under the destructive pill at the foot, so the scroll never ends on it. */
   detailContent: {
     gap: space.md,
     paddingBottom: space.xxl,
@@ -987,7 +951,6 @@ const s = StyleSheet.create({
   detailPhoto: { width: "100%", height: "100%" },
   captionBlock: { gap: 7, paddingTop: space.xs },
   photoTitle: { ...typeScale.title, color: colors.ink },
-  /** The Moment: the publisher's own caption, and the only body line up here. */
   moment: { ...typeScale.body, color: colors.ink },
   meta: { ...typeScale.readout, color: colors.muted },
   metaPublished: { color: colors.purpleText },

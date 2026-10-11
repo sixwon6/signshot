@@ -1,9 +1,8 @@
 import type { AppIdentity } from "@wallet-ui/react-native-kit";
 
 /**
- * The identity shown on the wallet's authorization sheet, so `uri` must be the app's real,
- * scheme-qualified home. Module-level because `MobileWalletProvider` keys its client on `identity`
- * by reference; an inline literal would rebuild the client on every render.
+ * Shown on the wallet's authorization sheet; `uri` must be scheme-qualified. Module-level because
+ * `MobileWalletProvider` keys its client on `identity` by reference.
  */
 export const APP_IDENTITY = {
   name: "Signshot",

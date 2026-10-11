@@ -1,6 +1,5 @@
 /**
- * The one way an edition transaction leaves this phone, for every flow (publish, claim, price,
- * close, send, storage):
+ * Every edition transaction (publish, claim, price, close, send, storage) goes out through here:
  *
  *   draft (`publications/candy`) → `prepareForWallet` → the wallet's `signTransactions` (sign only;
  *   it may rewrite the compute-unit price and reorder accounts) → each transaction's `finish`
@@ -40,9 +39,7 @@ import { RPC_ENDPOINT } from "../solana/cluster";
 import type { WalletSession } from "../solana/walletSession";
 import { signInWith, type SignInResult } from "../solana/liveAuthorize";
 
-// ---------------------------------------------------------------------------------------------
 // This phone's keypairs
-// ---------------------------------------------------------------------------------------------
 
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 const unhex = (text: string) => Uint8Array.from(text.match(/../g) ?? [], (h) => parseInt(h, 16));
@@ -60,9 +57,7 @@ export async function seedSigner(seed: string): Promise<KeyPairSigner> {
   return createKeyPairSignerFromBytes(bytes);
 }
 
-// ---------------------------------------------------------------------------------------------
 // Chain reads
-// ---------------------------------------------------------------------------------------------
 
 const rents = new Map<number, Promise<bigint>>();
 /** `getMinimumBalanceForRentExemption`, memoised for the session. */
@@ -105,9 +100,7 @@ export async function lifetimeLive(lastValidBlockHeight: bigint, spare = 10n): P
   return (await blockHeight()) + spare < lastValidBlockHeight;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Failures
-// ---------------------------------------------------------------------------------------------
 
 const jsonText = (value: unknown) => {
   try {
@@ -149,7 +142,6 @@ export class TransactionFailure extends Error {
   }
 }
 
-/** The client's reason for a failed claim. */
 export function claimFailure(e: TransactionFailure, wallet: Address, payer: Address): ClaimFailure {
   return classifyClaimFailure(
     { err: errText(e.err), custom: customCode(e.err), logs: e.logs },
@@ -160,9 +152,7 @@ export function claimFailure(e: TransactionFailure, wallet: Address, payer: Addr
 const keysOf = (tx: Transaction): Address[] =>
   [...getCompiledTransactionMessageDecoder().decode(tx.messageBytes).staticAccounts];
 
-// ---------------------------------------------------------------------------------------------
 // Preparing
-// ---------------------------------------------------------------------------------------------
 
 /** A wallet's packet limit for one transaction. */
 const MAX_WIRE_BYTES = 1232;
@@ -238,9 +228,7 @@ export function withLifetime(draft: Draft, budgets: Budget[], lifetime: Lifetime
 export const priorityLamports = (budgets: Budget[]) =>
   budgets.reduce((sum, b) => sum + (BigInt(b.units) * b.microLamports + 999_999n) / 1_000_000n, 0n);
 
-// ---------------------------------------------------------------------------------------------
 // The wallet
-// ---------------------------------------------------------------------------------------------
 
 const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
@@ -268,9 +256,7 @@ export async function signWithWallet(
   });
 }
 
-// ---------------------------------------------------------------------------------------------
 // Sending
-// ---------------------------------------------------------------------------------------------
 
 export const toWire = (tx: Transaction) => getBase64EncodedWireTransaction(tx) as string;
 export const fromWire = (wire: string): Transaction => getTransactionDecoder().decode(getBase64Encoder().encode(wire));

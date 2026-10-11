@@ -14,16 +14,14 @@ import kotlin.math.roundToInt
 import org.json.JSONObject
 
 class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
-  // Replaceable: view detach tears the engine down completely and re-attach builds a fresh pair.
-  // Public reads (module) stay stable.
+  // Detach tears the engine down; re-attach builds a fresh pair.
   var renderer = GlRenderer()
     private set
   var camera = CameraController(context, renderer)
     private set
 
   private val surfaceView = SurfaceView(context)
-  // ExpoView is a LinearLayout, not a FrameLayout: two direct MATCH_PARENT children lay out
-  // side-by-side (the second gets zero width). Anything over the picture stacks in here.
+  // ExpoView is a LinearLayout: overlapping children must go in this FrameLayout.
   private val content = FrameLayout(context)
   private var engineAlive = true
   private var started = false
@@ -32,8 +30,7 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
   private val orientationListener = object : OrientationEventListener(context) {
     override fun onOrientationChanged(orientation: Int) {
       captureOrientation.update(orientation)
-      // The still snapshots this at the shutter; the preview needs it live, because an anisotropic
-      // stage runs along the upright picture's axis and the viewfinder is drawn sensor-upright.
+      // Live for the preview's anisotropic stages; the still snapshots it at the shutter.
       renderer.deviceDegrees = captureOrientation.rotation(0)
     }
   }
@@ -47,7 +44,7 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
     wireEngine()
     surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
       override fun surfaceCreated(holder: SurfaceHolder) {
-        // Dimensions arrive in surfaceChanged, which always follows; attach happens there.
+        // Attach happens in surfaceChanged, which always follows with dimensions.
       }
       override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (!engineAlive) return
@@ -64,8 +61,7 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
         }
       }
       override fun surfaceDestroyed(holder: SurfaceHolder) {
-        // Blocking by contract: the GL thread must not touch the surface after we return.
-        // Context/textures/programs survive; only the EGL window surface goes away.
+        // Must block: the GL thread may not touch the surface after this returns.
         surfaceAttached = false
         if (engineAlive) renderer.detachWindowSurface()
       }
@@ -76,29 +72,22 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun matchParent() = FrameLayout.LayoutParams(
     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
-  /**
-   * Restores the look a rebuilt engine must come up with: the module companion holds the last
-   * parsed profile and intensity, so a tab switch cannot diverge native state from JS state.
-   */
+  /** Brings a rebuilt engine up on the last profile, intensity and settings held by the module. */
   private fun wireEngine() {
     renderer.onGlError = { msg -> post { onSessionError(mapOf("message" to msg)) } }
     camera.onError = { msg -> post { onSessionError(mapOf("message" to msg)) } }
-    // Camera thread → main thread. Already throttled to <=10 Hz where it is produced.
+    // Camera thread → main thread; already throttled to <=10 Hz.
     camera.onMeter = { reading -> post { onMeter(reading) } }
     renderer.intensity = SeekerCameraModule.lastIntensity
-    // A rebuilt renderer comes up on the orientation already in force, not on portrait.
     renderer.deviceDegrees = captureOrientation.rotation(0)
     // Queued while !glReady; start() applies it and resolves with the fresh id.
     SeekerCameraModule.lastProfile?.let { p -> renderer.applyProfile(p) { _, _ -> } }
-    // The manual controls come up on the same settings the rebuilt view went down on: the first
-    // repeating request is built after the session configures, so this only has to be set before
-    // then. A stored string the current caps reject is dropped rather than thrown at the camera.
+    // Takes effect at the first repeating request. Settings the caps now reject are dropped.
     SeekerCameraModule.lastCaptureSettings?.let { json ->
       try { camera.setSettings(json) } catch (_: Throwable) {}
     }
   }
 
-  /** The strength dial, set from JS. The renderer reads it per frame. */
   fun setIntensity(value: Float) {
     renderer.intensity = value.coerceIn(0f, 1f)
   }
@@ -130,7 +119,7 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
     }, { msg -> onDone(Result.failure(RuntimeException(msg))) })
   }
 
-  /** Pending-queue substrate for the capture record. Written atomically via .tmp + rename. */
+  /** Capture sidecar, written atomically via .tmp + rename. */
   private fun writeSidecar(
     dir: File, base: String, capturedAtMs: Long, intensity100: Int,
     keys: JSONObject, files: GlRenderer.StillFiles,
@@ -164,7 +153,6 @@ class SeekerCameraView(context: Context, appContext: AppContext) : ExpoView(cont
       camera = CameraController(context, renderer)
       engineAlive = true
       wireEngine()
-      // started/surfaceAttached were reset at detach; the next surfaceChanged starts the pair.
     }
     SeekerCameraModule.activeView = this
   }

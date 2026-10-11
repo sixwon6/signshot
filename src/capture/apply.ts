@@ -6,17 +6,11 @@ import {
   type EffectiveCaptureSettings,
 } from "./model";
 
-/**
- * The only place manual controls cross into native. Settings are also clamped here so the screen
- * can show the applied value in the same frame, without waiting for the bridge; native's clamp decides.
- */
+/** Sole bridge for manual controls. Clamped here too for same-frame display; native's clamp wins. */
 
 let cached: Promise<CaptureCapabilities> | null = null;
 
-/**
- * What this camera can do. Read once and remembered: it comes from `CameraCharacteristics`,
- * which cannot change while the app is running.
- */
+/** Cached: `CameraCharacteristics` can't change while the app runs. */
 export function captureCapabilities(): Promise<CaptureCapabilities> {
   if (!cached) {
     cached = SeekerCamera.captureCapabilities().catch((error: unknown) => {
@@ -27,12 +21,7 @@ export function captureCapabilities(): Promise<CaptureCapabilities> {
   return cached;
 }
 
-/**
- * Applies the manual controls to the live preview and to the next still, and resolves what is
- * actually in force — every number clamped to the device's ranges. Rejects, naming the reason,
- * only for a control this camera does not have; that cannot happen for settings that have been
- * through {@link clampSettings} against the same capabilities.
- */
+/** Applies to preview and next still; resolves the values actually in force. */
 export async function applyCaptureSettings(
   settings: CaptureSettings,
 ): Promise<EffectiveCaptureSettings> {
@@ -40,11 +29,7 @@ export async function applyCaptureSettings(
   return SeekerCamera.setCaptureSettings(JSON.stringify(clampSettings(settings, caps)));
 }
 
-/**
- * Did the bridge refuse only because the preview surface is not up yet? Native says so in one
- * fixed sentence; a cold start and a view rebuild both hit it, and both are worth retrying.
- * A classifier rather than a message read: the sentence is matched here and never rendered.
- */
+/** Preview surface not up yet (cold start, view rebuild); retryable. Matches native's fixed message. */
 export function isCameraViewNotReady(cause: unknown): boolean {
   const text = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   return text.includes("no active camera view");

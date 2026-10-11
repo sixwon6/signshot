@@ -6,8 +6,8 @@ package expo.modules.seekercamera
  * stage type never changes existing shaders or pipeline ids. Mirrored by `src/recipes/model.ts`.
  */
 object ShaderGen {
-  // Bump when output for the same graph changes; it is part of every pipeline id.
-  // 0.3.0: the YUV decode went from limited to full range. Frames from 0.2.x have crushed ends.
+  // Part of every pipeline id; bump when output for the same graph changes.
+  // 0.3.0: full-range YUV decode (0.2.x decoded as limited range).
   const val RENDERER_VERSION = "0.3.0"
 
   // The one place YUV->RGB math exists. BT.601 full range (JFIF): the dataspace Android gives an
@@ -29,10 +29,8 @@ object ShaderGen {
   """
 
   /**
-   * The chroma-difference vector (R-Y, G-Y, B-Y) straight off the U and V planes: linear in Cb/Cr,
-   * so averaging taps is exact, and two fetches rather than three. These four decode constants and
-   * the 0.5019608 offset MUST match YUV_GLSL above; `scripts/check-smear.mjs` asserts they do.
-   * Emitted only when chromaSmear is present.
+   * Chroma-difference vector (R-Y, G-Y, B-Y) from the U and V planes: linear in Cb/Cr, so averaging
+   * taps is exact, in two fetches. Constants must match YUV_GLSL (`scripts/check-smear.mjs`).
    */
   private const val SMEAR_CHROMA_YUV = """
       vec3 sampleChroma(vec2 uv) {
@@ -51,14 +49,11 @@ object ShaderGen {
   """
 
   /**
-   * The chroma smear kernel: the centre weight, then one per tap each side. Gaussian with
-   * sigma = width / 2.5, sampled at k * width / SMEAR_HALF_TAPS reference pixels, so the taps
-   * span +/-2.5 sigma whatever their count and the 10-90 % chroma rise stays ~1.03 * width:
+   * Smear kernel: centre weight, then one per tap each side. Gaussian, sigma = width / 2.5, taps at
+   * k * width / SMEAR_HALF_TAPS reference px, so the 10-90 % chroma rise is ~1.03 * width:
    *   w[k] = exp(-(2.5 * k / SMEAR_HALF_TAPS)^2 / 2) / (w[0] + 2 * sum(w[1..]))
-   * This list IS the tap count — trimming it to five entries is the drop to 9 taps. Literals
-   * rather than Kotlin's exp(), which is only accurate to 1 ulp: the fragment source is hashed
-   * into every capture_pipeline_id, so a weight that moved between devices would move the id.
-   * `scripts/check-smear.mjs` parses these and re-derives them.
+   * The list length sets the tap count. Literals, not exp(): the source is hashed into the pipeline
+   * id, and exp() may differ by an ulp across devices. Re-derived by `scripts/check-smear.mjs`.
    */
   private val SMEAR_WEIGHTS = listOf(
     "0.16729192", "0.15338247", "0.11821653", "0.07659181", "0.04171460", "0.01909834", "0.00735029",
@@ -197,10 +192,8 @@ object ShaderGen {
     }
     // Styled source sampler; the clean output always uses the single un-softened tap.
     val src = if (sharpen != null) "sampleSharp" else softSrc
-    // Analog video carries chroma at a fraction of luma's bandwidth, so colour bleeds along the
-    // scan line while luma detail survives, with a slight rightward chroma delay. Luma — and
-    // everything upstream — still comes from $src; only the chroma-difference vector is re-averaged,
-    // off the U/V planes directly, which is far cheaper and well below the smear's own width.
+    // Analog video's narrow chroma bandwidth: colour bleeds along the scan line with a slight delay
+    // while luma stays sharp. Luma comes from $src; only chroma is re-averaged, off the U/V planes.
     // At amount 0, c + 0.0 * (s - d) is exactly c.
     val smear = profile.stages.withIndex().firstOrNull { it.value.type == "chromaSmear" }
     if (smear != null) {

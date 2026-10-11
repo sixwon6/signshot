@@ -59,9 +59,7 @@ import { publisherGenesisMint } from "../seeker/publisherGenesis";
 /** One collection at a time per edition, in this process. */
 const lock = (edition: string) => `collect:${cluster}:${edition}`;
 export const isCollectWorking = (edition: string) => operationInProgress(lock(edition));
-// ---------------------------------------------------------------------------
 // Links
-// ---------------------------------------------------------------------------
 
 /** An edition to collect, on the cluster the link named (always this build's own). */
 export interface CollectTarget {
@@ -80,10 +78,8 @@ const NOT_AN_ADDRESS = "This link does not name a Solana address.";
 const networkName = (c: Cluster) => (c === "devnet" ? "devnet" : "mainnet");
 
 /**
- * A query string, parsed by hand. React Native's `URL`/`URLSearchParams` are minimal shims whose
- * accessors are not all implemented, and this input arrives from outside the app, so the parse is
- * local, bounded and total: an undecodable escape makes the whole link unreadable rather than
- * silently dropping a parameter.
+ * Parsed by hand: React Native's `URL`/`URLSearchParams` shims are incomplete. An undecodable
+ * escape rejects the whole link rather than silently dropping a parameter.
  */
 function query(text: string): Map<string, string> | null {
   const out = new Map<string, string>();
@@ -110,9 +106,8 @@ function fromUrl(token: string): CollectTarget | null {
   const withoutFragment = fragment < 0 ? trimmed : trimmed.slice(0, fragment);
   const mark = withoutFragment.indexOf("?");
   if (mark < 0) return null;
-  // The route only, at any origin. A link chooses neither a program nor an RPC endpoint — the
-  // candy machine's own owner and `readEdition` decide trust (`loadEdition`) — so the host is
-  // presentation, and being strict about it would only break a shortened or proxied share link.
+  // Any origin: trust comes from the candy machine's owner and `readEdition`, not the host, so
+  // shortened or proxied share links still work.
   if (!/\/collect\/?$/i.test(withoutFragment.slice(0, mark))) return null;
   const params = query(withoutFragment.slice(mark + 1));
   if (params === null) return null;
@@ -139,12 +134,9 @@ function fromUrl(token: string): CollectTarget | null {
 }
 
 /**
- * A collect link, a bare edition address, or either one inside other text (a shared message, a
- * scanned QR payload). `null` when there is nothing usable; an Error when the text DOES name
- * something that cannot be collected on this build, because "nothing here" would be a lie.
- *
- * A bare address is only accepted as a whole whitespace-delimited token. Scanning for a base58 run
- * anywhere would happily cut a 44-character prefix out of an 88-character signature.
+ * A collect link or bare edition address, alone or inside other text. `null` when nothing usable;
+ * throws when the text names something this build cannot collect. A bare address must be a whole
+ * token, so a 44-char prefix of an 88-char signature is not mistaken for one.
  */
 export function parseCollectLink(input: string): CollectTarget | null {
   if (typeof input !== "string") return null;
@@ -168,9 +160,7 @@ export function parseCollectLink(input: string): CollectTarget | null {
 }
 
 
-// ---------------------------------------------------------------------------
 // Reading an edition
-// ---------------------------------------------------------------------------
 
 /** An edition `readEdition` accepted, with its verified picture as a data URI. */
 export interface Collectable {
@@ -216,9 +206,7 @@ export async function loadCollectable(edition: string): Promise<Collectable> {
   return asCollectable(display, anomaly);
 }
 
-// ---------------------------------------------------------------------------
 // State
-// ---------------------------------------------------------------------------
 
 type CollectEligibility = "collect" | "already" | "soldOut" | "needsGenesis" | "unavailable";
 
@@ -259,9 +247,7 @@ export async function getCollectState(c: Collectable, wallet: string): Promise<C
   }
 }
 
-// ---------------------------------------------------------------------------
 // Quoting and collecting
-// ---------------------------------------------------------------------------
 
 /** What the review shows, in the shape `CostEstimate` reads. */
 export interface CollectEstimate {
@@ -317,10 +303,6 @@ function claimError(error: unknown, collector: Address, payer: Address): Error {
   return new Error(FAILURES[reason] ?? error.message);
 }
 
-/**
- * Everything checked before the review shows a cost: the edition re-read (and the same terms as
- * shown), this wallet's state, its balance against the client's amounts, and a simulation.
- */
 /** The collector's balance of `mint` in its associated token account (0n when it has none). */
 async function tokenBalance(owner: Address, mint: Address): Promise<bigint> {
   const account = await fetchAccount(RPC_ENDPOINT, await associatedTokenAddress(owner, mint));
@@ -329,6 +311,10 @@ async function tokenBalance(owner: Address, mint: Address): Promise<bigint> {
   return new DataView(account.bytes.buffer, account.bytes.byteOffset, account.bytes.byteLength).getBigUint64(64, true);
 }
 
+/**
+ * Checked before the review shows a cost: the edition re-read with unchanged terms, this wallet's
+ * state, its balance against the client's amounts, and a simulation.
+ */
 export async function prepareCollect(c: Collectable, wallet: string): Promise<CollectQuote> {
   const collector = address(wallet);
   await assertEndpointCluster();

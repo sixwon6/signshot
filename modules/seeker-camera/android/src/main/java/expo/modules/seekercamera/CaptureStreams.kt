@@ -4,7 +4,7 @@ import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.util.Size
 
-/** The renderer and viewfinder use 4:3. Select only sizes the current camera advertises. */
+/** 4:3 YUV preview and still sizes, chosen from what the camera advertises. */
 data class CaptureStreams(val preview: Size, val still: Size) {
   companion object {
     fun read(chars: CameraCharacteristics): CaptureStreams {

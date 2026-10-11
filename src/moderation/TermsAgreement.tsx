@@ -1,7 +1,4 @@
-/**
- * The one-time agreement, in a sheet's dock in place of the action it comes before: the terms,
- * and the word that accepts them. Shown until `useTermsAgreement` reports the current version.
- */
+/** One-time terms, docked in place of the action they gate until the current version is accepted. */
 import { Linking, StyleSheet, View } from "react-native";
 import { Pill } from "../ui/primitives";
 import { space } from "../ui/theme";

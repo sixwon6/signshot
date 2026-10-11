@@ -1,7 +1,4 @@
-/**
- * The recipe name sheet, the options sheet for one's own recipes, and the {@link Track} every
- * slider uses. Presentational: state lives in `CameraScreen` and `useRecipes`.
- */
+/** Recipe name sheet, options sheet, and the shared {@link Track} slider. Presentational. */
 import { useRef } from "react";
 import {
   Modal,
@@ -18,10 +15,7 @@ import { typeScale as type } from "../ui/type";
 import { Pill } from "../ui/primitives";
 import { recipes as copy } from "../ui/copy";
 
-/**
- * The one slider shape: rail, fill and thumb, dragged directly; screen readers step it through
- * its accessibility actions. Also used by `CameraScreen.tsx` and `RecipeControls.tsx`.
- */
+/** Shared slider (rail, fill, thumb). Screen readers step it via accessibility actions. */
 export function Track({
   fraction,
   height,
@@ -35,15 +29,15 @@ export function Track({
   testID,
 }: {
   fraction: number;
-  /** The touch target's height where the row has more to give than the track's own 32. */
+  /** Touch target height; defaults to 32. */
   height?: number;
   disabled?: boolean;
   accessibilityLabel: string;
   accessibilityValue: { min: number; max: number; now: number };
-  /** A 0..1 position along the track. */
+  /** Position along the track, 0..1. */
   onAt: (fraction: number) => void;
   onStep: (direction: 1 | -1) => void;
-  /** Measured widths shared with the owning controls. */
+  /** Measured widths owned by the parent, so Track needs no state. */
   widths: { current: Record<string, number> };
   widthKey: string;
   testID?: string;
@@ -64,7 +58,7 @@ export function Track({
       }}
       onStartShouldSetResponder={() => !disabled}
       onResponderGrant={({ nativeEvent: event }) => {
-        // Wait for a tap to finish or a horizontal drag. Touch-down may be a scroll.
+        // Don't act on touch-down: it may become a vertical scroll.
         touch.current = { x: event.pageX, y: event.pageY, left: event.pageX - event.locationX, axis: null };
       }}
       onResponderMove={({ nativeEvent: event }) => {
@@ -101,12 +95,11 @@ export function Track({
   );
 }
 
-/** What the name sheet is for: a new recipe or a rename. */
 export type SheetMode = "new" | "rename";
 
 interface RecipeSheetProps {
   mode: SheetMode;
-  /** The recipe being named, for the title; null for a new one. */
+  /** Null when creating. */
   recipe: Recipe | null;
   name: string;
   busy?: boolean;
@@ -184,7 +177,7 @@ export function RecipeSheet({
   );
 }
 
-/** Long-press on one of the photographer's own chips: the three things it can do. */
+/** Long-press menu for a user recipe. */
 export function RecipeOptions({
   recipe,
   confirming,
@@ -250,7 +243,6 @@ export function RecipeOptions({
 
 const s = StyleSheet.create({
   root: { flex: 1, justifyContent: "flex-end" },
-  /** Dims the picture enough to read the rows over it, and closes the sheet when tapped. */
   scrim: {
     position: "absolute",
     top: 0,

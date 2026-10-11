@@ -1,19 +1,16 @@
 /**
- * Release gate: which cluster and endpoint will this APK use?
+ * Release gate: resolves the cluster and RPC endpoint the APK will embed, as
+ * `expo export:embed --dev false` loads them, and records the result in `.expo/release/config.json`.
  *
  *   npx tsx scripts/check-release-config.ts [--allow-cluster devnet]
  *   npm run release:check
  *
- * EXPO_PUBLIC_* values are inlined into the bundle and every `.env*` file is gitignored, so an
- * unreviewed local file could silently decide the cluster or endpoint of a signed release. This
- * loads the environment as `expo export:embed --dev false` does, resolves the cluster, prints it and
- * records it in `.expo/release/config.json`.
- *
- * Refuses when an env file a production bundle would load exists, when the cluster is not
- * mainnet-beta without `--allow-cluster devnet`, when a mainnet build has no RPC override or names a
- * public solana.com endpoint, when the RPC URL carries a query string or credentials, and, with
- * network checks that are not part of `npm test`, when the RPC endpoint is on another network or
- * Google's live attestation root list is not exactly the roots this build pins. Never prints the RPC URL: a path can still carry a provider key.
+ * EXPO_PUBLIC_* values are inlined into the bundle and `.env*` files are gitignored, so an
+ * unreviewed local file could pick a signed release's network. Refuses: any env file a production
+ * bundle would load; a non-mainnet cluster without `--allow-cluster devnet`; a mainnet build with no
+ * RPC override or a public solana.com one; an RPC URL with a query string or credentials; and
+ * (network checks, not in `npm test`) an endpoint on the wrong network or a pinned attestation root
+ * set that differs from Google's live list. The RPC URL is never printed: a path can carry a key.
  *
  * `resolveCluster` is duplicated from `src/solana/cluster.ts`, which cannot load under plain Node.
  */
@@ -34,19 +31,16 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RECORD = resolve(ROOT, ".expo", "release", "config.json");
 const COSIGNER_URL = "https://cosign.erashot.app";
 
-/** The build record written beside the APK. Values only — never a secret, never an endpoint. */
+/** Build record written beside the APK. No secrets, no endpoint. */
 interface ReleaseConfig {
   cluster: Cluster;
-  /** Whether an RPC override is configured, never the endpoint itself. */
+  /** Whether an RPC override is set; never the endpoint itself. */
   rpcUrlConfigured: boolean;
   commit: string;
   timestamp: string;
 }
 
-/**
- * Mirrors `src/solana/cluster.ts`'s `resolveCluster`: unset means mainnet, and anything that is
- * not one of the two spellings is refused rather than guessed.
- */
+/** Mirrors `resolveCluster` in `src/solana/cluster.ts`: unset means mainnet; unknown values throw. */
 export function resolveCluster(raw: string | undefined): Cluster {
   if (raw === undefined || raw === "" || raw === "mainnet-beta" || raw === "mainnet") return "mainnet-beta";
   if (raw === "devnet") return "devnet";
@@ -54,11 +48,9 @@ export function resolveCluster(raw: string | undefined): Cluster {
 }
 
 /**
- * Of `names`, the env files a release refuses, sorted: the four a production bundle loads (`.env`,
- * `.env.local`, `.env.production`, `.env.production.local`, per `@expo/env`'s `getFiles`) and any
- * other `.env*.local`. `.gitignore` hides them all, so an unreviewed one can silently reach a
- * release build; the values come from the command line instead. `scripts/release-artifact.mjs`
- * refuses the same names again right before Gradle bundles.
+ * Env files a release refuses, sorted: the four a production bundle loads (`.env`, `.env.local`,
+ * `.env.production`, `.env.production.local`, per `@expo/env` `getFiles`) plus any `.env*.local`.
+ * `release-artifact.mjs` re-checks the same names right before Gradle bundles.
  */
 export function refusedEnvFiles(names: readonly string[]): string[] {
   return names.filter((name) => /^\.env(?:\.production)?$|^\.env(?:\..+)?\.local$/.test(name)).sort();
@@ -105,13 +97,11 @@ function clusterRefusal(cluster: Cluster, allowCluster: Cluster | undefined): st
 }
 
 /**
- * The refusal for a build's RPC endpoint, or `null` when it is allowed. Without
- * `EXPO_PUBLIC_SOLANA_RPC_URL` a mainnet build falls back to Solana's public mainnet endpoint, which
- * https://solana.com/docs/references/clusters says is "not intended for production applications";
- * naming a public solana.com host outright is the same thing. On any cluster the URL must be https
- * and key-free: Expo inlines EXPO_PUBLIC_* values into the bundle in plain text
- * (https://docs.expo.dev/guides/environment-variables/), so a query string or credentials in it
- * would ship with every APK. The value is never repeated: a path can still carry a key.
+ * Refusal for the RPC endpoint, or `null`. Mainnet must not use Solana's public endpoints ("not
+ * intended for production applications", https://solana.com/docs/references/clusters), including
+ * the default when unset. Any cluster: https only, no credentials or query string, since Expo
+ * inlines EXPO_PUBLIC_* in plain text (https://docs.expo.dev/guides/environment-variables/).
+ * Never echoes the value.
  */
 export function rpcRefusal(cluster: Cluster, raw: string | undefined): string | null {
   const fix =
@@ -142,10 +132,9 @@ export function rpcRefusal(cluster: Cluster, raw: string | undefined): string | 
 }
 
 /**
- * The refusal for an RPC endpoint on another network than `cluster`, or `null`. The app refuses
- * one at runtime (`assertEndpointCluster` in `src/solana/cluster.ts`), which would stop every
- * operation of a shipped build; this asks `getGenesisHash` before building instead. Nothing `fetch`
- * or the endpoint says is repeated but a status and a hash: an error can quote the URL.
+ * Refusal for an endpoint whose `getGenesisHash` is not `cluster`'s, or `null`. Catches before the
+ * build what `assertEndpointCluster` would refuse at runtime. Only a status or a hash is echoed,
+ * since `fetch` errors can quote the URL.
  */
 export async function genesisRefusal(cluster: Cluster, raw: string | undefined): Promise<string | null> {
   if (raw === undefined || raw.trim() === "") return null;
@@ -168,15 +157,13 @@ export async function genesisRefusal(cluster: Cluster, raw: string | undefined):
   return `EXPO_PUBLIC_SOLANA_RPC_URL is not on ${cluster} (genesis ${said}, expected ${expected}).`;
 }
 
-/** Google's published set of valid attestation roots, a JSON array of PEM certificates. */
+/** Google's published attestation roots: a JSON array of PEM certificates. */
 const ATTESTATION_ROOT_LIST = "https://android.googleapis.com/attestation/root";
 
 /**
- * The pinned roots (`GOOGLE_ATTESTATION_ROOT_KEYS`) against Google's live list, by SHA-256 of each
- * root's SubjectPublicKeyInfo. A root Google added means new devices' chains would read "does not
- * end at a Google attestation root" in this build; one Google withdrew means this build still vouches for chains Google no longer does.
- * Either is a reviewed change to the pin and the PEM, never something a release ships past.
- * `null` when they match.
+ * Compares `GOOGLE_ATTESTATION_ROOT_KEYS` with Google's live list by SPKI SHA-256; `null` on match.
+ * An added root would reject new devices' chains; a withdrawn one would keep trusting chains
+ * Google no longer does. Either needs the pin and the PEM updated before release.
  */
 export async function attestationRootsRefusal(): Promise<string | null> {
   let pems: unknown;
@@ -213,7 +200,6 @@ export async function attestationRootsRefusal(): Promise<string | null> {
 /** `git rev-parse HEAD`, with `-dirty` when tracked files differ from it, or `"unknown"` outside a checkout. */
 function headCommit(cwd: string): string {
   try {
-    // stderr is discarded: outside a checkout git's own complaint is noise, not a result.
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     return `${git("rev-parse", "HEAD")}${git("status", "--porcelain", "--untracked-files=no") ? "-dirty" : ""}`;
@@ -222,7 +208,7 @@ function headCommit(cwd: string): string {
   }
 }
 
-/** Write the build record. Returns the path so the caller can name it. */
+/** Writes the build record and returns its path. */
 function writeRecord(file: string, config: ReleaseConfig): string {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, "utf8");
@@ -232,7 +218,7 @@ function writeRecord(file: string, config: ReleaseConfig): string {
 async function main(argv: readonly string[]): Promise<void> {
   const { allowCluster } = parseArgs(argv);
 
-  // BEFORE loading anything. An unreviewed file must be refused, not read.
+  // Before loading the environment: an unreviewed file is refused, not read.
   const files = envFiles(ROOT);
   if (files.length > 0) {
     fail(
@@ -244,7 +230,7 @@ async function main(argv: readonly string[]): Promise<void> {
     );
   }
 
-  // Exactly what `expo export:embed --dev false` does before it bundles.
+  // As `expo export:embed --dev false` does before bundling.
   setNodeEnv("production");
   loadProjectEnv(ROOT, { force: true });
 
@@ -256,7 +242,7 @@ async function main(argv: readonly string[]): Promise<void> {
   const network = await genesisRefusal(cluster, process.env.EXPO_PUBLIC_SOLANA_RPC_URL);
   if (network) fail(network);
 
-  // The app takes the co-signer's key from this host's /health: only the Worker's own address, when set.
+  // The app trusts the co-signer key served at this host's /health, so only the Worker's URL is allowed.
   const cosigner = process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL?.trim().replace(/\/+$/, "");
   if (cosigner && cosigner !== COSIGNER_URL) fail(`EXPO_PUBLIC_SEEKER_COSIGNER_URL must be ${COSIGNER_URL}.`);
 

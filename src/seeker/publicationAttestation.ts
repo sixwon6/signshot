@@ -1,9 +1,6 @@
 /**
- * The publish-time side of `signshot-attestation/1`: build the manifest for a draft, have the
- * keystore attest and sign it, and read the result back through the SAME reader every document
- * goes through, so nothing is written that this app could not later read. Never throws and never
- * waits forever: a phone that cannot attest, or does not answer in time, publishes a plain
- * document.
+ * Builds and keystore-signs a `signshot-attestation/1` manifest, then reads it back through the
+ * same reader every document uses. Never throws or hangs; failure means a plain document.
  */
 
 import { SeekerCamera, type CaptureRecord } from "../../modules/seeker-camera";
@@ -23,16 +20,12 @@ export interface PublicationAttestation {
   summary: AttestationSummary;
 }
 
-/** What happened, for a log line; the publication does not depend on it. */
+/** For logging only; publication proceeds either way. */
 export type AttestationOutcome =
   | { status: "attested"; attestation: PublicationAttestation }
   | { status: "unavailable"; reason: string };
 
-/**
- * StrongBox key generation takes about a second; remote key provisioning can take longer and can
- * touch the network. Past this, the publication goes ahead without evidence rather than holding
- * the photo's lock and the export queue.
- */
+/** StrongBox keygen ~1 s; remote key provisioning can take longer. Past this, publish without. */
 const TIMEOUT_MS = 20_000;
 
 export async function attestPublication(
@@ -73,7 +66,7 @@ export async function attestPublication(
     };
     const size = new TextEncoder().encode(canonicalize(bundle as unknown as JcsValue)).length;
     if (size > MAX_BUNDLE_BYTES) return { status: "unavailable", reason: `attestation bundle too large (${size} bytes)` };
-    // Read back as a stranger would. A chain this reader refuses is not evidence worth writing.
+    // Never write a chain the reader would refuse.
     const read = readAttestationBundle(bundle, commitment);
     return { status: "attested", attestation: read };
   } catch (error) {

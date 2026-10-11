@@ -1,7 +1,6 @@
 /**
- * The Wallet screen's two lists. Published: the editions whose guard this wallet holds. Collected:
- * Core assets this wallet owns whose collection belongs to an edition `readEdition` accepts. Copies
- * of anything else are not shown.
+ * Wallet screen lists. Published: editions whose guard this wallet holds. Collected: owned Core
+ * assets whose collection belongs to an edition `readEdition` accepts.
  */
 import { address, getBase64Decoder } from "@solana/kit";
 import {
@@ -22,13 +21,13 @@ export type LibraryPhoto = {
   photo: EditionDisplay;
   imageUri: string;
   number?: number;
-  /** The wallet the scan found holding this copy. Collected copies only. */
+  /** Collected copies only. */
   owner?: string;
 };
 export type LibraryResult = {
   items: LibraryPhoto[];
   unavailable: number;
-  /** Candidates this scan did not resolve, because the cap was reached. */
+  /** Candidates skipped past `MAX_EDITIONS`. */
   hiddenCount: number;
 };
 

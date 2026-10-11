@@ -6,22 +6,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { mock } from "node:test";
 
 /**
- * The capture hook's wiring, with no device. `check-runtime-behavior.mjs` covers the pure dial in
- * `src/capture/mode.ts`; this renders the real `useCaptureControls` and drives it only through its
- * return value, checking what the camera was told and what reached storage.
+ * Renders the real `useCaptureControls` with no device and drives it through its return value,
+ * checking what the camera was told and what reached storage. The pure dial (`src/capture/mode.ts`)
+ * is covered by `check-runtime-behavior.mjs`.
  *
- * Two modules are replaced where the app stops being JavaScript:
- *   modules/seeker-camera     a fake camera that answers as `resolve` in CaptureControls.kt does
+ * Mocked at the native boundary only:
+ *   modules/seeker-camera     fake camera mirroring `resolve` in CaptureControls.kt
  *   AsyncStorage              a Map
- * apply.ts, store.ts, captureChrome.ts and timing.ts are the real ones. `mock.module` needs
- * --experimental-test-module-mocks, so the checks run in a worker started with it; it matches on
- * the resolved file URL (a bare Windows path is silently ignored) and works because tsx loads the
- * app's .ts as CommonJS.
+ * `mock.module` needs --experimental-test-module-mocks, so checks run in a re-spawned worker. It
+ * matches on file URLs (a bare Windows path is silently ignored) and relies on tsx loading .ts as CJS.
  *
- * react-dom renders into a stub container: the probe returns null, so react-dom only needs
- * something to hang its listeners on, and `act` needs the development React.
+ * react-dom renders into a stub container (the probe returns null); `act` needs development React.
  *
- * `--hook <file>` checks another copy of the hook instead, e.g. a mutant, to prove a check has teeth.
+ * `--hook <file>` runs the checks against another copy of the hook, e.g. a mutant.
  */
 
 const hookArg = process.argv.indexOf("--hook");
@@ -41,7 +38,7 @@ if (!process.argv.includes("--worker")) {
   const require = createRequire(import.meta.url);
   const hop = () => new Promise((done) => setImmediate(done));
 
-  // ---- The camera. Answers on a later turn of the loop, or when the check says so (`hold`).
+  // ---- Camera. Answers on a later tick, or on demand when `hold` is set.
   const CAPS = { manualSensor: true, manualPostProcessing: true, iso: { min: 50, max: 6400 },
     shutterNs: { min: 100_000, max: 30_000_000_000 }, ev: { min: -6, max: 6, step: 1 / 3 },
     aeLock: true, awbLock: true, awbModes: ["auto", "daylight", "shade"], afModes: ["continuous-picture", "off"],
@@ -102,7 +99,7 @@ if (!process.argv.includes("--worker")) {
     },
   };
 
-  // ---- The phone's storage.
+  // ---- Storage.
   const SETTINGS_KEY = "capture.v1", CHROME_KEY = "capture.chrome.v1";
   const storage = {};
   const AsyncStorage = {
@@ -211,9 +208,8 @@ if (!process.argv.includes("--worker")) {
   }
 
   {
-    // The restore refused by a camera that answers a moment later. The apply then succeeds, on the
-    // defaults, and saving those would replace what the photographer had: settings, and what the
-    // dial set aside. Nothing is written over a store that was not read.
+    // Capabilities refused once, then the camera comes up on defaults. Saving those would overwrite
+    // the stored settings and parked values, so nothing is written over a store that was not read.
     fresh();
     native.capabilityRefusals = 1;
     storage.items.set(SETTINGS_KEY, JSON.stringify({ v: 1,
@@ -401,8 +397,7 @@ if (!process.argv.includes("--worker")) {
     assert.deepEqual(cam.view.settings, AUTOMATIC, "one action, and the camera is choosing everything again");
     assert.deepEqual(native.requests.at(-1), AUTOMATIC, "a value still waiting in the throttle must not follow it");
     assert.equal(cam.view.applying, false);
-    // It is asked for by holding the dial's AUTO, so that is where the dial is left, with nothing
-    // set aside for P or M to bring back, now or after a restart.
+    // Triggered by holding AUTO on the dial, so the dial stays there with nothing set aside.
     assert.equal(cam.view.mode, "auto", "a full reset leaves the dial on AUTO");
     assert.equal(cam.view.remembered, null, "and sets nothing aside");
     await cam.press((now) => now.chooseMode("manual"));
@@ -485,8 +480,7 @@ if (!process.argv.includes("--worker")) {
   }
 
   {
-    // A control moved while the cold start waits for the view takes the revision, and the waiting
-    // with it.
+    // A control moved while the cold start waits for the view takes over the revision and the retry.
     fresh();
     seed({ ...AUTOMATIC, whiteBalance: "shade" }, { readout: true, display: "plain" });
     native.refusals = [NO_VIEW, NO_VIEW, NO_VIEW];

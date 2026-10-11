@@ -1,12 +1,8 @@
 # Cloudflare Pages response headers (https://developers.cloudflare.com/pages/configuration/headers/).
-# The site is static: no Functions, and no page makes a request of its own.
-#
-# `collect/index.html` and `404.html` repeat their CSP as a <meta> so the policy travels with the
-# document; that copy omits `frame-ancestors`, which CSP3 ignores in a <meta>. Edit both copies
-# together.
+# `collect/index.html` and `404.html` repeat their CSP as a <meta> (minus `frame-ancestors`, which
+# a <meta> ignores). Edit both copies together.
 
-# Deny every page-level API the site never calls. No HSTS `preload`: `.app` is preloaded at the
-# TLD, so it would add nothing and is hard to reverse.
+# No HSTS `preload`: `.app` is already preloaded at the TLD.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
@@ -14,9 +10,7 @@
   Permissions-Policy: geolocation=(), camera=(), microphone=(), browsing-topics=(), payment=(), usb=(), hid=(), serial=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
-# The static pages, by exact path. No script and no inline style: one same-origin stylesheet (no
-# url(), no @import), one SVG and the icon. The file paths are listed beside the served paths so a
-# direct request is covered too.
+# Static pages: no script, no inline style. File paths are listed beside served paths.
 /
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
@@ -29,8 +23,7 @@
 /privacy.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-# The terms, `terms/index.html`: the same static shape as the privacy page, served at `/terms/`.
-# `/terms` and the file path redirect there; both are listed so no response goes out without it.
+# `/terms` and `/terms/index.html` redirect to `/terms/`; all three are covered.
 /terms
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
@@ -40,26 +33,21 @@
 /terms/index.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-# Signshot's moderation list, read by the app (`src/moderation/core.ts`). Short-lived, so an edit
-# reaches readers within minutes; the app fails open if it is unreadable.
+# Read by the app (`src/moderation/core.ts`); short max-age so edits land within minutes.
 /moderation.json
   Cache-Control: public, max-age=300
 
-# The not-found page, when requested by its own path. A 404 answered for some other path
-# carries only the /* baseline from this file plus the <meta> policy inside 404.html.
+# A 404 served for any other path gets only the /* baseline plus 404.html's <meta> policy.
 /404.html
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-# The collect link page: the static policy plus the one inline script, by hash, which only sets
-# the "Open in Signshot" link. It fetches nothing (`connect-src 'none'`) and uses no DOM XSS sink,
-# so Trusted Types is required and no policy may be created.
+# Static policy plus one hashed inline script that sets the "Open in Signshot" link. No fetches,
+# no DOM XSS sinks, so Trusted Types is enforced with no policies.
 /collect/*
   Content-Security-Policy: default-src 'none'; script-src 'sha256-egJvXt1btdP6enz/y1WzhQopgbniaOsQWWfcQy4VNQM='; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'
 
-# Digital Asset Links: Android accepts `/.well-known/assetlinks.json` only as JSON, and the short
-# max-age keeps a certificate rotation from being cached for a day. Everything under
-# `/.well-known/` is labelled JSON; anything else put there needs a narrower rule first, since
-# `nosniff` refuses a mislabelled file.
+# Android accepts assetlinks.json only as JSON; short max-age so a certificate rotation propagates.
+# Everything here is labelled JSON, so a non-JSON file needs a narrower rule first.
 /.well-known/*
   Content-Type: application/json
   Cache-Control: public, max-age=300

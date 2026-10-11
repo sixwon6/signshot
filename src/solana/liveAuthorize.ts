@@ -8,13 +8,11 @@ import { createSignInMessageText } from "@solana/wallet-standard-util";
 import type { Account, AppIdentity } from "@wallet-ui/react-native-kit";
 
 /**
- * `authorize` that reads the auth token from wallet-ui's store at call time, not from a React
- * closure: Seed Vault reissues the token on every authorize and revokes the old one, so a captured
- * token fails a second back-to-back session. Otherwise the same as wallet-ui's
- * `authorizeMobileWalletSession`. Every wallet session this app opens goes through it.
+ * wallet-ui's `authorizeMobileWalletSession`, but reading the auth token from the store at call
+ * time: Seed Vault reissues and revokes the token on every authorize, so a token captured in a
+ * React closure fails the next back-to-back session.
  */
 
-/** The three things this needs from wallet-ui's authorization store. */
 interface LiveAuthorizationStore {
   $authToken: { get(): string | undefined };
   $selectedAccount: { get(): Account | undefined };
@@ -29,7 +27,6 @@ interface LiveAuthorization {
 
 interface LiveAuthorizeConfig {
   store: LiveAuthorizationStore;
-  /** Whatever the wallet accepts — the provider hands the same value to wallet-ui itself. */
   chain: NonNullable<Parameters<KitMobileWallet["authorize"]>[0]["chain"]>;
   identity: AppIdentity;
 }
@@ -52,11 +49,7 @@ function toAccount(raw: { address: string; label?: string; icon?: string }): Acc
   } as Account;
 }
 
-/**
- * Authorize inside an open session and return the selected account. Throws what the wallet
- * throws, except a rejected cached token, which is retried once without a token exactly as
- * wallet-ui does.
- */
+/** A rejected cached token is retried once without a token, as wallet-ui does. */
 export async function liveAuthorize(
   config: LiveAuthorizeConfig,
   wallet: KitMobileWallet,
@@ -64,14 +57,12 @@ export async function liveAuthorize(
   return (await authorizeWith(config, wallet)).account;
 }
 
-/** MWA's `sign_in_result` shape, base64 fields: what the co-signer verifies. */
+/** MWA `sign_in_result`, base64 fields. */
 export interface SignInResult { address: string; signed_message: string; signature: string }
 
 /**
- * Sign-in-with-Solana for an account this session has already authorized: the wallet signs the
- * payload's message with `sign_messages`. It is kept apart from `authorize` (no
- * `sign_in_payload`) because Seed Vault Wallet reissues the token on every authorize: the new
- * token has to be stored before anything else in the session can fail.
+ * SIWS via `sign_messages` rather than authorize's `sign_in_payload`: Seed Vault reissues the token
+ * on every authorize, and the new one must be persisted before anything else can fail.
  */
 export async function signInWith(
   wallet: KitMobileWallet,
@@ -83,7 +74,7 @@ export async function signInWith(
   const [signed] = await wallet.signMessages({ addresses: [account.addressBase64], payloads: [message] });
   if (!(signed instanceof Uint8Array) || signed.length < 64)
     throw new Error("The wallet did not sign in. Try again, or use another wallet.");
-  // The signature alone, or the message with the signature after it.
+  // Wallets return either the bare signature or message + signature.
   const body = signed.length === 64 ? message : signed.subarray(0, signed.length - 64);
   const base64 = getBase64Decoder();
   return {
@@ -94,9 +85,8 @@ export async function signInWith(
 }
 
 /**
- * The wallet's `authorization request failed` (-1). Inside a session the adapter library hands
- * its native promise back un-awaited, so the error arrives as React Native's raw rejection and
- * only becomes a `SolanaMobileWalletAdapterProtocolError` once the session has ended.
+ * ERROR_AUTHORIZATION_FAILED (-1). Inside a session it arrives as RN's raw rejection; it only
+ * becomes a `SolanaMobileWalletAdapterProtocolError` after the session ends.
  */
 function authorizationFailed(e: unknown): boolean {
   if (e instanceof SolanaMobileWalletAdapterProtocolError)
@@ -120,9 +110,8 @@ async function authorizeWith(
     try {
       result = await wallet.authorize({ chain, identity });
     } catch (retryError) {
-      // MWA spec: a token rejected with ERROR_AUTHORIZATION_FAILED must be discarded. Drop it
-      // even when the no-token retry fails too, or every later operation re-prompts. Best
-      // effort: a storage failure must not replace the wallet's own error.
+      // MWA spec: a token rejected with ERROR_AUTHORIZATION_FAILED must be discarded, even if
+      // the retry fails. Best effort so a storage error can't mask the wallet's.
       if (authToken !== undefined) await store.persist(null).catch(() => undefined);
       throw retryError;
     }

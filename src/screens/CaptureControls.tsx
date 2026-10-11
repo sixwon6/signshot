@@ -1,8 +1,6 @@
 /**
- * The camera's readout cells, the histogram DISP draws on the picture, and the control vocabulary
- * `CaptureAdjust.tsx` shares. The cells keep one order: P and M show all five controls and the
- * look as a sixth; AUTO has no cells. A control the camera lacks is absent; one the mode forbids
- * is dimmed. Presentational: state lives in `useCaptureControls`.
+ * Readout cells, the DISP histogram, and control helpers shared with `CaptureAdjust.tsx`.
+ * Controls the camera lacks are omitted; ones the mode forbids are dimmed. Presentational.
  */
 import { StyleSheet, Text, View } from "react-native";
 import {
@@ -24,14 +22,11 @@ import { typeScale as type } from "../ui/type";
 import { Cell, CHROME_FONT_SCALE } from "../ui/primitives";
 import { captureControls as copy } from "../ui/copy";
 
-/** The five camera controls that have a cell and an adjuster. */
 export type ControlKey = "iso" | "shutter" | "ev" | "whiteBalance" | "focus";
-/** What can be live under the thumb: a camera control, or the look. */
 export type LiveKey = ControlKey | "look";
 
 const ORDER: readonly ControlKey[] = ["iso", "shutter", "ev", "whiteBalance", "focus"];
 
-/** A control's full name, spoken. */
 export const NAME: Record<ControlKey, string> = {
   iso: copy.iso,
   shutter: copy.shutter,
@@ -40,7 +35,6 @@ export const NAME: Record<ControlKey, string> = {
   focus: copy.focus,
 };
 
-/** The short form a cell carries. */
 const TAG: Record<ControlKey, string> = {
   iso: copy.tag.iso,
   shutter: copy.tag.shutter,
@@ -49,13 +43,13 @@ const TAG: Record<ControlKey, string> = {
   focus: copy.tag.focus,
 };
 
-/** Which controls THIS camera has, in this mode. The one predicate the cells and the adjuster obey. */
+/** Controls this camera supports in this mode; the single source for cells and adjuster. */
 export function controlsOf(caps: CaptureCapabilities, mode: CaptureMode): readonly ControlKey[] {
   const readout = mode !== "auto";
   const kelvin = caps.manualPostProcessing && caps.kelvin !== UNAVAILABLE;
   return ORDER.filter((key) => {
     switch (key) {
-      // The pair the dial's M holds: both cells or neither, by the rule that gives the dial its M.
+      // Both or neither, by the same rule that enables M.
       case "iso":
       case "shutter":
         return readout && holdsExposure(caps);
@@ -69,15 +63,12 @@ export function controlsOf(caps: CaptureCapabilities, mode: CaptureMode): readon
   });
 }
 
-/**
- * What the mode forbids of a control this camera has. Brightness steers the meter, and M has
- * none. Such a cell is dimmed and cannot be made live.
- */
+/** EV steers the meter, which M doesn't use; forbidden cells are dimmed and can't go live. */
 export function forbiddenIn(key: ControlKey, mode: CaptureMode): boolean {
   return key === "ev" && mode === "manual";
 }
 
-/** The cell that is live when the dial arrives at a mode: what that mode is for. */
+/** Default live cell per mode: EV in P, shutter in M. */
 export function firstLive(caps: CaptureCapabilities, mode: CaptureMode): ControlKey | null {
   if (mode === "auto") return null;
   const have = controlsOf(caps, mode).filter((key) => !forbiddenIn(key, mode));
@@ -85,21 +76,20 @@ export function firstLive(caps: CaptureCapabilities, mode: CaptureMode): Control
   return have.includes(wanted) ? wanted : (have[0] ?? null);
 }
 
-/** The ISO ladder narrowed to this sensor. Empty when the camera has no manual sensitivity. */
+/** ISO ladder clipped to the sensor's range; empty without manual ISO. */
 export function isoSteps(caps: CaptureCapabilities): readonly number[] {
   const range = caps.iso;
   if (range === UNAVAILABLE) return [];
   return ISO_LADDER.filter((step) => step >= range.min && step <= range.max);
 }
 
-/** The shutter ladder narrowed to this shutter. */
 export function shutterSteps(caps: CaptureCapabilities): readonly number[] {
   const range = caps.shutterNs;
   if (range === UNAVAILABLE) return [];
   return SHUTTER_LADDER_NS.filter((step) => step >= range.min && step <= range.max);
 }
 
-/** The lights people stand in, for the white-balance modes Camera2 names. */
+/** Labels for Camera2 AWB modes. */
 export const LIGHT_LABEL: Record<string, string> = {
   daylight: copy.lights.daylight,
   "cloudy-daylight": copy.lights.cloudy,
@@ -110,7 +100,7 @@ export const LIGHT_LABEL: Record<string, string> = {
   twilight: copy.lights.twilight,
 };
 
-/** The same lights in a cell's width. A long name is for the chip; the cell says it short. */
+/** Short forms that fit a cell. */
 const LIGHT_TAG: Record<string, string> = {
   fluorescent: copy.lightTags.fluorescent,
   "warm-fluorescent": copy.lightTags.warmFluorescent,
@@ -120,21 +110,15 @@ const LIGHT_TAG: Record<string, string> = {
 interface Reading {
   key: ControlKey;
   tag: string;
-  /** What the cell says: the metered value in auto, the held value when one is held. */
+  /** Held value if set, else the metered value. */
   value: string;
-  /** The same, in full, for a screen reader. */
   spoken: string;
-  /** True while the photographer is holding this control by hand. */
   held: boolean;
-  /** `forbiddenIn` this mode: dimmed, and it cannot be made live. */
   forbidden: boolean;
 }
 
-/**
- * The cells' readings, in order. AUTO is what a formatter returns when nothing has been metered
- * yet, so a cold camera reads AUTO rather than an invented number. The cell carries the tag
- * itself, so a formatter's copy of it is dropped: a word, never a digit.
- */
+// Before the first meter reading the formatters return AUTO rather than a made-up number.
+// The cell renders its own tag, so the "ISO " prefix is stripped from the value.
 function readings(
   settings: CaptureSettings,
   caps: CaptureCapabilities,
@@ -191,15 +175,13 @@ interface ReadoutCellsProps {
   caps: CaptureCapabilities;
   settings: CaptureSettings;
   meter: MeterReading | null;
-  /** The cell whose adjuster is up in the row above. */
   live: LiveKey | null;
-  /** The look in force, for the sixth cell. */
+  /** Active look's name, shown in the sixth cell. */
   look: string;
   disabled?: boolean;
   onLive: (key: LiveKey) => void;
 }
 
-/** The readout, in the sheet. Every cell this camera has shares the row's width equally. */
 export function ReadoutCells({
   mode,
   caps,
@@ -244,15 +226,11 @@ export function ReadoutCells({
   );
 }
 
-/** Clipping as a percentage of the pixels the meter sampled: `0.0`, `3.2`. */
+/** Clipped fraction of sampled pixels as a one-decimal percent. */
 const clippedPercent = (fraction: number): string =>
   (Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0)) * 100).toFixed(1);
 
-/**
- * 64 bars of preview luma, plain Views, on the picture's top corner. Scaled to the tallest bin,
- * because a histogram is read for its shape; the two numbers beneath it are the absolute fact.
- * Each sits under the end of the scale it counts, so neither needs a word.
- */
+/** 64-bin preview luma histogram, normalized to the tallest bin; black/white clip % beneath. */
 export function Histogram({ meter }: { meter: MeterReading | null }) {
   const bins = meter?.histogram ?? [];
   const peak = bins.reduce((high, bin) => (bin > high ? bin : high), 0);
@@ -292,7 +270,7 @@ export function Histogram({ meter }: { meter: MeterReading | null }) {
 const s = StyleSheet.create({
   cells: { flexDirection: "row", gap: 2 },
   cell: { flexGrow: 1, flexBasis: 0 },
-  /** A name, not a number: the look's cell is half as wide again. */
+  /** Wider: holds a name, not a number. */
   lookCell: { flexGrow: 1.5, flexBasis: 0 },
   histogram: {
     position: "absolute",

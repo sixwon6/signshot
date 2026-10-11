@@ -5,19 +5,15 @@ import {
   SolanaMobileWalletAdapterProtocolErrorCode,
 } from "@solana-mobile/mobile-wallet-adapter-protocol";
 /**
- * Did the user back out, rather than something breaking? A cancellation must never render as an
- * error. The shapes, and where each comes from:
- *
- *   ERROR_AUTHORIZATION_FAILED (-1)   protocol error: declined the authorize screen
- *   ERROR_NOT_SIGNED (-3)             protocol error: declined the signing prompt
+ * User backed out; must never render as an error.
+ *   ERROR_AUTHORIZATION_FAILED (-1)   declined authorize
+ *   ERROR_NOT_SIGNED (-3)             declined signing
  *   "Local association cancelled by user"
- *                                     dismissed the wallet picker (Android). The RN bridge puts the
- *                                     sentence in `error.code`, so both `code` and `message` are checked.
- *   ERROR_ASSOCIATION_CANCELLED       the same event on the WebSocket (browser) transport
- *   ERROR_SESSION_CLOSED              browser transport only; kept so the check is transport-agnostic
- *
- * wallet-ui retries `authorize` without a token after ERROR_AUTHORIZATION_FAILED, which the wallet
- * also returns for a decline, so a first decline re-prompts once before this sees the error.
+ *                                     dismissed the wallet picker; the RN bridge puts it in `code`
+ *   ERROR_ASSOCIATION_CANCELLED       same, WebSocket transport
+ *   ERROR_SESSION_CLOSED              WebSocket transport only
+ * wallet-ui retries `authorize` once without a token after ERROR_AUTHORIZATION_FAILED, so a first
+ * decline re-prompts before reaching here.
  */
 export function isUserCancellation(e: unknown): boolean {
   if (e instanceof SolanaMobileWalletAdapterProtocolError) {
@@ -44,13 +40,9 @@ export function isUserCancellation(e: unknown): boolean {
 }
 
 /**
- * Did the wallet simply take too long to answer? Seed Vault Wallet sends
- * `sign_and_send_transactions` immediately but replies only when its Success sheet is closed, and
- * the RN adapter rejects with "Timed out waiting for response" after 90 s (`CLIENT_TIMEOUT_MS`).
- *
- * Not a cancellation: the transaction has usually landed, so screens must say so and re-check
- * status rather than offer another approval. "Timed out waiting for local association to be
- * ready" and ERROR_SESSION_TIMEOUT are not matched: the wallet never opened, so nothing was sent.
+ * Seed Vault Wallet sends `sign_and_send_transactions` at once but replies only when its Success
+ * sheet closes; the RN adapter gives up after 90 s (`CLIENT_TIMEOUT_MS`). The transaction has
+ * usually landed: re-check status, don't re-prompt. Association timeouts are excluded (nothing sent).
  */
 export function isWalletResponseTimeout(e: unknown): boolean {
   const code =

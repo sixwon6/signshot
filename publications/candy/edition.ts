@@ -63,11 +63,9 @@ import {
 export { createTokenAccountInstruction };
 
 /**
- * The key both the candy machine's authority and the collection's update authority are handed
- * to: the System Program's derived address for ["signshot", "no authority"] (bump 253). A derived
- * address lies off the ed25519 curve, so no private key exists for it, and only the deriving
- * program could sign for it by CPI; the System Program never makes one. `noAuthorityAddress()`
- * re-derives it.
+ * Final candy machine authority and collection update authority: the System Program PDA of
+ * ["signshot", "no authority"] (bump 253). Off-curve, and the System Program never signs by CPI,
+ * so nobody can ever sign for it.
  */
 export const NO_AUTHORITY = "864BTg5dsR5DtBxPHm8uiU9GnRWL5V94AneqsnLRxgg8" as Address;
 export const noAuthorityAddress = async () =>
@@ -141,17 +139,16 @@ export async function editionGuards(publisher: Address, price: Price, cosigner: 
 /** The guard copy 1 is minted under: Edition only, so the publisher opens no counter. */
 const COPY_ONE_GUARDS: GuardData = { default: { edition: { editionStartOffset: 0 } }, groups: [] };
 /**
- * Written just before every guard set that may be larger than the one in place. Candy Guard's
- * `update` fails when the account already holds more lamports than its new, larger size needs
- * (anyone can send it some, and a rent reduction leaves every older guard that way); shrinking
- * first returns the excess to the payer, and the guard then grows from exactly its minimum.
+ * Written before any guard set that may grow the account. Candy Guard's `update` fails when the
+ * account already holds more lamports than the new size needs (anyone can send it some);
+ * shrinking first returns the excess, so the guard grows from exactly its minimum.
  */
 const NO_GUARDS: GuardData = { default: {}, groups: [] };
 
 export interface PublishInput {
   /** The wallet's address: it pays, and signs first (see `transactions.ts`). */
   publisher: Address;
-  /** Fresh keypairs the phone generates: the collection, the candy machine (also the guard's base), copy 1. */
+  /** Fresh keypairs: the collection, the candy machine (also the guard's base), copy 1. */
   collection: KeyPairSigner;
   candyMachine: KeyPairSigner;
   copy: KeyPairSigner;
@@ -168,9 +165,8 @@ export interface PublishInput {
  *      `wrap`; `mint_v1` copy 1 to the publisher; guard `update` to the edition's set; candy
  *      machine authority and collection update authority both to `NO_AUTHORITY`. Atomic: nobody
  *      can mint before copy 1, and no edition ever exists unlocked.
- *      (No VerifiedCreators plugin: on a collection, Core checks it on every asset created into
- *      the collection, and the candy machine's authority is not the creator, so every claim
- *      would fail with "Verified creators: Rejected".)
+ *      No VerifiedCreators plugin: Core checks it on every asset minted into the collection, and
+ *      the candy machine's authority is not the creator, so every claim would be rejected.
  * Signers: the wallet on both; collection + candy machine on 1; candy machine + copy on 2.
  */
 export async function publishTransactions(input: PublishInput) {
@@ -221,9 +217,7 @@ export async function publishTransactions(input: PublishInput) {
   return { draft, candyGuard, authorityPda, guards };
 }
 
-// ---------------------------------------------------------------------------------------------
-// Reading
-// ---------------------------------------------------------------------------------------------
+// --- Reading ---
 
 /** An account as an RPC returns it; `null` when it does not exist. */
 export interface AccountView { address: Address; owner: Address; lamports: bigint; bytes: Uint8Array }
@@ -234,13 +228,9 @@ export interface Edition {
   candyGuard: Address;
   collection: Address;
   /**
-   * The publisher: one key that (a) is the collection's only royalty creator, (b) receives every
-   * payment, and (c) alone can change the price or close the sale (the guard's authority). It
-   * proves those three are the same key. It does NOT prove that key signed the publish: anyone can
-   * publish an edition naming someone else as creator, payee and guard authority (that someone
-   * then gets the money and the controls, but the photograph and title are the real signer's).
-   * Nor does it prove who holds the key or that the photograph is theirs. A later `set_authority`
-   * hands the guard on, and the edition then stops reading.
+   * The one key that is sole royalty creator, payee and guard authority. Not proof that this key
+   * signed the publish or owns the photograph: anyone can publish naming another key. A later
+   * guard `set_authority` makes the edition stop reading.
    */
   publisher: Address;
   royaltyBasisPoints: number;
@@ -415,10 +405,7 @@ export type ClaimStatus =
   /** Open edition, this wallet has its copy. */
   | "claimed"
   | "unclaimed"
-  /**
-   * Something else sits at the counter's address (lamports someone sent there, any other owner
-   * or size): the guard cannot create the counter, so this wallet can never claim this edition.
-   */
+  /** Something else occupies the counter's address, so the guard can never create it. */
   | "blocked"
   /** Seeker-only: the server decides, one copy per Genesis Token. */
   | "server";
@@ -431,9 +418,7 @@ export function claimStatus(edition: Edition, counter: AccountView | null): Clai
   return (counter.bytes[0] | (counter.bytes[1] << 8)) >= 1 ? "claimed" : "unclaimed";
 }
 
-// ---------------------------------------------------------------------------------------------
-// Claiming
-// ---------------------------------------------------------------------------------------------
+// --- Claiming ---
 
 /** A copy's Core account: key, owner, update authority (kind + key), name, uri, seq None, then the Edition plugin's header, registry and data. */
 export const copyBytes = (name: string, uri: string) => 108 + utf8(name).length + utf8(uri).length;
@@ -450,9 +435,9 @@ export interface ClaimCost {
   /** Exactly what the one-shot payer is funded with: price + copy + counter. */
   payerFunding: bigint;
   /**
-   * Bytes the one-shot payer is allocated after `mint_v1`: enough that its rent exceeds
-   * `payerFunding`, so any balance left (a lowered price) fails the transaction instead of
-   * stranding lamports under a key nobody keeps. Null when no account can be that large.
+   * Bytes allocated to the one-shot payer after `mint_v1`, so its rent exceeds `payerFunding`:
+   * any leftover balance (a lowered price) fails the transaction instead of stranding lamports.
+   * Null when no account can be that large.
    */
   payerSpace: number | null;
   /** The temporary token account's rent: paid and returned within the transaction. */
@@ -466,10 +451,7 @@ export interface ClaimCost {
   peak: bigint;
 }
 
-/**
- * The one set of amounts the review screen shows and the claim transaction moves. `rent` answers
- * getMinimumBalanceForRentExemption.
- */
+/** Amounts the review screen shows and the claim moves. `rent` is getMinimumBalanceForRentExemption. */
 export async function claimCost(edition: Edition, rent: (bytes: number) => bigint | Promise<bigint>): Promise<ClaimCost> {
   const price = edition.price.kind === "sol" ? edition.price.lamports : 0n;
   const tokens = edition.price.kind === "token" ? edition.price.amount : 0n;
@@ -490,9 +472,8 @@ export async function claimCost(edition: Edition, rent: (bytes: number) => bigin
 }
 
 /**
- * Whether a wallet holding `lamports` can pay `cost`: it must cover the peak, and what remains
- * must be zero or at least the rent floor (`rentFloor` = rent for 0 bytes), or the runtime
- * refuses the transaction (InsufficientFundsForRent) however small the shortfall.
+ * The wallet must cover the peak and be left with zero or at least `rentFloor` (rent for 0
+ * bytes); otherwise the runtime fails with InsufficientFundsForRent.
  */
 export function canAfford(lamports: bigint, cost: ClaimCost, rentFloor: bigint) {
   if (lamports < cost.peak) return false;
@@ -515,19 +496,14 @@ export interface ClaimInput {
 }
 
 /**
- * One claim at exactly the reviewed terms, as a one-transaction draft:
- *   transfer `payerFunding` to a one-shot payer that pays the price, the counter and the copy in
- *   `mint_v1` and must end at zero; it is then allocated `payerSpace` bytes, so any balance left
- *   is below its rent. A raised SOL price fails (6018, or System 1 inside the guard when the rise
- *   is smaller than the copy and counter); a lowered one leaves a balance and fails
- *   (InsufficientFundsForRent). Nothing is swept back: a System transfer needs its amount when the
- *   transaction is signed, so failing is the only safe answer to a lowered price.
- *   Token price: a temporary token account is created, funded with exactly the reviewed amount,
- *   pays in `mint_v1` and is closed back to the wallet. A raised price fails (6020), a lowered one
- *   leaves tokens and the close fails.
- * A Seeker-only claim names the server's key as a signer; the server signs after `finish`.
- * Refuses (throws) for anything `readEdition` did not accept, a sold-out edition, or a wallet that
- * has claimed or is blocked.
+ * One claim at exactly the reviewed terms, in one transaction:
+ *   SOL: a one-shot payer funded with `payerFunding` pays price, counter and copy in `mint_v1`,
+ *   then is allocated `payerSpace` bytes. A raised price fails (6018, or System 1 for a small
+ *   rise); a lowered one leaves a balance below rent and fails (InsufficientFundsForRent).
+ *   Nothing is swept back: a transfer's amount is fixed at signing.
+ *   Token: a temporary token account holds exactly the reviewed amount, pays in `mint_v1` and is
+ *   closed to the wallet. A raised price fails (6020); a lowered one leaves tokens and the close fails.
+ * Seeker-only claims name the server key as a signer; the server signs after `finish`.
  */
 export async function claimDraft(input: ClaimInput): Promise<Draft> {
   const e = input.edition;
@@ -568,10 +544,9 @@ export type ClaimFailure =
   | "needs-cosigner" | "closed" | "publisher-cannot-receive" | "other";
 
 /**
- * One reason for a failed claim, from the transaction error, its logs and the account keys of the
- * message as sent (static accounts in order, after any wallet reordering). For `claimDraft`
- * transactions, where the one-shot payer and the temporary token account hold exactly the
- * reviewed amounts, so any shortfall inside the guard means the terms moved.
+ * Classifies a failed `claimDraft` transaction. `accountKeys` are the static keys as sent (after
+ * any wallet reordering). The one-shot payer and temp token account hold exactly the reviewed
+ * amounts, so a shortfall inside the guard means the terms moved.
  */
 export function classifyClaimFailure(failure: { err: string; custom?: { code: number } | null; logs: string[] },
   context: { accountKeys: readonly Address[]; wallet: Address; payer: Address }): ClaimFailure {
@@ -589,27 +564,22 @@ export function classifyClaimFailure(failure: { err: string; custom?: { code: nu
   if (top === CANDY_GUARD_PROGRAM) {
     const said = (pattern: RegExp) => failure.logs.some((l) => pattern.test(l));
     if (code === 3012) return "closed";
-    // 6006 is both the candy machine's CandyMachineEmpty and the guard's MissingRemainingAccount:
-    // only the log tells them apart, and without it nothing is claimed.
+    // 6006 is both CandyMachineEmpty and the guard's MissingRemainingAccount; only the log tells them apart.
     if (code === 6006) return said(/CandyMachineEmpty/) ? "sold-out" : said(/MissingRemainingAccount/) ? "terms-changed" : "other";
-    // NotEnoughSOL, NotEnoughTokens, shifted accounts: the price moved.
+    // NotEnoughSOL, NotEnoughTokens, shifted accounts.
     if (code === 6018 || code === 6020 || code === 6002) return "terms-changed";
-    // The one-shot payer short for the copy or the counter (a small rise, or the copy's number
-    // gaining a digit): System 1 with its own log line, not another program's error 1.
+    // One-shot payer short for copy or counter (small rise, or the copy number gaining a digit).
     if (code === 1 && said(/Transfer: insufficient lamports|insufficient lamports/)) return "terms-changed";
     if (code === 6029) return "already-claimed";
     if (code === 6022) return "needs-cosigner";
-    // The publisher's token account frozen (SPL Token 17, logged by Token) or closed (not a token
-    // account any more).
+    // Publisher's token account frozen (SPL Token 17) or closed.
     if (code === 17 && said(/Account is frozen/)) return "publisher-cannot-receive";
     if (/InvalidAccountData/.test(failure.err)) return "publisher-cannot-receive";
   }
   return "other";
 }
 
-// ---------------------------------------------------------------------------------------------
-// The publisher, after publishing
-// ---------------------------------------------------------------------------------------------
+// --- Publisher controls ---
 
 /** A new price (or free), keeping the edition's kind (open or Seeker-only). */
 export async function setPriceDraft(input: { publisher: Address; edition: Pick<Edition, "candyGuard" | "cosigner">; price: Price }): Promise<Draft> {
@@ -626,20 +596,17 @@ export async function setPriceDraft(input: { publisher: Address; edition: Pick<E
 }
 
 /**
- * Closing ends the sale: the guard is withdrawn and its rent returns to the publisher. The
- * candy machine's rent cannot be recovered (its authority is `NO_AUTHORITY`); the collection,
- * copies and counters stay.
+ * Withdraws the guard, returning its rent. The candy machine's rent is unrecoverable (authority
+ * `NO_AUTHORITY`); collection, copies and counters stay.
  */
 export const closeDraft = (input: { publisher: Address; candyGuard: Address }): Draft => ({
   feePayer: input.publisher,
   transactions: [{ instructions: [withdrawCandyGuardInstruction({ candyGuard: input.candyGuard, authority: createNoopSigner(input.publisher) })], localSigners: [] }],
 });
 
-// ---------------------------------------------------------------------------------------------
-// Copies
-// ---------------------------------------------------------------------------------------------
+// --- Copies ---
 
-/** A copy as the edition reader needs it: its address, name and Edition plugin number (null: none). */
+/** `edition` is the Edition plugin number, or null. */
 export interface CopyView { address: Address; name: string; edition: number | null }
 
 /**
@@ -688,12 +655,9 @@ export type CopyAnomaly =
   | { kind: "too-many-copies"; copies: number; minted: number };
 
 /**
- * What `readEdition` cannot see from the three accounts, judged from the collection's copies (the
- * app fetches them): the guard's authority can shift the Edition offset, mint, and shift it back,
- * leaving two copies with one number or a copy whose `#n` is not its Edition number. Returns every
- * anomaly: a number held by more than one copy, a number outside 1..minted (or none), a name that
- * is not `<title> #<its Edition number>`, more copies than were minted. Empty means consistent.
- * Burned copies are simply absent; fewer copies than minted is not an anomaly.
+ * Checks `readEdition` cannot make from the three accounts: the guard authority can shift the
+ * Edition offset, mint, and shift it back, leaving duplicate or mismatched numbers. Empty means
+ * consistent. Fewer copies than minted is fine (burns).
  */
 export function copyAnomalies(edition: { title: string; minted: number }, copies: readonly CopyView[]): CopyAnomaly[] {
   const out: CopyAnomaly[] = [];

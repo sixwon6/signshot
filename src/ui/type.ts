@@ -1,7 +1,4 @@
-/**
- * The six-step type scale. Each step is a ready-to-spread `TextStyle` with no colour. React Native
- * takes letter-spacing in points, so each value is the em figure times the font size.
- */
+/** Type scale, colourless. RN letter-spacing is in points: em × font size. */
 import type { TextStyle } from "react-native";
 import { fonts } from "./fonts";
 

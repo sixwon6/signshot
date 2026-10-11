@@ -88,31 +88,25 @@ export function PrintSheet({
     setQuote,
     run,
   } = useSheetOperation<Awaited<ReturnType<typeof prepareSetup>>>();
-  // The terms are agreed to once, before anything is published; an upload owed by an edition
-  // already on Solana is never held behind them.
+  // Agreed once before publishing; an upload owed by an edition already on chain is never gated on it.
   const agreement = useTermsAgreement();
   const [draft, setDraft] = useState<PublicationDraft | null>(null);
   const [edit, setEdit] = useState<PhotoEdit>();
   const [title, setTitle] = useState("");
-  // The optional caption. Like the title, it is hashed into the document when the draft is
-  // created and cannot change without discarding the draft.
+  // Hashed into the document with the title; changing either means discarding the draft.
   const [caption, setCaption] = useState("");
-  // A saved draft this build cannot read. `draft` is null in that case, so this flag is what
-  // offers the discard action.
+  // A saved draft this build cannot read (`draft` stays null); offers the discard action.
   const [unreadable, setUnreadable] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [count, setCount] = useState("10"),
     [solo, setSolo] = useState(true);
-  /** The price of a copy, as typed, in SOL; empty is free. Offered only where `priceable`. */
+  /** As typed, in `priceUnit`; empty is free. */
   const [priceText, setPriceText] = useState("");
   const [offers, setOffers] = useState(false);
-  /** The unit the price is typed in; "token" is offered only where this build has a price token. */
+  /** "token" only where this build has a price token. */
   const [priceUnit, setPriceUnit] = useState<"sol" | "token">("sol");
   const [token, setToken] = useState<PriceToken | null>(null);
-  /**
-   * The royalty, in basis points and whole percents, and whether only Seeker Genesis Token holders
-   * may collect. Frozen into the draft like the price.
-   */
+  /** Royalty (basis points) and Seeker-only, frozen into the draft like the price. */
   const [royaltyBps, setRoyaltyBps] = useState(DEFAULT_ROYALTY_BPS);
   const [seekerOnly, setSeekerOnly] = useState(DEFAULT_SEEKER_ONLY);
   const [distribution, setDistribution] = useState(false);
@@ -127,9 +121,9 @@ export function PrintSheet({
     enabled: boolean;
     reason?: string;
   }>({ enabled: false });
-  // The review's Device row: a draft not yet sent is judged now, a published one at its block time.
+  // Device row: an unsent draft is judged now, a published one at its block time.
   const device = useDeviceVerdict(draft?.edition, published);
-  // Storage bought again, once the provider refused the upload or found its credit short.
+  // Offered when the provider refused the upload or the credit ran short.
   const topUp = useStorageTopUp(published ? draft : null);
 
   async function applyPublicationState(state: PublicationState) {
@@ -159,8 +153,8 @@ export function PrintSheet({
     let live = true;
     void (async () => {
       try {
-        // The co-signer's answer comes with the rest: `Continue` must not run before the form knows
-        // whether it shows the Seeker-only switch.
+        // Wait for the co-signer too: `Continue` must not run before the form knows whether it
+        // shows the Seeker-only switch.
         const [state, selected, available, canSeal] = await Promise.all([
           getPublicationState(record),
           readPhotoEdit(record),
@@ -240,8 +234,7 @@ export function PrintSheet({
     if (running.current || initializing || !canPublish) return;
     return run(async () => {
       setError("");
-      // The estimate on screen belongs to the check that produced it. Clearing it first means a
-      // refreshed approval can never show the amount from the previous, expired one.
+      // Clear first so a refreshed approval never shows the previous, expired estimate.
       setQuote(null);
       setStatus("");
       try {
@@ -263,8 +256,8 @@ export function PrintSheet({
             edit,
             moment,
             lamports,
-            // An edition of 1 has nobody to collect it, so it keeps the default rule. `createDraft`
-            // records Seeker-only only for more than one copy, with the co-signer configured.
+            // An edition of 1 has no collectors and keeps the default; `createDraft` records
+            // Seeker-only only for more than one copy with a co-signer configured.
             distribution ? { royaltyBps, seekerOnly: sealable && (solo || seekerOnly) } : undefined,
           );
           setDraft(current);
@@ -272,8 +265,7 @@ export function PrintSheet({
         }
         await readPublicationStatus(current);
       } catch (e) {
-        // A cost check opens the wallet only to learn which account is publishing, so a wallet
-        // that never answers has still published nothing.
+        // The wallet opened only to learn the publishing account, so a timeout published nothing.
         const timedOut = isWalletResponseTimeout(e);
         setError(isUserCancellation(e) || timedOut ? "" : safeErrorText(e));
         setStatus(
@@ -324,8 +316,7 @@ export function PrintSheet({
           setPublished(false);
         }
         if (timedOut) {
-          // The status and the button have to agree: a fresh signable estimate means the earlier
-          // transaction cannot land, and saying it might would contradict the button.
+          // Match the button: a fresh signable estimate means the earlier transaction cannot land.
           const step = await statusAfterTimeout(current?.draft ?? draft);
           setStatus(
             step === "ready"
@@ -335,7 +326,7 @@ export function PrintSheet({
                 : walletTimeout.publishPending,
           );
         } else if (current?.reason) {
-          // Where the chain says the publication stands (the first of two landed) is what to act on.
+          // The chain's view (e.g. the first of two landed) is what to act on.
           setError("");
           setStatus(current.reason);
         } else
@@ -391,8 +382,8 @@ export function PrintSheet({
     });
   }
 
-  // A saved draft is previewed from the validated draft, not the text field, so the screen shows
-  // exactly the hashed text. An unpublishable caption is an error here, never a silent trim.
+  // Preview the validated draft, not the field, so the screen shows exactly the hashed text.
+  // An unpublishable caption is an error, never a silent trim.
   let detailsError = "";
   try {
     normalizeDescription(draft ? draft.edition.description : caption);
@@ -401,15 +392,13 @@ export function PrintSheet({
   }
   const previewTitle = draft?.edition.title ?? title.trim();
 
-  // A price only where there is a copy to sell (an edition of 1 keeps its single copy); otherwise
-  // nothing on the sheet mentions a price.
+  // Priced only when there are copies to sell; an edition of 1 shows no price.
   const priceable = !draft && !solo && offers;
   let priceError = "";
   let priceLamports = 0n;
   if (priceable)
     try {
-      // The one place a typed amount becomes lamports. An amount that cannot be represented
-      // exactly is refused here, before a wallet, rather than rounded into a transaction.
+      // Inexact amounts are refused here, never rounded into a transaction.
       priceLamports = priceUnit === "token" && token ? parseUnits(priceText, token.decimals) : parseSolPrice(priceText);
     } catch (e) {
       priceError = safeErrorText(e);
@@ -425,8 +414,8 @@ export function PrintSheet({
   const canPublish =
     access === "saved" || (access === "fresh" && availability.enabled);
   const owner = draft?.edition.creator ?? walletAddress;
-  // The `.skr` name is shown beside the address, never instead of it: the address is what other
-  // surfaces can be checked against. With no wallet, the dock's Publish action connects one.
+  // The `.skr` name goes beside the address, never instead of it. With no wallet, the dock's
+  // Publish action connects one.
   const ownerLabel = owner ? shortAddress(owner) : "No wallet connected";
   const ownerName =
     owner && owner === walletAddress && walletName ? walletName : null;
@@ -452,8 +441,7 @@ export function PrintSheet({
       }}
     >
       <KeyboardAvoidingView behavior="height" style={sheetStyles.root}>
-        {/* The photograph above the sheet, starting below the header row so the back pill
-            does not cover it. */}
+        {/* Starts below the header row so the back pill does not cover it. */}
         <View
           style={[sheetStyles.print, { top: insets.top + space.md + HEADER_ROW + space.sm }]}
           pointerEvents="none"

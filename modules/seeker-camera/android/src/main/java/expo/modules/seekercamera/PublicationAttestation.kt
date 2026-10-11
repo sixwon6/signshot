@@ -17,14 +17,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Android key attestation of one publication manifest. The keystore generates a fresh P-256 key
- * whose attestation challenge is the manifest's SHA-256 and whose certificate carries the
- * device's attested brand/model (API 31+), the key signs the manifest bytes, and the key is
- * deleted: the certificate chain and the signature are the durable evidence, not the key.
- *
- * Only this call's own fresh alias is ever touched. No wallet material, no existing keystore
- * entries, no camera files. A device that cannot attest answers `available: false`; it is never
- * an error, because publishing must not depend on it.
+ * Android key attestation of one publication manifest: a fresh P-256 key, challenge = SHA-256 of
+ * the manifest, device properties attested (API 31+), signs the manifest and is deleted. The chain
+ * and signature are the evidence. A device that cannot attest returns `available: false`, not an error.
  */
 internal object PublicationAttestation {
   private const val TAG = "SeekerCamera"
@@ -53,9 +48,8 @@ internal object PublicationAttestation {
     JSONObject().put("available", false).put("reason", reason)
 
   /**
-   * A process death between key generation and the `finally` below leaves an alias behind, and
-   * StrongBox has a finite key budget, so every call first removes any alias of ours. Only our
-   * own prefix is ever touched; nothing else in the keystore is enumerated for any other purpose.
+   * Process death before the `finally` below leaks an alias, and StrongBox key slots are finite,
+   * so each call first deletes leftovers under ALIAS_PREFIX. No other entry is touched.
    */
   private fun sweepStaleAliases() {
     runCatching {
@@ -92,7 +86,7 @@ internal object PublicationAttestation {
       chain.forEach { certificates.put(Base64.encodeToString(it.encoded, Base64.NO_WRAP)) }
       return JSONObject()
         .put("available", true)
-        // Diagnostic only: what was REQUESTED. The certificate's security level is the evidence.
+        // What was requested; the certificate's security level is the evidence.
         .put("strongBox", strongBox)
         .put("signature", Base64.encodeToString(signature, Base64.NO_WRAP))
         .put("certificates", certificates)

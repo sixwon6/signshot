@@ -1,17 +1,12 @@
 import { useEffect, useRef } from "react";
 
-/**
- * Coalesces per-frame drag input so only the latest work runs: {@link debounce} once moves stop
- * (for writes), {@link throttle} at most once per interval with the last call landing (live preview).
- */
+/** Coalesces per-frame drag input: {@link debounce} for writes, {@link throttle} for live preview. */
 interface Deferred {
-  /** Puts `work` off, replacing anything still waiting. */
+  /** Replaces anything still waiting. */
   run(work: () => void): void;
-  /** Drops anything still waiting. */
   cancel(): void;
 }
 
-/** The latest work, `delayMs` after the last call: nothing runs until the moves stop. */
 export function debounce(delayMs: number): Deferred {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let waiting: (() => void) | null = null;
@@ -34,10 +29,7 @@ export function debounce(delayMs: number): Deferred {
   };
 }
 
-/**
- * The FIRST call at once, then the latest of any that follow, at most one every `intervalMs`.
- * The leading edge is the point: a look or an exposure must move under the thumb, not after it.
- */
+/** Leading edge plus trailing latest, at most one per `intervalMs`, so preview tracks the thumb. */
 export function throttle(intervalMs: number): Deferred {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let waiting: (() => void) | null = null;
@@ -70,10 +62,7 @@ export function throttle(intervalMs: number): Deferred {
   };
 }
 
-/**
- * The same, held for the life of a component and cancelled on unmount, so no caller has to clear
- * its own timers.
- */
+/** Component-scoped `Deferred`, cancelled on unmount. */
 export function useDeferred(make: () => Deferred): Deferred {
   const held = useRef<Deferred | null>(null);
   if (held.current === null) held.current = make();

@@ -1,9 +1,4 @@
-/**
- * Pill — the app's only button shape.
- *   primary     ink fill, ground glyphs, h 54, 16/600, one per screen
- *   secondary   1 px ink at 26 %, h 46–54, 14/400
- *   destructive danger outline and text, never filled
- */
+/** The app's only button shape. At most one `primary` per screen; `destructive` is never filled. */
 import {
   ActivityIndicator,
   Pressable,
@@ -35,14 +30,13 @@ interface PillProps {
   testID?: string;
 }
 
-/** Fill, outline and text colour per variant. */
 const SKIN: Record<PillVariant, { background: string; border: string; text: string }> = {
   primary: { background: colors.ink, border: "transparent", text: colors.ground },
   secondary: { background: "transparent", border: "rgba(245,244,240,0.26)", text: colors.ink },
   destructive: { background: "transparent", border: "rgba(255,145,126,0.5)", text: colors.danger },
 };
 
-/** The small pill's height, for a row that must not change height when one appears in it. */
+/** For rows that must not change height when a pill appears. */
 export const PILL_SMALL_HEIGHT = 46;
 
 const SIZES: Record<PillSize, { height: number; fontSize: number; paddingHorizontal: number }> = {

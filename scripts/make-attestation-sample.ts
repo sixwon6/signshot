@@ -1,10 +1,8 @@
 /**
  * Regenerates `scripts/fixtures/attestation-sample.json`: a SYNTHETIC `signshot-attestation/1`
- * bundle whose two-certificate chain (leaf, then a self-signed CA) is made by OpenSSL, the leaf
- * carrying a hand-built key attestation extension with the Seeker's attested properties. It
- * exercises the parser, the chain logic (with the synthetic root injected as trusted) and the
- * document reader end to end; it is NOT evidence of anything, and both the app's reader with
- * Google's roots and `verify-attestation.ts` rightly refuse it. Needs `openssl` on PATH.
+ * bundle. OpenSSL makes a self-signed CA and a leaf carrying a hand-built key attestation extension
+ * with Seeker properties. Exercises the parser, chain logic (synthetic root injected as trusted)
+ * and document reader; proves nothing, and is refused against Google's roots. Needs `openssl`.
  *
  *   npx tsx scripts/make-attestation-sample.ts
  */
@@ -23,7 +21,7 @@ import { CANDY_MACHINE_PROGRAM } from "../publications/candy/programs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// --- a tiny DER encoder -------------------------------------------------------------------
+// --- DER encoder ----------------------------------------------------------------------------
 const len = (n: number): number[] => n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff];
 const tlv = (tag: number[], content: number[]): number[] => [...tag, ...len(content.length), ...content];
 const bytes = (u: Uint8Array | number[]) => Array.from(u);

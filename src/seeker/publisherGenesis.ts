@@ -1,11 +1,7 @@
 /**
- * The publish-time side of `signshot-genesis/1`: the Seeker Genesis Token mint a publication by
- * `wallet` records. Read from mainnet whatever cluster this build publishes on, since the wallet
- * is the same keypair on every cluster. Never throws and never waits forever.
- *
- * `null`: the wallet holds none. `undefined`: mainnet could not be asked; the document names none
- * and the review says so. A document only ever names a mint this lookup has just found on
- * mainnet, never a remembered one.
+ * SGT mint to record in a `signshot-genesis/1` claim. Always read from mainnet: the wallet is the
+ * same keypair on every cluster. Never throws, never hangs.
+ * `null`: holds none. `undefined`: mainnet unreachable. Only ever a mint just found on chain.
  */
 
 import type { Address } from "@solana/kit";
@@ -25,12 +21,12 @@ export async function publisherGenesisMint(wallet: string): Promise<string | nul
       findSeekerGenesisToken(getMainnetReadRpc(), wallet as Address, signal, preferred),
     );
   } catch (error) {
-    // Through the filter: an RPC failure quotes the endpoint URL.
+    // RPC errors quote the endpoint URL.
     console.warn(`genesis token lookup unavailable: ${safeErrorText(error)}`);
     return undefined;
   }
   if (mint === null) return null;
-  // Read back as a stranger would: a claim the reader refuses would make the document unreadable.
+  // Round-trip through the reader: a claim it refuses would make the document unreadable.
   try {
     return readGenesisClaim(genesisClaim(mint));
   } catch {

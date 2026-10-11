@@ -1,7 +1,6 @@
 /**
- * Sending a copy (a Metaplex Core asset) to another wallet with one `TransferV1`: copy 1 from its
- * photograph's page, or any copy the connected wallet holds from the Wallet screen. Through the
- * shared send path; the chain (the copy's owner) is the only record of where it is.
+ * Send a copy (a Metaplex Core asset) to another wallet with one `TransferV1`. The asset's owner
+ * on chain is the only record of where a copy is.
  */
 
 import type { Address } from "@solana/kit";

@@ -2,12 +2,9 @@ import { CostEstimate } from "./CostEstimate";
 import { sheetStyles } from "./sheetStyles";
 import { Row } from "./SheetRow";
 /**
- * CollectSheet: taking one numbered copy of somebody else's edition into this wallet.
- *
- * "Connect" learns which account is collecting, "Continue" simulates the claim and shows the
- * estimate, and only the last tap opens the wallet to sign. The estimate always belongs to the
- * check that produced it, and a cleared quote can never be approved. A priced edition shows the
- * publisher's price and the network costs on separate lines, so neither reads as the other.
+ * Claim one numbered copy of someone else's edition. "Connect" learns the account, "Continue"
+ * simulates and shows the estimate, and only the last tap opens the wallet to sign. A cleared
+ * quote can never be approved.
  */
 import { useEffect, useRef, useState } from "react";
 import { Linking, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -82,20 +79,17 @@ export function CollectSheet({
   const currentCollectable = useRef<Collectable | null>(null);
   const [collectable, setCollectable] = useState<Collectable | null>(null);
   const [state, setState] = useState<CollectState | null>(null);
-  // The wallet this sheet is acting for: the connected one, or the one Connect just authorized.
+  // The connected wallet, or the one Connect just authorized.
   const [wallet, setWallet] = useState(walletAddress ?? "");
-  // The copy number a confirmed collect returned. Present means the flow is finished.
+  // Set once a collect confirms; non-null means the flow is finished.
   const [collected, setCollected] = useState<number | null>(null);
 
-  // A link for another chain is refused before anything is read: on the wrong cluster the address
-  // could name an unrelated account.
+  // Refused before any read: on the wrong cluster the address could name an unrelated account.
   const wrongNetwork = target.cluster !== cluster;
 
   /**
-   * Re-read the edition after a refusal. A refused review or buy is most often the price moving
-   * under the quote, and the price on screen must be the one the chain holds now, not the one
-   * that was just refused. Best effort: a failed re-read keeps the
-   * last good edition rather than blanking the sheet.
+   * Re-read after a refusal, which is usually the price moving under the quote. Best effort: a
+   * failed re-read keeps the last good edition.
    */
   async function reload(): Promise<Collectable | null> {
     const fresh = await loadCollectable(target.edition).catch(() => null);
@@ -106,7 +100,7 @@ export function CollectSheet({
     return fresh ?? currentCollectable.current;
   }
 
-  /** Read the edition, then this wallet's eligibility for it. One pass, one request id. */
+  /** Read the edition, then this wallet's eligibility, under one request id. */
   useEffect(() => {
     if (wrongNetwork) {
       setStatus("");
@@ -146,7 +140,7 @@ export function CollectSheet({
     };
   }, [target.edition, target.cluster, wallet, wrongNetwork]);
 
-  /** Re-read this wallet's eligibility. Opens no wallet, so it is safe to run on any tap. */
+  /** Re-read eligibility. Opens no wallet. */
   async function check() {
     const current = currentCollectable.current;
     if (!current || !wallet) return;
@@ -168,10 +162,7 @@ export function CollectSheet({
     });
   }
 
-  /**
-   * "Connect": the wallet is opened only to learn which account is collecting. The effect above
-   * re-runs on the new address and reads eligibility for it.
-   */
+  /** Opens the wallet only to learn the account; the effect above re-reads eligibility. */
   async function connect() {
     return run(async () => {
       setError("");
@@ -185,7 +176,7 @@ export function CollectSheet({
     });
   }
 
-  /** "Continue": simulate the collect and show what it would cost. Nothing is signed here. */
+  /** Simulate the claim and show its cost. Signs nothing. */
   async function review() {
     const current = currentCollectable.current;
     if (running.current || !current || !wallet || state?.eligibility !== "collect") return;
@@ -195,7 +186,7 @@ export function CollectSheet({
     }
     return run(async () => {
       setError("");
-      // The estimate belongs to this check. Cleared first so a refusal cannot leave the old one up.
+      // Cleared first so a refusal cannot leave the old estimate up.
       clearQuote();
       setStatus("");
       try {
@@ -203,7 +194,7 @@ export function CollectSheet({
         setQuote(next);
       } catch (e) {
         clearQuote();
-        // A cost check signs nothing; eligibility may have moved, so it is re-read.
+        // Eligibility may have moved; re-read it.
         showCheckFailure(e, { timedOut: walletTimeout.collectCostCheck, cancelled: copy.cancelled });
         if (!isUserCancellation(e)) {
           const latest = (await reload()) ?? current;
@@ -214,7 +205,6 @@ export function CollectSheet({
     });
   }
 
-  /** "Collect": the one tap that opens the wallet to sign. */
   async function send() {
     const current = currentCollectable.current;
     if (!current || !quote || currentQuote.current !== quote || !wallet) return;
@@ -228,20 +218,18 @@ export function CollectSheet({
         setCollected(receipt.number);
         setStatus("");
         onCollected?.();
-        // The count issued so far now includes this copy.
+        // Refresh the issued count.
         void reload();
       } catch (e) {
         clearQuote();
-        // Seed Vault broadcasts first and answers only when its success screen is closed, so a
-        // timeout usually means the copy has already been collected. The state read below is what
-        // decides, never the error.
+        // Seed Vault broadcasts first and answers only when its success screen closes, so a timeout
+        // usually means the copy was collected. The state read below decides, not the error.
         const { cancelled, timedOut, quiet } = walletOutcome(e);
         if (timedOut) setStatus(walletTimeout.collectChecking);
         const latest = cancelled ? current : ((await reload()) ?? current);
         const next = await getCollectState(latest, wallet).catch(() => null);
         if (next) setState(next);
-        // A fresh read can resolve a collect whose own receipt check failed. Its verdict supersedes
-        // the error: never leave retry instructions under a copy that is confirmed.
+        // A confirmed copy supersedes the error: no retry instructions under a collected copy.
         if (next?.eligibility === "already" && next.number !== undefined) {
           setCollected(next.number);
           setError("");
@@ -263,9 +251,8 @@ export function CollectSheet({
 
   const e = collectable?.edition;
   /**
-   * Somebody else's publication as this phone may show it: hidden by Signshot's list, blocked by
-   * this viewer, or shown. A veiled edition keeps its record and loses its picture, title and
-   * caption, and is not collected from here.
+   * Hidden by Signshot's list, blocked by this viewer, or shown. A veiled edition keeps its record
+   * but loses picture, title and caption, and cannot be collected here.
    */
   const veil = e ? moderation.veil(e.edition, e.creator, wallet) : null;
   const blocked = !!e && moderation.isBlocked(e.creator);
@@ -274,14 +261,11 @@ export function CollectSheet({
       (problem) => setError(safeErrorText(problem)),
     );
   }
-  // The edition's price, or null when free (`Collectable.offer`).
   const offer = collectable?.offer ?? null;
   const priced = offer !== null;
-  // Buying or collecting: once there is a quote it decides, being what the wallet will approve.
+  // Once quoted, the quote decides: it is what the wallet will approve.
   const buying = quote ? quote.kind === "buy" : priced;
   const hint = buying ? onChain.buy : onChain.collect;
-  // The paper follows the photograph: the picture takes the edition's own ratio, so a portrait
-  // print is tall and a landscape one wide, with the same border all round.
   const aspectRatio = e && e.width > 0 && e.height > 0 ? e.width / e.height : 1;
   const eligibility = state?.eligibility;
   const finished = collected !== null;
@@ -294,7 +278,6 @@ export function CollectSheet({
       : veil
         ? moderationCopy[veil]
         : (e?.title ?? copy.heading);
-  // The one state sentence under the readout, when the wallet cannot collect right now.
   const blocker = finished
     ? null
     : wrongNetwork
@@ -319,8 +302,7 @@ export function CollectSheet({
     >
       <View style={sheetStyles.root}>
         <View style={[sheetStyles.headerRow, { paddingTop: insets.top + space.md }]}>
-          {/* Always "Close": the dock carries the one terminal action, and the same word twice
-              on one screen would be two answers to the same question. */}
+          {/* Always "Close": the dock carries the terminal action. */}
           <Pill
             label={actions.close}
             variant="secondary"
@@ -337,7 +319,6 @@ export function CollectSheet({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* The badge names the chain this copy would be created on. */}
             <NetworkLabel label={IS_MAINNET ? copy.network : copy.networkTest} />
             {!!e && !veil && (
               <PhotoFrame
@@ -353,14 +334,12 @@ export function CollectSheet({
                   ? copy.yourCopy(collected, e.supply)
                   : state?.number !== undefined
                     ? copy.yourCopy(state.number, e.supply)
-                    : // "COPY 3 OF 10 · 0.25 SOL": the copy this would take, and what it asks for
-                      // it. A free edition says nothing, because nothing is what it asks.
+                    : // "COPY 3 OF 10 · 0.25 SOL"; a free edition shows no price.
                       copy.nextCopy(collectable.minted, e.supply) +
                       (offer ? ` · ${priceValue(offer)}` : "")}
               </Text>
             )}
             <Text style={sheetStyles.title}>{heading}</Text>
-            {/* The caption the publisher wrote, set apart the way the Collection sets it apart. */}
             {!!e?.description && !veil && (
               <View style={s.caption}>
                 <Text style={sheetStyles.label}>{copy.momentLabel}</Text>
@@ -381,7 +360,6 @@ export function CollectSheet({
             )}
             {!!blocker && <Text style={sheetStyles.body}>{blocker}</Text>}
             {!!collectable?.anomaly && <Text style={sheetStyles.help}>{collectable.anomaly}</Text>}
-            {/* The edition itself, always: the record this sheet is reading from. */}
             {!wrongNetwork && (
               <Pill
                 label={actions.viewEditionShort}
@@ -419,7 +397,7 @@ export function CollectSheet({
             )}
           </ScrollView>
           <View style={[sheetStyles.dock, { paddingBottom: insets.bottom + space.lg }]}>
-            {/* Keep the reviewed amount beside the action, even when the photo fills the scroll area. */}
+            {/* Reviewed amount stays beside the action. */}
             {quote && !finished && !wrongNetwork && (
               <>
                 {quote.kind === "buy" && (
@@ -473,8 +451,7 @@ export function CollectSheet({
                 onPress={() => void check()}
               />
             ) : (
-              /* Always "Continue": the first tap spends nothing, whether this is a collect or a
-                 buy, and only the tap that spends carries the verb. */
+              /* Always "Continue": only the tap that spends carries the verb. */
               <Pill
                 label={actions.continueToCollect}
                 accessibilityHint={hint}

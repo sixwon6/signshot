@@ -6,18 +6,15 @@ import {
 } from "../solana/walletErrors";
 
 /**
- * The plumbing the money sheets share: one operation at a time, the status and error lines in the
- * dock, and the estimate on screen with the ref that says it is still the one shown. What each
- * outcome says, and what it re-reads, stays with the sheet.
+ * Shared by the money sheets: one operation at a time, the dock's status and error lines, and the
+ * quote on screen. Wording and re-reads stay with each sheet.
  */
 export function useSheetOperation<Q>(initialStatus = "") {
   const running = useRef(false);
-  // Every async result is tagged with the request that asked for it, so a slow read for an
-  // earlier target can never paint over a newer one.
+  // Request id tags async results so a slow earlier read never paints over a newer one.
   const request = useRef(0),
     currentQuote = useRef<Q | null>(null);
   const [quote, showQuote] = useState<Q | null>(null);
-  // The itemised estimate, one tap away from the single cost line.
   const [showCost, setShowCost] = useState(false);
   const [busy, setBusy] = useState(false),
     [status, setStatus] = useState(initialStatus),
@@ -32,7 +29,7 @@ export function useSheetOperation<Q>(initialStatus = "") {
     setQuote(null);
   }
 
-  /** Runs `work` unless an operation is already running, and holds the sheet busy until it ends. */
+  /** No-op while another operation runs. */
   async function run(work: () => Promise<void>) {
     if (running.current) return;
     running.current = true;
@@ -45,10 +42,7 @@ export function useSheetOperation<Q>(initialStatus = "") {
     }
   }
 
-  /**
-   * A check that failed before anything was signed: a closed wallet or one that never answered is
-   * a status, never an error.
-   */
+  /** For checks that fail before signing: a closed or silent wallet is a status, not an error. */
   function showCheckFailure(
     e: unknown,
     words: { timedOut: string; cancelled: string; fallback?: string },
@@ -77,10 +71,7 @@ export function useSheetOperation<Q>(initialStatus = "") {
   };
 }
 
-/**
- * How a signing request failed. `quiet` is every outcome a sheet words as a status rather than an
- * error: the user backed out or the wallet never answered.
- */
+/** `quiet`: the user backed out or the wallet never answered; shown as a status, not an error. */
 export function walletOutcome(e: unknown) {
   const cancelled = isUserCancellation(e),
     timedOut = isWalletResponseTimeout(e);

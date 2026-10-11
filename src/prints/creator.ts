@@ -66,8 +66,7 @@ import { loadPriceToken } from "./priceToken";
 import { encodeGuardData } from "../../publications/candy/guards";
 import type { Budget, Draft } from "../../publications/candy/transactions";
 import { fetchAccount } from "../../publications/editions";
-// `coordinator.ts` imports `readDraft` from here in return. Only function references cross the
-// cycle and none runs at module scope.
+// Import cycle with `coordinator.ts`; safe because nothing crosses it at module scope.
 import { assertFreshIntentAllowed, publicationInProgress, publicationLockKey } from "./coordinator";
 import { exclusive, operationInProgress } from "./locks";
 import { safeErrorText } from "../ui/errorText";
@@ -114,9 +113,8 @@ export function getPrintsAvailability(): { enabled: boolean; reason?: string } {
   return { enabled: true };
 }
 
-/** The durable draft key. */
 const key = (r: CaptureRecord) => `es.candy.v1:${cluster}:${r.baseName}`;
-/** The one photo+network lock, shared with the transfer flow. */
+/** Photo+network lock, shared with the transfer flow. */
 const lock = (r: CaptureRecord) => publicationLockKey(cluster, r.baseName);
 export const isPublicationWorking = (r: CaptureRecord) => publicationInProgress(r);
 
@@ -178,9 +176,7 @@ export async function savedDraftPresent(r: CaptureRecord): Promise<boolean> {
   return (await AsyncStorage.getItem(key(r))) !== null;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Where the publication stands on chain
-// ---------------------------------------------------------------------------------------------
 
 type Stage = "none" | "half" | "published";
 
@@ -275,9 +271,7 @@ export async function walletOwesUpload(wallet: string): Promise<boolean> {
   return false;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Making a draft
-// ---------------------------------------------------------------------------------------------
 
 /**
  * Start, or resume, this photograph's edition. An existing draft is returned unchanged. The title,
@@ -370,7 +364,7 @@ export async function createDraft(
       seeds,
       storage: "local",
     };
-    // The client's own checks on the on-chain terms, before anything is saved.
+    // Validate the on-chain terms before anything is saved.
     checkTerms(await editionTerms(d));
     await save(r, d);
     return d;
@@ -449,9 +443,7 @@ async function renewStaleAttestation(r: CaptureRecord, d: CoreDraft) {
   await save(r, d);
 }
 
-// ---------------------------------------------------------------------------------------------
 // The uploads
-// ---------------------------------------------------------------------------------------------
 
 async function publicationItems(d: CoreDraft) {
   const signer = await getUploadKey(d.edition.creator),
@@ -549,9 +541,8 @@ export async function payStorage(
 }
 
 /**
- * The upload is done when Turbo holds both items. Each item's id is derived from its signed
- * content, so a gateway read-back proves nothing more, and a gateway that is a few seconds
- * behind used to end every publication on "Photo upload pending".
+ * Done when Turbo holds both items. Item ids derive from the signed content, so a gateway
+ * read-back proves nothing more and would fail whenever the gateway lags.
  */
 async function publish(d: CoreDraft) {
   const { img, meta } = await publicationItems(d);
@@ -592,9 +583,7 @@ export async function retryPublicationStorage(r: CaptureRecord, d: CoreDraft) {
   });
 }
 
-// ---------------------------------------------------------------------------------------------
 // State for the screens
-// ---------------------------------------------------------------------------------------------
 
 export interface PublicationState {
   status: "local" | "checking" | "draft" | "pending" | "published" | "unavailable";
@@ -686,9 +675,7 @@ async function assertCurrent(r: CaptureRecord, d: CoreDraft) {
   d.storageTopUp = current.storageTopUp;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Publishing
-// ---------------------------------------------------------------------------------------------
 
 const hexBytes = (text: string) => Uint8Array.from(text.match(/../g) ?? [], (h) => parseInt(h, 16));
 
@@ -755,7 +742,7 @@ export type PublishQuote =
     prepared: Awaited<ReturnType<typeof publishCost>>;
   };
 
-/** "Continue": where the edition stands, and what publishing (the rest of) it costs. Opens no wallet. */
+/** Where the edition stands and what finishing it costs. Opens no wallet. */
 export async function prepareSetup(r: CaptureRecord, d: CoreDraft,
   onProgress?: (stage: "network" | "publication" | "previous" | "storage" | "estimate") => void): Promise<PublishQuote> {
   onProgress?.("network");

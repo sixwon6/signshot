@@ -1,7 +1,4 @@
-/**
- * PhotoFrame: the paper print. Paper carries graphite only, never teal, so the teal copy readout
- * ("002 / 010 · YOUR COPY") sits below the paper and is the caller's to render.
- */
+/** Paper print. Paper never carries teal, so the copy readout is the caller's, below the paper. */
 import React from "react";
 import {
   Image,
@@ -17,28 +14,17 @@ import { colors, radius } from "../theme";
 import { fonts } from "../fonts";
 
 interface PhotoFrameProps {
-  /** The photograph. Omit and pass `children` to place a placeholder or a live preview. */
+  /** Omit and pass `children` for a placeholder or live preview. */
   source?: ImageSourcePropType;
   children?: React.ReactNode;
-  /** Imprinted on the paper. Present means a caption band; absent means a plain foot. */
+  /** Presence switches the plain foot to a caption band. */
   title?: string;
-  /** Imprinted under the title, e.g. "BY SEEK3R.SKR". */
   byline?: string;
-  /** Right of the caption band. Defaults to the app's own imprint. */
   mark?: string;
-  /** Grid prints use the tighter 8 px border; full prints use 10 px. */
   variant?: "full" | "grid";
-  /**
-   * An explicit picture height: the picture still spans the paper's width and the photograph
-   * is cover-cropped into that band. Ignored when `aspectRatio` is given. The publish and send
-   * sheets use it for their strip; a print that shows a whole photograph passes `aspectRatio`.
-   */
+  /** Cover-crops into a full-width band of this height. Ignored when `aspectRatio` is given. */
   imageHeight?: number;
-  /**
-   * The photograph's own width ÷ height. The paper follows the picture — portrait, landscape or
-   * square — with the same border on every side. Omitted, or with `imageHeight` given, the
-   * print falls back to a square.
-   */
+  /** Width ÷ height. Falls back to square when omitted and no `imageHeight`. */
   aspectRatio?: number;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -58,13 +44,10 @@ export function PhotoFrame({
 }: PhotoFrameProps) {
   const captioned = Boolean(title || byline);
   const grid = variant === "grid";
-  /** The caption row's width once laid out; until then (0) the mark is drawn. */
+  /** 0 until laid out; the mark shows until then. */
   const [captionWidth, setCaptionWidth] = React.useState(0);
   const imprint = grid ? GRID_IMPRINT : FULL_IMPRINT;
-  /**
-   * The date never truncates: both halves are monospace, so their widths come from character
-   * counts, and when they do not fit the right-hand mark is dropped instead.
-   */
+  /** The byline never truncates; when byline and mark don't fit, drop the mark. */
   const showMark =
     Boolean(mark) &&
     (captionWidth === 0 ||
@@ -110,8 +93,6 @@ export function PhotoFrame({
         >
           <View style={styles.captionText}>
             {title ? (
-              // Two lines at the grid's smaller imprint, one at full size: a title long enough
-              // to need them is imprinted whole rather than cut to "Seaside Af…".
               <Text
                 numberOfLines={grid ? 2 : 1}
                 style={[styles.title, grid && styles.titleGrid]}
@@ -139,19 +120,13 @@ export function PhotoFrame({
   );
 }
 
-/** The imprint row's two sizes: 9 on a full print, smaller on a grid one. */
 const FULL_IMPRINT = { size: 9, byline: 1.44, mark: 1.62 };
 const GRID_IMPRINT = { size: 8, byline: 1.28, mark: 1.44 };
 const CAPTION_GAP = 10;
-/** Paper border: 10 px on a full print, 8 px on a grid one, with a 26 px foot when uncaptioned. */
 const FULL_PAD = 10;
 const GRID_PAD = 8;
 const FOOT = 26;
-/**
- * IBM Plex Mono advances every glyph by 0.6 em, so a mono string's width is its length times the
- * size times 0.6, plus one letter-space per character — and times the phone's text scale, which
- * grows the glyphs but not the paper. No text measurement, and therefore no layout pass, needed.
- */
+/** IBM Plex Mono advances 0.6 em per glyph, so width is computable without a layout pass. */
 function monoWidth(text: string, size: number, tracking: number) {
   const scale =
     typeof PixelRatio?.getFontScale === "function" ? PixelRatio.getFontScale() : 1;
@@ -187,7 +162,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: colors.graphite,
   },
-  /** Smaller, and free to take a second line, so a grid title is imprinted whole. */
   titleGrid: { fontSize: 13, lineHeight: 15 },
   byline: {
     fontFamily: fonts.mono,

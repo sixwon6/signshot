@@ -3,8 +3,8 @@ import { sha256, sha384 } from "@noble/hashes/sha2.js";
 import { base64UrlEncode, concatBytes, utf8 } from "./codec";
 
 /**
- * ANS-104 data items, serialized and ed25519-signed on the phone, following `@dha-team/arbundles`
- * byte for byte. Synchronous and pure, so an item's id can be computed inside a wallet session.
+ * ANS-104 data items, ed25519-signed, byte-identical to `@dha-team/arbundles`. Synchronous so the id
+ * can be computed inside a wallet session.
  * Spec: https://github.com/ArweaveTeam/arweave-standards/blob/master/ans/ANS-104.md
  */
 
@@ -13,19 +13,13 @@ const SIGNATURE_TYPE_ED25519 = 2;
 export const SIGNATURE_LENGTH = 64;
 export const OWNER_LENGTH = 32;
 
-/**
- * Fixed bytes around the payload: 2 (sigType) + 64 (signature) + 32 (owner) + 1 (no target)
- * + 1 (no anchor) + 8 (tag count) + 8 (tag byte length).
- */
+/** sigType + signature + owner + target flag + anchor flag + tag count + tag byte length. */
 const DATA_ITEM_OVERHEAD = 2 + SIGNATURE_LENGTH + OWNER_LENGTH + 1 + 1 + 8 + 8;
 
-/**
- * The app's item cap on every network, below Turbo's free-tier limit (`TURBO_FREE_ITEM_BYTES`). An
- * oversize item must fail here, before the wallet is involved, not as a 402.
- */
+/** Below `TURBO_FREE_ITEM_BYTES`, so oversize fails before the wallet is involved, not as a 402. */
 const MAX_DATA_ITEM_BYTES = 100 * 1024;
 
-/** arbundles' `MAX_TAG_BYTES` (`DataItem.ts:16`); its writer overruns its own buffer past this. */
+/** arbundles' `MAX_TAG_BYTES`; its writer overruns its buffer past this. */
 const MAX_TAG_BYTES = 4096;
 
 interface DataItemTag {
@@ -33,18 +27,18 @@ interface DataItemTag {
   value: string;
 }
 
-/** What `buildDataItem` needs from a key; no secret bytes ever enter this file. */
+/** Keeps secret bytes out of this file. */
 export interface DataItemSigner {
-  /** 32-byte ed25519 public key. Becomes the item's `owner`. */
+  /** 32-byte ed25519 public key; the item's `owner`. */
   publicKey: Uint8Array;
-  /** Detached ed25519 signature (64 bytes) over `message`. */
+  /** Detached 64-byte ed25519 signature. */
   sign(message: Uint8Array): Uint8Array;
 }
 
 interface BuiltDataItem {
-  /** The complete serialized item — what `POST /v1/tx` takes as its body. */
+  /** `POST /tx` body. */
   bytes: Uint8Array;
-  /** 43-character base64url id, known before anything is uploaded. */
+  /** 43-char base64url, known before upload. */
   id: string;
   signature: Uint8Array;
   owner: Uint8Array;
@@ -52,10 +46,7 @@ interface BuiltDataItem {
 
 type DeepHashChunk = Uint8Array | DeepHashChunk[];
 
-/**
- * Arweave's deep hash (SHA-384 throughout) — `deepHash.ts:27-39`. Blob lengths and list counts are
- * hashed in, so the same bytes rearranged across fields never produce the same digest.
- */
+/** Arweave deep hash (SHA-384), arbundles `deepHash.ts`. */
 function deepHash(data: DeepHashChunk): Uint8Array {
   if (Array.isArray(data)) {
     let acc: Uint8Array = sha384(utf8(`list${data.length}`));
@@ -67,7 +58,7 @@ function deepHash(data: DeepHashChunk): Uint8Array {
   return sha384(concatBytes(sha384(utf8(`blob${data.byteLength}`)), sha384(data)));
 }
 
-/** Zigzag varint, Avro's `writeLong` (`tags.ts:46-67`), restricted to the non-negative case. */
+/** Avro zigzag varint (arbundles `tags.ts`), non-negative only. */
 function writeLong(out: number[], n: number): void {
   if (!Number.isSafeInteger(n) || n < 0) {
     throw new Error(`dataItem: a tag varint must be a non-negative integer, got ${String(n)}`);
@@ -91,9 +82,8 @@ function writeString(out: number[], s: string): void {
 }
 
 /**
- * Avro-encode the tag block — `AVSCTap.writeTags` + `serializeTags` (`tags.ts:17-37`, `191-198`).
- * No tags encode to zero bytes with no terminator, as `serializeTags([])` does; a lone `0x00`
- * would change the header, the deep hash and therefore the id.
+ * Avro tag block, as arbundles `serializeTags`. No tags must be zero bytes with no terminator; a
+ * lone `0x00` would change the id.
  */
 function encodeTags(tags: DataItemTag[]): Uint8Array {
   if (tags.length === 0) return new Uint8Array(0);
@@ -108,7 +98,7 @@ function encodeTags(tags: DataItemTag[]): Uint8Array {
     writeString(out, tag.name);
     writeString(out, tag.value);
   }
-  writeLong(out, 0); // terminator: one more block, of length zero
+  writeLong(out, 0); // terminator block
 
   if (out.length > MAX_TAG_BYTES) {
     throw new Error(
@@ -118,7 +108,7 @@ function encodeTags(tags: DataItemTag[]): Uint8Array {
   return Uint8Array.from(out);
 }
 
-/** Unsigned little-endian, `longToNByteArray` (`utils.ts:1-19`). */
+/** Unsigned little-endian, as arbundles `longToNByteArray`. */
 function toLeBytes(value: number, length: number): Uint8Array {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`dataItem: ${String(value)} is not a non-negative integer`);
@@ -134,10 +124,7 @@ function toLeBytes(value: number, length: number): Uint8Array {
   return out;
 }
 
-/**
- * The bytes the owner's key signs — `getSignatureData` (`ar-data-base.ts:12-23`). A mistake here
- * is invisible locally: the item still gets a valid-looking id, and the bundler rejects it on upload.
- */
+/** arbundles `getSignatureData`. Errors here are invisible locally; only the bundler rejects them. */
 function dataItemSignatureData(
   owner: Uint8Array,
   tagsBytes: Uint8Array,
@@ -148,14 +135,14 @@ function dataItemSignatureData(
     utf8("1"),
     utf8(String(SIGNATURE_TYPE_ED25519)),
     owner,
-    new Uint8Array(0), // no target — an EMPTY chunk in the hash, not a zero byte
+    new Uint8Array(0), // no target: an empty chunk, not a zero byte
     new Uint8Array(0), // no anchor
     tagsBytes,
     data,
   ]);
 }
 
-/** `id = base64url(sha256(signature))` — `DataItem.ts:42-52`. 43 characters, unpadded. */
+/** `base64url(sha256(signature))`, unpadded. */
 function dataItemId(signature: Uint8Array): string {
   if (signature.length !== SIGNATURE_LENGTH) {
     throw new Error(`dataItem: a signature is ${SIGNATURE_LENGTH} bytes, got ${signature.length}`);
@@ -163,7 +150,6 @@ function dataItemId(signature: Uint8Array): string {
   return base64UrlEncode(sha256(signature));
 }
 
-/** The id of a serialized ed25519 data item, read off its own signature bytes. */
 export function serializedDataItemId(bytes: Uint8Array): string {
   if (bytes.length < DATA_ITEM_OVERHEAD || bytes[0] !== SIGNATURE_TYPE_ED25519 || bytes[1] !== 0) {
     throw new Error("dataItem: not a serialized ed25519 data item");
@@ -172,8 +158,8 @@ export function serializedDataItemId(bytes: Uint8Array): string {
 }
 
 /**
- * Serialize and sign one data item. No target and no anchor, so the id depends only on the data,
- * tags and key: rebuilding after a crash yields the same id that is already referenced on chain.
+ * No target or anchor, so the id depends only on data, tags and key: rebuilding after a crash
+ * reproduces an id already referenced on chain.
  */
 export function buildDataItem(args: {
   data: Uint8Array;
@@ -211,9 +197,9 @@ export function buildDataItem(args: {
   at += SIGNATURE_LENGTH;
   bytes.set(owner, at);
   at += OWNER_LENGTH;
-  bytes[at] = 0; // target presence byte
+  bytes[at] = 0; // no target
   at += 1;
-  bytes[at] = 0; // anchor presence byte
+  bytes[at] = 0; // no anchor
   at += 1;
   bytes.set(toLeBytes(tags.length, 8), at);
   at += 8;

@@ -1,7 +1,5 @@
 import { getBase64Decoder } from "@solana/kit";
 
-/** The colour half of a recipe: a programmatic 3D LUT builder and the small maths a grade needs. */
-
 export type Rgb = [number, number, number];
 type RgbTransform = (r: number, g: number, b: number) => Rgb;
 
@@ -9,7 +7,7 @@ export const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 const mix = (a: number, b: number, t: number): number => a + (b - a) * t;
 
-/** BT.601 luma, the basis the renderer's YUV decode uses, so luma-keyed grading matches the shader. */
+/** BT.601 to match the renderer's YUV decode. */
 export const luma601 = (r: number, g: number, b: number): number =>
   0.299 * r + 0.587 * g + 0.114 * b;
 
@@ -26,20 +24,15 @@ export function sCurve(x: number, t: number): number {
 }
 
 /**
- * Soft exponential shoulder: identity up to `knee`, then knee + (1 - e^(-rate·(x-knee))) / rate.
- * The 1/rate coefficient makes the slope at the knee exactly 1, so the curve only ever compresses
- * highlights. Monotonic, asymptotic to knee + 1/rate.
+ * Identity up to `knee`, then knee + (1 - e^(-rate·(x-knee))) / rate. Slope 1 at the knee, so it
+ * only compresses highlights; asymptotic to knee + 1/rate.
  */
 export function shoulder(x: number, knee: number, rate: number): number {
   if (x <= knee) return x;
   return knee + (1 - Math.exp(-(x - knee) * rate)) / rate;
 }
 
-/**
- * Builds an RGBA8 3D LUT (size^3, r fastest) and returns it base64-encoded, in the layout the
- * renderer uploads as its 3D texture. The transform is applied to gamma-encoded, display-referred
- * RGB — that is what the renderer feeds the LUT.
- */
+/** RGBA8 3D LUT (size^3, r fastest), base64. `fn` sees gamma-encoded, display-referred RGB. */
 export function buildLut(size: number, fn: RgbTransform): string {
   const bytes = new Uint8Array(size * size * size * 4);
   let o = 0;
@@ -54,8 +47,6 @@ export function buildLut(size: number, fn: RgbTransform): string {
       }
     }
   }
-  // Kit's "decoder" reads BYTES and yields the encoded text, which is the opposite of the
-  // intuition the name invites. This is the base64 path everywhere in the app; there is no
-  // Buffer to reach for.
+  // Kit's base64 *decoder* turns bytes into text, despite the name.
   return getBase64Decoder().decode(bytes);
 }

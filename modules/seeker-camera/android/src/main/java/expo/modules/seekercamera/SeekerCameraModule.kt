@@ -15,18 +15,16 @@ import org.json.JSONObject
 class SeekerCameraModule : Module() {
   companion object {
     @Volatile var activeView: SeekerCameraView? = null
-    // A rebuilt view brings its fresh renderer up on these, so a tab switch cannot leave native
-    // state diverged from JS state.
+    // Re-applied by a rebuilt view so native state matches JS after a tab switch.
     @Volatile var lastProfile: Profile? = null
     @Volatile var lastIntensity: Float = 0.6f
-    /** The last ACCEPTED capture settings, re-applied by a rebuilt view for the same reason. */
+    /** Last accepted capture settings, re-applied the same way. */
     @Volatile var lastCaptureSettings: String? = null
     private const val TAG = "SeekerCamera"
     private val BASE_NAME = Regex("^cap-[0-9]+$")
     private val SIDECAR_NAME = Regex("^cap-[0-9]+\\.json$")
 
-    // Exports hash and copy multi-MB JPEGs off the module queue. Single-threaded because gallery
-    // export is check-then-write: two concurrent exports of one capture would both write.
+    // Off the module queue. Single-threaded: gallery export is check-then-write.
     private val EXPORT_EXECUTOR = Executors.newSingleThreadExecutor { r ->
       Thread(r, "SeekerCameraExport").apply { isDaemon = true }
     }
@@ -63,11 +61,7 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    /**
-     * What camera "0" can actually do — the manual-control ranges, read from
-     * `CameraCharacteristics`. Works with no camera view mounted, and never rejects for a missing
-     * control: an absent range reaches JS as the string `"unavailable"`.
-     */
+    /** Camera "0" manual-control ranges; no view needed. An absent range is `"unavailable"`. */
     AsyncFunction("captureCapabilities") { promise: Promise ->
       val view = activeView
       val caps = view?.camera?.capabilities() ?: run {
@@ -79,10 +73,7 @@ class SeekerCameraModule : Module() {
       promise.resolve(jsonToMap(caps.toJson()))
     }
 
-    /**
-     * Applies manual controls to the preview and next still; resolves the clamped values in force.
-     * Rejects only for a control this camera lacks.
-     */
+    /** Resolves the clamped values in force; rejects only for a control this camera lacks. */
     AsyncFunction("setCaptureSettings") { json: String, promise: Promise ->
       val view = activeView ?: run { promise.reject(CodedException("no active camera view")); return@AsyncFunction }
       val effective = try {
@@ -112,15 +103,13 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    // Works with no camera view mounted.
     AsyncFunction("listCaptures") { promise: Promise ->
       val dir = capturesDir() ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
       val files = dir.listFiles { f: File -> f.isFile && SIDECAR_NAME.matches(f.name) } ?: emptyArray()
       val out = files.mapNotNull { f ->
         try {
-          // The whole sidecar passes through (no allowlist, so new fields are never dropped).
           val rec = jsonToMap(JSONObject(f.readText())).toMutableMap()
-          // Fields CaptureRecord requires; JS does not re-check them, so skip a partial record.
+          // JS trusts these CaptureRecord fields, so a partial record is skipped here.
           val clean = frameOrNull(rec["clean"])
           val styled = frameOrNull(rec["styled"])
           if (rec["baseName"] !is String ||
@@ -137,13 +126,13 @@ class SeekerCameraModule : Module() {
           rec
         } catch (e: Throwable) {
           Log.w(TAG, "skipping unreadable sidecar ${f.name}", e)
-          null // corrupt sidecar: skip, never fail the list
+          null
         }
       }.sortedByDescending { (it["capturedAtMs"] as? Number)?.toLong() ?: 0L }
       promise.resolve(out)
     }
 
-    // Separate immutable edit artifacts; never overwrites the captured frames.
+    // Writes a separate immutable edit; the captured frames are never touched.
     AsyncFunction("editPhoto") { baseName: String, manifest: String, lut: String?, strength: Int, promise: Promise ->
       if (!BASE_NAME.matches(baseName) || strength !in 0..100) { promise.reject(CodedException("invalid photo edit")); return@AsyncFunction }
       val dir = capturesDir() ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
@@ -156,8 +145,7 @@ class SeekerCameraModule : Module() {
           if (sourceHash != clean.getString("sha256")) throw IOException("Original photo fingerprint changed")
           val profile = Profile.parse(manifest, lut)
           val graph = ShaderGen.editedFragmentSrc(profile)
-          // The export policy is part of the edit id, so an edit rendered under another policy is
-          // never reused or replaced.
+          // The export policy is part of the edit id, so edits under another policy are never reused.
           val pipeline = "edit-rgb/2-full-size/" + ShaderGen.capturePipelineId(profile, graph)
           val editId = Profile.sha256Hex("$sourceHash\n$pipeline\n$strength".toByteArray())
           val out = File(dir, "$baseName-edit-$editId.jpg")
@@ -165,8 +153,7 @@ class SeekerCameraModule : Module() {
           fun resolve() {
             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
             android.graphics.BitmapFactory.decodeFile(out.absolutePath, bounds)
-            // Edits can be published, so unreadable dimensions must fail here, including for an
-            // existing `out` reused below.
+            // Edits can be published: fail on unreadable dimensions, including a reused `out`.
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("invalid photo edit")
             promise.resolve(mapOf("uri" to "file://${out.absolutePath}", "sha256" to CaptureIntegrity.sha256(out),
               "sourceHash" to sourceHash, "pipelineId" to pipeline, "width" to bounds.outWidth, "height" to bounds.outHeight,
@@ -182,7 +169,7 @@ class SeekerCameraModule : Module() {
             } catch (e: Throwable) { temp.delete(); promise.reject(CodedException(e.message ?: "photo edit failed")) }
             finally { finished.countDown() }
           }
-          // Serialize native edit/export file operations; never block the UI or module queue.
+          // Holds the export thread so edits and exports stay serialized.
           finished.await()
         } catch (e: Throwable) { promise.reject(CodedException(e.message ?: "photo edit failed")) }
       }
@@ -201,18 +188,14 @@ class SeekerCameraModule : Module() {
           val out = Thumbnail.printImage(source, File(dir, "$baseName-print-$expectedHash.jpg"))
           val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
           android.graphics.BitmapFactory.decodeFile(out.file.absolutePath, bounds)
-          // An unreadable header leaves -1 dimensions, which would go into permanently uploaded
-          // metadata the app's reader rejects. Fail before the wallet instead.
+          // An unreadable header gives -1 dimensions that would be uploaded permanently; fail before the wallet.
           if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("invalid print image")
           promise.resolve(mapOf("path" to out.file.absolutePath, "sha256" to out.sha256, "bytes" to out.bytes, "width" to bounds.outWidth, "height" to bounds.outHeight))
         } catch (e: Throwable) { promise.reject(CodedException(e.message ?: "print preparation failed")) }
       }
     }
 
-    /**
-     * Removes one print derivative and its scratch file, leaving the capture alone. The print is
-     * written at the estimate step, so discarding a draft (`discardDraft`) must remove it.
-     */
+    /** Removes one print derivative and its scratch file, leaving the capture alone. */
     AsyncFunction("deletePrintImage") { baseName: String, sha256: String, promise: Promise ->
       if (!BASE_NAME.matches(baseName) || !Regex("[a-f0-9]{64}").matches(sha256)) { promise.reject(CodedException("invalid print image")); return@AsyncFunction }
       val dir = capturesDir() ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
@@ -284,11 +267,7 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    /**
-     * Writes one JSON file into `cacheDir/share` with the metadata document and the
-     * fingerprint-checked print image, so an unuploaded publication's bytes (not backed up) can
-     * leave the phone. There is no import path.
-     */
+    /** Metadata document plus the hash-checked print image as one JSON file in `cacheDir/share`. */
     AsyncFunction("exportPublicationBundle") { baseName: String, sourceUri: String, expectedHash: String, documentJson: String, promise: Promise ->
       if (!BASE_NAME.matches(baseName) || !Regex("[a-f0-9]{64}").matches(expectedHash)) { promise.reject(CodedException("invalid publication bundle")); return@AsyncFunction }
       val ctx = appContext.reactContext ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
@@ -298,8 +277,7 @@ class SeekerCameraModule : Module() {
           val source = confinedOrNull(dir, sourceUri.removePrefix("file://")) ?: throw IOException("missing published image")
           if (!source.isFile) throw IOException("missing published image")
           if (CaptureIntegrity.sha256(source) != expectedHash) throw IOException("Published image fingerprint changed")
-          // Parsed, not concatenated: the document is composed in TypeScript and must still be
-          // one JSON object here, or the file this writes would not be readable by anything.
+          // Parsed, not concatenated, so the output is guaranteed to be one JSON object.
           val document = JSONObject(documentJson)
           val bytes = source.readBytes()
           document.put(
@@ -355,13 +333,12 @@ class SeekerCameraModule : Module() {
 
     /** Hardware key attestation of one publication manifest; see `PublicationAttestation`. */
     AsyncFunction("attestPublication") { manifestJson: String, promise: Promise ->
-      // Parsed, not trusted: the bytes signed are exactly the bytes given, but they must be one
-      // JSON object or nothing reading the document could ever match them.
+      // Signs the bytes as given, but only if they parse as one JSON object.
       val bytes = manifestJson.toByteArray(Charsets.UTF_8)
       if (bytes.isEmpty() || bytes.size > 4096 || runCatching { JSONObject(manifestJson) }.isFailure) {
         promise.reject(CodedException("invalid attestation manifest")); return@AsyncFunction
       }
-      // Key generation can take a second on StrongBox; never on the module queue.
+      // StrongBox key generation can take a second.
       EXPORT_EXECUTOR.execute {
         try {
           promise.resolve(jsonToMap(PublicationAttestation.attest(bytes)))
@@ -371,10 +348,7 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    /**
-     * Returns `{ clean, styled }` hex SHA-256 of the frames on disk, for comparison with the sidecar
-     * before wallet approval. Both sidecar paths must be inside the captures dir (no fallback name).
-     */
+    /** `{ clean, styled }` SHA-256 of the frames on disk. Sidecar paths must be inside the captures dir. */
     AsyncFunction("hashCaptureFrames") { baseName: String, promise: Promise ->
       if (!BASE_NAME.matches(baseName)) { promise.reject(CodedException("invalid baseName")); return@AsyncFunction }
       val dir = capturesDir() ?: run { promise.reject(CodedException("no react context")); return@AsyncFunction }
@@ -402,13 +376,11 @@ class SeekerCameraModule : Module() {
       val sidecar = File(dir, "$baseName.json")
       val targets = mutableListOf(
         File(dir, "$baseName-clean.jpg"), File(dir, "$baseName-styled.jpg"), sidecar)
-      // `.json.tmp` (a sidecar write interrupted before rename) is deleted too, but on its own does
-      // not mean a capture existed.
+      // An interrupted sidecar's `.json.tmp` is removed but does not count as a capture.
       val existed = targets.any { it.exists() }
       targets.add(File(dir, "$baseName.json.tmp"))
       targets.forEach { runCatching { it.delete() } }
-      // Derived copies are deleted on the export thread, after any in-flight write, so they cannot
-      // be recreated once the capture is gone. Only this capture's derived files match.
+      // Derived files go on the export thread, after any in-flight write, so none is recreated.
       appContext.reactContext?.let { ctx ->
         EXPORT_EXECUTOR.execute {
           dir.listFiles()?.filter { Regex("${baseName}-(edit|print)-[a-f0-9]{64}(\\.tmp)?\\.jpg(\\.tmp)?").matches(it.name) }
@@ -416,7 +388,6 @@ class SeekerCameraModule : Module() {
           runCatching { File(File(ctx.cacheDir, "share"), "$baseName-share.jpg").delete() }
           File(ctx.cacheDir, "share").listFiles()?.filter { Regex("${baseName}-[a-f0-9]{64}-share\\.jpg(\\.tmp)?").matches(it.name) }
             ?.forEach { runCatching { it.delete() } }
-          // The publication bundle contains the print image, so it goes too.
           runCatching { File(File(ctx.cacheDir, "share"), "$baseName-publication-bundle.json").delete() }
           runCatching { File(File(ctx.cacheDir, "share"), "$baseName-publication-bundle.json.tmp").delete() }
           runCatching { File(File(ctx.cacheDir, "share"), "$baseName-print-card.png").delete() }
@@ -428,12 +399,7 @@ class SeekerCameraModule : Module() {
       promise.resolve(existed)
     }
 
-    /**
-     * Opens the QR scanner (QrScanner.kt) and resolves the first QR code's text, null when the
-     * person backs out. Rejects with a readable sentence when scanning cannot happen: camera access
-     * refused, no back camera, or the bundled ML Kit model failing to run. Refuses while a camera
-     * view is mounted, since both would own camera "0" (see QrScanner.kt).
-     */
+    /** Resolves the first QR code's text, or null on cancel. Refused while a camera view owns camera "0". */
     AsyncFunction("scanQrCode") { promise: Promise ->
       if (activeView != null) {
         promise.reject(CodedException("close the camera before scanning a QR code")); return@AsyncFunction
@@ -456,7 +422,7 @@ class SeekerCameraModule : Module() {
       }
     }
 
-    // The scanner's only way back: Expo routes the host activity's onActivityResult here.
+    // Expo routes the host activity's onActivityResult here.
     OnActivityResult { _, payload ->
       if (payload.requestCode != QrScanner.REQUEST_CODE) return@OnActivityResult
       val promise = synchronized(SCAN_LOCK) { scanPromise.also { scanPromise = null } }
@@ -480,10 +446,7 @@ class SeekerCameraModule : Module() {
 
   private class ExportSource(val file: File, val displayName: String)
 
-  /**
-   * The styled frame for `baseName`, exported as `<base>.jpg`. The sidecar path is confined to the
-   * captures dir because it becomes a file that leaves the sandbox.
-   */
+  /** The styled frame for `baseName`; the sidecar path is confined because the file leaves the sandbox. */
   private fun exportSource(dir: File, baseName: String): ExportSource {
     val sidecar = File(dir, "$baseName.json")
     if (!sidecar.isFile) throw IOException("no capture $baseName")
@@ -500,8 +463,7 @@ class SeekerCameraModule : Module() {
     null
   }
 
-  /** `path` as a File if it is a direct child of `dir`, else null. Never throws: canonicalising
-   *  can fail on a path that does not resolve, and "not confined" is the right answer then. */
+  /** `path` as a File if it is a direct child of `dir`, else null (including when canonicalising fails). */
   private fun confinedOrNull(dir: File, path: String): File? {
     if (path.isEmpty()) return null
     val f = File(path)
@@ -518,7 +480,7 @@ class SeekerCameraModule : Module() {
     return m
   }
 
-  /** JSON gives Int or Double; `intensity` is an integer 0..100, so a fractional value is not it. */
+  /** JSON numbers arrive as Int or Double; `intensity` must be integral. */
   private fun isIntLike(value: Any?): Boolean {
     val n = value as? Number ?: return false
     val d = n.toDouble()

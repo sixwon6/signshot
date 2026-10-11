@@ -1,9 +1,7 @@
 /**
- * The adjust row: the live control's dial, directly above the readout cells. Each control is a
- * detented ruler: ISO in third stops, shutter in full stops, brightness in the device's own steps,
- * Kelvin by the hundred, focus in 2 % positions. The key at the row's end hands the control back
- * to the camera. The live cell below shows the value, so the row does not repeat it.
- * Presentational: state lives in `useCaptureControls`, and every value is what native applied.
+ * Adjust row: a detented ruler for the live control (ISO in 1/3 stops, shutter in full stops, EV in
+ * device steps, Kelvin by 100, focus in 2 % steps) plus a key that hands it back to auto.
+ * Presentational; state lives in `useCaptureControls`.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -34,20 +32,17 @@ import { Chip, CHROME_FONT_SCALE } from "../ui/primitives";
 import { captureControls as copy } from "../ui/copy";
 import { LIGHT_LABEL, NAME, isoSteps, shutterSteps, type ControlKey } from "./CaptureControls";
 
-// ---------------------------------------------------------------------------------------------
-// The ruler
+// Ruler
 
 const TICK = 14;
-/** A label every third detent: 42 dp apart, which the longest of them ("1/8000", "12800") fits. */
+/** Label every third detent: 42 dp fits the longest label ("1/8000", "12800"). */
 const MAJOR_EVERY_DEFAULT = 3;
-/** The row's height: the ruler fills it, and the chips sit on its centre line. */
 export const ADJUST_HEIGHT = 48;
 
 interface RulerProps {
-  /** How many detents, and which is in force. */
   count: number;
   index: number;
-  /** The label over a major tick, or null for a minor one. */
+  /** Label for a major tick, or null for a minor one. */
   labelAt: (index: number) => string | null;
   disabled?: boolean;
   accessibilityLabel: string;
@@ -56,9 +51,8 @@ interface RulerProps {
 }
 
 /**
- * A horizontal dial: ticks scroll under a fixed centre mark and snap to the nearest detent. The
- * detent under the mark is the value; dragging is the only way to change it, so a value the
- * camera changes on its own (auto exposure metering) rolls the ruler rather than the reverse.
+ * Ticks scroll under a fixed centre mark and snap to detents. Only a drag emits a value; values
+ * the camera changes itself (auto metering) just roll the ruler.
  */
 function Ruler({ count, index, labelAt, disabled = false, accessibilityLabel, onIndex, testID }: RulerProps) {
   const scroll = useRef<ScrollView>(null);
@@ -67,7 +61,7 @@ function Ruler({ count, index, labelAt, disabled = false, accessibilityLabel, on
   const emitted = useRef(index);
   const clamp = (i: number) => Math.max(0, Math.min(count - 1, i));
 
-  // Follow the value in force unless a thumb is on the ruler.
+  // Follow external changes unless the user is dragging.
   useEffect(() => {
     if (width === 0 || dragging.current || emitted.current === index) return;
     emitted.current = index;
@@ -101,7 +95,7 @@ function Ruler({ count, index, labelAt, disabled = false, accessibilityLabel, on
       <ScrollView
         ref={scroll}
         horizontal
-        // The content exists only now: park the ruler on the value in force, without animation.
+        // First layout of the content: jump to the current value without animating.
         onContentSizeChange={() => {
           if (!dragging.current) scroll.current?.scrollTo({ x: emitted.current * TICK, animated: false });
         }}
@@ -118,7 +112,7 @@ function Ruler({ count, index, labelAt, disabled = false, accessibilityLabel, on
           dragging.current = false;
         }}
         onScrollEndDrag={(event) => {
-          // No momentum follows a slow release; settle on the nearest detent ourselves.
+          // A slow release has no momentum phase, so snap to the nearest detent here.
           const at = clamp(Math.round(event.nativeEvent.contentOffset.x / TICK));
           if (Math.abs(event.nativeEvent.velocity?.x ?? 0) < 0.05) {
             dragging.current = false;
@@ -146,8 +140,7 @@ function Ruler({ count, index, labelAt, disabled = false, accessibilityLabel, on
   );
 }
 
-// ---------------------------------------------------------------------------------------------
-// The row
+// Row
 
 interface CaptureAdjustProps {
   mode: CaptureMode;
@@ -157,7 +150,7 @@ interface CaptureAdjustProps {
   meter: MeterReading | null;
   busy?: boolean;
   onChange: (settings: CaptureSettings) => void;
-  /** Focus handed back to the camera: a tapped subject is released along with a held lens. */
+  /** Releases a tapped focus point when focus returns to auto. */
   onReleaseFocus?: () => void;
 }
 
@@ -168,7 +161,6 @@ const nearestIndex = (ladder: readonly number[], want: number): number => {
   return best;
 };
 
-/** A ruler, and the key at its end that gives the control back to the camera. */
 function Dial({ ruler, handBack }: { ruler: React.ReactNode; handBack: React.ReactNode }) {
   return (
     <View style={s.row}>
@@ -189,14 +181,14 @@ export function CaptureAdjust({
   onReleaseFocus,
 }: CaptureAdjustProps) {
   const set = (patch: Partial<CaptureSettings>) => onChange({ ...settings, ...patch });
-  /** M: ISO and shutter are held, so the exposure's hand-back key is off. */
+  /** M holds ISO and shutter, so their auto key is off. */
   const held = mode === "manual";
   const kelvin = caps.manualPostProcessing && caps.kelvin !== UNAVAILABLE ? caps.kelvin : null;
   const heldKelvin = typeof settings.whiteBalance === "object" ? settings.whiteBalance.kelvin : null;
-  /** Colour has two faces in one row: the lights people stand in, and the Kelvin ruler. */
+  /** White balance row shows either light presets or the Kelvin ruler. */
   const [kelvinUp, setKelvinUp] = useState(heldKelvin !== null);
 
-  /** "The camera's choice" is on: ink, because the accent is the photographer's. */
+  /** Auto state uses ink, not the accent, which marks user-set values. */
   const handBack = (on: boolean, onPress: () => void, testID: string, label: string = copy.auto) => (
     <Chip size="small" label={label} selected={on} fill={colors.ink} disabled={busy} onPress={onPress} testID={testID} />
   );
@@ -282,7 +274,7 @@ export function CaptureAdjust({
                 testID="capture-ruler-kelvin"
               />
             }
-            // Every ruler ends in the same key: colour goes back to the camera, and the row to its lights.
+            // Auto also returns the row to the light presets.
             handBack={handBack(
               settings.whiteBalance === "auto",
               () => {
@@ -353,7 +345,7 @@ export function CaptureAdjust({
 const s = StyleSheet.create({
   row: { height: ADJUST_HEIGHT, flexDirection: "row", alignItems: "center", gap: space.sm },
   grow: { flex: 1 },
-  /** A scrolling row runs out to the screen's edges rather than ending at a wall inside them. */
+  /** Scrolling rows bleed to the screen edges. */
   bleed: { marginHorizontal: -space.gutter, flexGrow: 0 },
   bleedContent: { paddingHorizontal: space.gutter },
   quiet: { opacity: 0.35 },
@@ -362,7 +354,6 @@ const s = StyleSheet.create({
   tick: { width: 1, height: 10, backgroundColor: "rgba(245,244,240,0.35)" },
   tickMajor: { height: 16, backgroundColor: "rgba(245,244,240,0.7)" },
   tickActive: { backgroundColor: colors.teal },
-  /** Tighter than `imprint`'s own tracking: a ruler's figures sit closer than a caption's letters. */
   tickLabel: {
     position: "absolute",
     top: 2,

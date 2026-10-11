@@ -3,9 +3,8 @@ import { createSerialQueue } from "../serial";
 import { DEFAULT_CAPTURE_SETTINGS, type CaptureSettings } from "./model";
 
 /**
- * The last manual settings, on this phone under `capture.v1`, so reopening the camera keeps a
- * hand-set exposure. Reads fail soft to automatic. Store what native reports it applied, not the request.
- * Beside them, what the mode dial set aside: the settings AUTO parked, and the brightness M did.
+ * Persisted manual settings plus what the mode dial set aside (AUTO's parked settings, M's
+ * brightness). Store what native reports it applied, not the request. Reads fail soft to auto.
  */
 
 const CAPTURE_STORE_KEY = "capture.v1";
@@ -26,7 +25,6 @@ export interface StoredCapture {
 
 const NOTHING_STORED: StoredCapture = { settings: DEFAULT_CAPTURE_SETTINGS, parked: null, aside: null };
 
-/** Everything a stored settings object must be to be believed at all. */
 function readSettings(value: unknown): CaptureSettings {
   if (typeof value !== "object" || value === null) return DEFAULT_CAPTURE_SETTINGS;
   const stored = value as Partial<CaptureSettings>;
@@ -55,7 +53,6 @@ function whiteBalance(value: unknown): CaptureSettings["whiteBalance"] {
 
 const serial = createSerialQueue();
 
-/** What the camera should come up on. Automatic, with nothing set aside, when nothing readable is stored. */
 export async function loadCapture(): Promise<StoredCapture> {
   let raw: string | null = null;
   try {
@@ -68,7 +65,7 @@ export async function loadCapture(): Promise<StoredCapture> {
     const parsed = JSON.parse(raw) as Partial<StoredState>;
     return {
       settings: readSettings(parsed?.settings),
-      // A record from before the dial has neither, and reads as nothing set aside.
+      // Older records lack `parked` and `aside`.
       parked: typeof parsed?.parked === "object" && parsed.parked !== null ? readSettings(parsed.parked) : null,
       aside: Number.isFinite(parsed?.aside) ? Math.round(parsed.aside as number) : null,
     };
@@ -77,7 +74,6 @@ export async function loadCapture(): Promise<StoredCapture> {
   }
 }
 
-/** Stores what the camera actually applied, and what the dial set aside. */
 export function saveCapture(capture: StoredCapture): Promise<void> {
   return serial(async () => {
     const state: StoredState = {

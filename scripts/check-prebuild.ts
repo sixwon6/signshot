@@ -1,21 +1,16 @@
 /**
- * Build gate: the committed `android/` prebuild output says what app.json and the plugins say.
+ * Build gate: the committed `android/` tree matches what prebuild would generate from app.json and
+ * `plugins/`. No device, network or Gradle.   npx tsx scripts/check-prebuild.ts
  *
- *   npx tsx scripts/check-prebuild.ts
+ *   1. Manifest permissions = Expo template set + `expo.android.permissions`, with
+ *      `blockedPermissions` as `tools:node="remove"` (which also strips library-merged ones), in
+ *      prebuild's sort order.
+ *   2. `sharing_provider_paths.xml` is exactly what `plugins/withSharingProviderPaths.js` writes and
+ *      the plugin is registered; otherwise expo-sharing's resource exposes all of `filesDir`.
+ *   3. `proguard-rules.pro` matches `extraProguardRules` + `plugins/withProguardRules.js`.
  *
- * No device, network or Gradle. Checks:
- *   1. Manifest permissions are the Expo template's set (from `node_modules/expo/template.tgz`) plus
- *      `expo.android.permissions`, with `blockedPermissions` as `tools:node="remove"` entries (which
- *      also remove library-merged permissions), sorted as prebuild sorts them.
- *   2. `sharing_provider_paths.xml` is exactly what `plugins/withSharingProviderPaths.js` writes, and
- *      the plugin is registered; without it the library resource exposes all of `filesDir`.
- *   3. `proguard-rules.pro` is what prebuild would produce from `extraProguardRules` and
- *      `plugins/withProguardRules.js`.
- *
- * `android/` is prebuild output: the Expo template plus what app.json and `plugins/` make of it.
- * Template residue that looks dead (the commented-out `react { }` options,
- * `// add(MyReactNativePackage())`, `// setTheme(R.style.AppTheme);`) stays as
- * `npx expo prebuild --clean` writes it, so the tree matches the next prebuild.
+ * Dead-looking template residue in `android/` (commented-out `react { }` options, etc.) is left as
+ * `expo prebuild --clean` writes it so the tree diffs cleanly against the next prebuild.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -199,8 +194,8 @@ function proguardProblems(
     );
   }
   const contents = lf(onDisk);
-  // What a prebuild produces: purge the previous generated section, append app.json's rules,
-  // then let the plugin strip the dead template rules. Over the committed file this is identity.
+  // Replay prebuild: drop the generated section, append app.json's rules, strip dead template
+  // rules. A committed file in sync is a fixed point.
   const regenerated = strip(
     bp.updateAndroidProguardRules(
       bp.updateAndroidProguardRules(contents, "", "overwrite"),

@@ -1,13 +1,12 @@
 /**
- * `POST /rpc`: the app's mainnet JSON-RPC endpoint. The APK carries its RPC URL in plain text, so
- * the provider key stays here and the app gets a key-free URL. One request per call (the app's Kit
- * transport sends no batches), only the methods the app calls, forwarded to `MAINNET_RPC_URL` and
- * answered as the provider answered. Nothing here logs or returns the endpoint.
+ * `POST /rpc`: the app's mainnet JSON-RPC endpoint, so the provider key stays out of the APK.
+ * Single calls only (Kit sends no batches), allowlisted methods, forwarded to `MAINNET_RPC_URL`.
+ * Never logs or returns the endpoint.
  */
 
 import { object, type Fetch } from "./rpc";
 
-/** Every method the app and its wallet library call (README, "Mainnet build"), and nothing else. */
+/** Methods the app and its wallet library call (README, "Mainnet build"). */
 export const RPC_METHODS: ReadonlySet<string> = new Set([
   "getAccountInfo", "getBalance", "getBlockHeight", "getGenesisHash", "getLatestBlockhash",
   "getMinimumBalanceForRentExemption", "getMultipleAccounts", "getProgramAccounts",

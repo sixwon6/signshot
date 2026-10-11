@@ -12,10 +12,7 @@ type PublicationStatus =
   | "pending"
   | "published"
   | "unavailable";
-/**
- * What a screen is handed about one photograph's publication. `view` holds the derived addresses
- * and links, so no screen builds a URL itself; it is absent when the draft could not be described.
- */
+/** `view` holds the derived addresses and links so no screen builds a URL; absent if the draft can't be described. */
 export interface PhotoPublication {
   status: PublicationStatus;
   draft: PublicationDraft | null;
@@ -40,12 +37,11 @@ export function selectPhotoPresentation(
 }
 
 /**
- * A saved version, and the recipe that made it. Native storage records only the profile id, so
- * the name and recipe are kept beside it to label the version after the recipe is renamed or gone.
+ * Native storage records only the profile id, so the recipe's name and snapshot are kept here to
+ * label and reopen the version after the recipe is renamed or deleted.
  */
 export interface DevelopedEdit extends PhotoEdit {
   recipeName?: string;
-  /** The recipe that made this version, whole, so Develop can reopen on it after the recipe is gone. */
   recipe?: { manifest: RecipeManifest; lut: string | null; name: string };
 }
 
@@ -73,10 +69,7 @@ export function photoStatus(publication?: PhotoPublication): string | null {
 
 type PhotoMark = "published" | "attention" | null;
 
-/**
- * The one mark a print carries in the Photos grid. "Checking publication" is a read in flight, so
- * it marks nothing.
- */
+/** Photos grid mark. "Checking publication" is a read in flight, so it marks nothing. */
 export function photoMark(publication?: PhotoPublication): PhotoMark {
   const status = photoStatus(publication);
   if (status === null || status === "Checking publication") return null;
@@ -95,8 +88,8 @@ export function selectedPhotoUri(
 }
 
 /**
- * The file a share is made from, with the hash it must still have: the native side copies a file
- * only if it matches. Same order as `selectedPhotoUri`: published copy, chosen edit, styled frame.
+ * The share source and the hash native checks before copying it. Same precedence as
+ * `selectedPhotoUri`: published copy, chosen edit, styled frame.
  */
 export function selectedShareSource(
   record: CaptureRecord,

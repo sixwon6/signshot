@@ -1,7 +1,4 @@
-/**
- * The Seeker co-signer Worker (`worker/README.md`): its key from `/health` (cached), the
- * Sign-in-with-Solana payload from `/challenge`, and the co-signed claim from `/claim`.
- */
+/** Client for the co-signer Worker (`worker/README.md`): `/health`, `/challenge`, `/claim`. */
 
 import { address, type Address, type Transaction } from "@solana/kit";
 import { fromWire, toWire } from "../prints/send";
@@ -10,7 +7,6 @@ import type { Cluster } from "../../publications/types";
 
 const BASE = (process.env.EXPO_PUBLIC_SEEKER_COSIGNER_URL ?? "").trim().replace(/\/+$/, "");
 
-/** Is a co-signer configured in this build? */
 export const cosignerConfigured = () => /^https:\/\//.test(BASE);
 
 async function call<T>(path: string, init?: { body: unknown }, timeoutMs = 20_000): Promise<{ status: number; body: T }> {
@@ -49,16 +45,13 @@ async function cosignerKeys() {
   }
 }
 
-/** The key new editions name, or null when no co-signer is configured or it cannot be reached now. */
+/** Key new editions name; null when unconfigured or unreachable. */
 export const cosignerKey = async (): Promise<Address | null> => (await cosignerKeys())?.active ?? null;
 
-/**
- * Whether the co-signer signs for `key`: the active key or one kept from before a rotation. Null
- * when it cannot be asked.
- */
+/** True for the active key or one retained across a rotation; null when unreachable. */
 export const cosignerAccepts = async (key: Address): Promise<boolean | null> => (await cosignerKeys())?.accepted.includes(key) ?? null;
 
-/** The Sign-in-with-Solana input for `wallet`, passed to the wallet untouched. */
+/** SIWS input for `wallet`; pass it to the wallet unmodified. */
 export async function cosignerChallenge(wallet: string): Promise<Record<string, unknown>> {
   const { status, body } = await call<Record<string, unknown> & { error?: string }>("/challenge", { body: { wallet } });
   if (status !== 200 || !body || typeof body.nonce !== "string" || body.address !== wallet)
@@ -85,10 +78,7 @@ function refusal(code?: string, reason?: string) {
   return (code && REFUSALS[code]) ?? `The co-signer refused this claim${code ? ` (${code})` : ""}.`;
 }
 
-/**
- * Hand the wallet-signed, finished claim to `/claim`; returns the co-signed transaction, checked to
- * be the same message.
- */
+/** Returns the co-signed claim after checking the Worker didn't alter the message. */
 export async function cosignClaim(input: {
   wallet: string;
   nonce: string;

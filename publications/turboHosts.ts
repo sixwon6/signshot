@@ -1,7 +1,6 @@
 /**
- * Storage provider hosts. Images upload after the on-chain `uri` is fixed, so fallback hosts are
- * kept to avoid a stuck upload. `EXPO_PUBLIC_TURBO_*` overrides must be plain https origins and
- * are spelt out as literal `process.env.NAME` accesses so Metro inlines them.
+ * Turbo hosts. Uploads happen after the on-chain `uri` is fixed, so fallbacks avoid a stuck
+ * upload. `process.env.NAME` is spelt literally so Metro inlines it.
  */
 
 const VARIABLES = {
@@ -16,10 +15,7 @@ const CONFIGURED = {
   payment: process.env.EXPO_PUBLIC_TURBO_PAYMENT_HOST,
 };
 
-/**
- * An `https://host` origin, or a configuration error. Paths, queries, fragments and credentials
- * are refused because the value is concatenated with fixed endpoint paths.
- */
+/** A bare https origin; anything else is refused since endpoint paths are appended to it. */
 function httpsOrigin(value: string, variable: string): string {
   let parsed: URL;
   try {
@@ -46,7 +42,6 @@ const configured = (key: keyof typeof CONFIGURED): string | undefined => {
   return value ? httpsOrigin(value, VARIABLES[key]) : undefined;
 };
 
-/** The documented unified endpoint, or whatever `EXPO_PUBLIC_TURBO_HOST` names instead. */
 const TURBO_HOST = configured("host") ?? "https://turbo.ardrive.io";
 /** Separate upload and payment hosts, used as fallbacks. */
 export const LEGACY_UPLOAD_HOST = "https://upload.ardrive.io";
@@ -56,14 +51,14 @@ const unique = (hosts: readonly (string | undefined)[]) => [
   ...new Set(hosts.filter((host): host is string => Boolean(host))),
 ];
 
-/** Upload-service origins, primary first. Used by `storage.ts` and `src/arweave/turbo.ts`. */
+/** Primary first. */
 export const TURBO_UPLOAD_HOSTS: readonly string[] = unique([
   configured("upload"),
   TURBO_HOST,
   LEGACY_UPLOAD_HOST,
 ]);
 
-/** Payment-service origins, primary first. */
+/** Primary first. */
 export const TURBO_PAYMENT_HOSTS: readonly string[] = unique([
   configured("payment"),
   TURBO_HOST,

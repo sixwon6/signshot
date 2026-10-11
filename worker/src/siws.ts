@@ -1,23 +1,16 @@
 /**
- * Sign-in-with-Solana, as Solana Mobile's recipe does it
- * (https://docs.solanamobile.com/recipes/general/detecting-seeker-users): the server issues the
- * payload (domain, statement, uri, nonce, issuedAt, expirationTime), the wallet signs it over
- * Mobile Wallet Adapter, and the server checks that the nonce is one it issued, unexpired and
- * unused, that the signature is valid for the issued payload, and that the domain is its own.
+ * Sign-in-with-Solana per Solana Mobile's recipe
+ * (https://docs.solanamobile.com/recipes/general/detecting-seeker-users): server-issued payload,
+ * signed over MWA; nonce must be issued here, unexpired and unused; domain must be this Worker's.
  *
- * The recipe stores each issued payload keyed by its nonce. Here the nonce carries what is needed
- * to rebuild the issued payload exactly, under an HMAC, so the payload is still the server's own
- * and never the client's copy, and /challenge writes nothing. A nonce is consumed (a primary-key
- * insert) the first time a claim spends it.
+ * Instead of storing payloads, the nonce carries enough to rebuild the issued payload under an
+ * HMAC, so /challenge is stateless and the client's copy is never trusted. Spent on first claim.
  *
  *   nonce = hex(16 random bytes) ‖ hex(u32 issuedAt seconds) ‖ hex(HMAC-SHA256(...)[..16])
  *
- * 72 hex characters: alphanumeric, as the SIWS nonce must be.
- *
- * The message checks are `deriveSignInMessage` from `@solana/wallet-standard-util` — the code
- * the recipe's `verifySignIn` runs — and the ed25519 check is WebCrypto rather than the pure-JS
- * curve `verifySignIn` carries, which would spend most of the free plan's 10 ms CPU on its first
- * call in each isolate.
+ * 72 hex chars (SIWS nonces must be alphanumeric). Message check: `deriveSignInMessage`
+ * (@solana/wallet-standard-util), as the recipe's `verifySignIn`. Ed25519 via WebCrypto: the
+ * pure-JS curve would burn most of the free plan's 10 ms CPU on first call per isolate.
  */
 
 import { getAddressDecoder, getBase64Encoder } from "@solana/kit";
@@ -28,7 +21,7 @@ type SolanaSignInInput = Parameters<typeof deriveSignInMessage>[0];
 export const STATEMENT = "Sign in to claim a Seeker edition";
 /** The recipe's 10 minutes. */
 export const NONCE_TTL_SECONDS = 600;
-/** How far ahead of this Worker's clock an issuedAt may sit (another isolate's clock). */
+/** Allowed issuedAt lead over this isolate's clock. */
 const CLOCK_SKEW_SECONDS = 60;
 
 export interface SiwsConfig { domain: string; uri: string; hmacSecret: string }
@@ -70,10 +63,7 @@ export interface SignInResult { address: string; signed_message: string; signatu
 
 export type SignInFailure = "nonce-invalid" | "nonce-expired" | "signature-invalid";
 
-/**
- * The issued payload's nonce and expiry when `result` is `wallet`'s valid signature of the
- * payload this Worker issued under `nonce`, or the reason it is not. Does not consume the nonce.
- */
+/** Verifies `wallet`'s signature of the payload issued under `nonce`. Does not consume the nonce. */
 export async function verifySignIn(
   c: SiwsConfig,
   wallet: string,
@@ -110,8 +100,7 @@ export async function verifySignIn(
   const output = { account: { address, publicKey, chains: [], features: [] }, signature, signedMessage };
   const expected = deriveSignInMessage(input, output);
   if (!expected || !timingSafeEqual(expected, signedMessage)) return { ok: false, reason: "signature-invalid" };
-  // The recipe's domain check is inside: `input` is rebuilt with this Worker's domain, and the
-  // signed message's domain (and every other field) has just been required equal to it.
+  // Covers the recipe's domain check: `input` carries this Worker's domain.
 
   let valid = false;
   try {

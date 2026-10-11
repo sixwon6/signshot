@@ -3,7 +3,6 @@ import { HomeNavigator, type HomeTabs } from "./HomeNavigator";
 import { linking } from "./linking";
 import { colors } from "../ui/theme";
 
-/** React Navigation's own theme, mapped to the app's own colour tokens. */
 const navigationTheme = {
   ...DarkTheme,
   colors: {
@@ -17,7 +16,7 @@ const navigationTheme = {
   },
 };
 
-/** The navigation root. The `HomeTabs` argument checks the linking config against its routes. */
+/** The `HomeTabs` argument type-checks the linking config against the routes. */
 export function AppNavigator() {
   return (
     <NavigationContainer<HomeTabs> theme={navigationTheme} linking={linking}>

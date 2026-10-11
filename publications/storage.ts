@@ -22,7 +22,7 @@ async function json(url: string): Promise<any> {
     return await response.json();
   } finally { clearTimeout(timer); }
 }
-/** The first host that answers, in `turboHosts.ts` order, so one dead host cannot stop a publication. */
+/** First host that answers, in `turboHosts.ts` order. */
 async function firstAnswer(hosts: readonly string[], path: (host: string) => string) {
   let last: unknown;
   for (const host of hosts) {
@@ -30,12 +30,12 @@ async function firstAnswer(hosts: readonly string[], path: (host: string) => str
   }
   throw last ?? new Error("Storage provider is unavailable.");
 }
-/** The items the bundler does not hold yet; only these are checked, priced or funded. */
+/** Items the bundler does not hold yet. */
 async function pendingItems(items: StorageItem[]) {
   const held = await Promise.all(items.map(item => turboItemStatus(item.id)));
   return items.filter((_, index) => !held[index]);
 }
-/** Advisory allowance only: the provider's shared-IP quota is checked at upload time. */
+/** Advisory only: the shared-IP quota is enforced at upload time. */
 export async function checkStorageCapacity(uploader: string, items: StorageItem[]) {
   const pending = await pendingItems(items);
   if (!pending.length) return { requiredBytes: 0, remainingBytes: null };
@@ -67,56 +67,36 @@ export async function checkStorageCapacity(uploader: string, items: StorageItem[
   return { requiredBytes, remainingBytes: remaining };
 }
 
+// --- Paid storage ---
+
 /**
- * PAID STORAGE. Turbo's free tier is a lifetime budget per wallet AND per /24 subnet (`GET /info`
- * `freeTier`), and its 402 `FREE_TIER_EXHAUSTED` "is a PERMANENT condition" (upload OpenAPI). A
- * carrier NAT shares a subnet, so a mainnet upload tries the free tier first and, when Turbo
- * refuses, a stand-alone payment (`storagePaymentInstructions`, sent by `payStorage` in
- * `src/prints/creator.ts`) buys the credit. The free tier is again the fallback for a confirmed
- * payment the service will not credit (`settleStoragePayment`).
+ * Turbo's free tier is a lifetime budget per wallet and per /24 subnet, and exhaustion is
+ * permanent; carrier NAT shares subnets. Mainnet tries free first, then a stand-alone payment.
  *
- * The recipe is turbo-sdk's `SolanaToken.createAndSubmitTx`: a System transfer to the Solana address
- * the payment service advertises at `GET /info`, plus an spl-memo instruction
- * `turboCreditDestinationAddress=<address>`, then `POST /v1/account/balance/solana` with the
- * transaction id. The service "credits the sender (or the address named in the payment's
- * credit-destination memo/tag)" (payment OpenAPI), so the credit lands on the upload key, and a
- * data item signed by an ed25519 key is billed to that key's base58 address (turbo-sdk `signer.ts`).
- * One approval, no server.
+ * Follows turbo-sdk `SolanaToken.createAndSubmitTx`: System transfer to the `/info` address plus a
+ * memo `turboCreditDestinationAddress=<upload key>`, then `POST /v1/account/balance/solana`. Items
+ * signed by the ed25519 upload key bill to its base58 address.
  */
 export const paidStorage = (cluster: string) => cluster === "mainnet-beta";
 
-/**
- * Turbo's Solana payment address, pinned: `/info` is read on every quote, but only this answer is
- * paid. payment.ardrive.io/v1/info, turbo.ardrive.io/info and upload.ardrive.io/info all named it
- * when pinned. A different one means a new release, never a transfer to wherever `/info` points.
- */
+/** Pinned. If `/info` names a different address, publishing stops; never pay wherever `/info` points. */
 export const TURBO_SOLANA_ADDRESS = "HepiT2k93CFQaSB7i3ZNXhybZKn5MeWiv3UkLsaJKk4i";
 const SYSTEM_PROGRAM = address("11111111111111111111111111111111");
-/** spl-memo v2, the program turbo-sdk writes the credit destination with (`memoProgramId`). */
+/** spl-memo v2, as turbo-sdk uses. */
 const MEMO_PROGRAM = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-/** The payment service's price for one SOL is read in lamports, its `solana` token's base unit. */
 const LAMPORTS_PER_SOL = 1_000_000_000n;
-/**
- * Paid above the quote, so a price move before the upload cannot leave the credit short. What is
- * left stays on the upload key, a buffer for that wallet's later uploads.
- */
+/** Covers price moves before upload; the surplus stays on the upload key. */
 const HEADROOM_PERCENT = 150n;
-/**
- * Refused above this whatever the provider quotes. Two items at the item cap priced at ~227,000
- * lamports with headroom in September 2026, so this leaves room for ~40× without a release.
- */
+/** Hard cap regardless of quote; a real two-item payment is ~227,000 lamports. */
 export const MAX_STORAGE_LAMPORTS = 10_000_000n;
-/** Credit waits for the transfer to finalize on the service's side; re-posting is idempotent. */
+/** Credit waits for finalization on Turbo's side; re-posting is idempotent. */
 const CREDIT_POLLS = 12;
 const CREDIT_POLL_MS = 4_000;
-/** Re-posts of a refused or misdirected payment, waiting 1, 2 then 4 polls, before the free tier. */
+/** Re-posts of a refused or misdirected payment (backoff 1, 2, 4 polls) before the free tier. */
 const REFUSED_REPOSTS = 3;
 /**
- * How long a payment may stay uncredited (pending, not found, failing or unreachable), from the
- * service's first answer, before the free tier is tried as for a refusal. turbo-sdk posts a payment
- * once it is `finalized`; finalized trails confirmed by about 32 slots (~13 s), and a blockhash
- * expires in 60–90 s (solana.com/developers/guides/advanced/confirmation). Ten minutes is far past
- * both. A credit that posts later stays on the upload key.
+ * Max time a payment may stay uncredited before falling back to the free tier. Finalization takes
+ * ~13 s and a blockhash expires in 60–90 s, so this is generous. A late credit stays on the key.
  */
 export const SETTLE_BOUND_MS = 10 * 60_000;
 
@@ -127,26 +107,22 @@ const ADDRESS_CHANGED: StorageProblem = { kind: "unavailable", retryable: false,
 const PAYMENT_REFUSED: StorageProblem = { kind: "quota", retryable: false,
   message: "The storage provider refused this publication's payment." };
 
-/** What a stand-alone storage payment pays for a publication's uploads. */
 export interface StoragePayment {
-  /** `TURBO_SOLANA_ADDRESS`, once the payment service's `/info` has named it. */
+  /** Always `TURBO_SOLANA_ADDRESS`. */
   target: string;
   lamports: bigint;
-  /** The upload key's base58 address, named in the credit-destination memo. */
+  /** Upload key's address, named in the memo. */
   destination: string;
 }
 
-/** A winc amount as the payment service writes it: a decimal string. */
+/** Winc arrives as a decimal string. */
 function winc(body: unknown): bigint {
   const value = (body as { winc?: unknown } | null)?.winc;
   if (typeof value !== "string" || !/^\d{1,30}$/.test(value)) throw new Error("Unsupported price.");
   return BigInt(value);
 }
 
-/**
- * Price the pending items in SOL, before any approval. `null` when the bundler already holds both.
- * Any failure, and a payment address other than the pinned one, stops publishing here.
- */
+/** SOL price for pending items, before any approval; `null` if none are pending. */
 export async function quoteStoragePayment(uploader: string, items: StorageItem[]): Promise<StoragePayment | null> {
   const pending = await pendingItems(items);
   if (!pending.length) return null;
@@ -172,7 +148,7 @@ export async function quoteStoragePayment(uploader: string, items: StorageItem[]
   if (lamports > MAX_STORAGE_LAMPORTS)
     throw new PublicationStorageError({ kind: "unavailable", retryable: true,
       message: "Storage price out of range. Try again later." });
-  // The exact amount priced as a payment, so fees the per-SOL rate hides still leave enough.
+  // Re-price the exact amount: the per-SOL rate can hide fees.
   let bought: bigint;
   try {
     bought = winc(await firstAnswer(TURBO_PAYMENT_HOSTS, (host) => `${host}/v1/price/solana/${lamports}`));
@@ -183,11 +159,11 @@ export async function quoteStoragePayment(uploader: string, items: StorageItem[]
   return { target, lamports, destination: uploader };
 }
 
-/** The transfer and the credit-destination memo: the stand-alone payment's instructions. */
+/** Transfer plus credit-destination memo. */
 export function storagePaymentInstructions(payer: string, payment: StoragePayment): Instruction[] {
   if (payment.lamports <= 0n || payment.lamports > MAX_STORAGE_LAMPORTS || payment.target !== TURBO_SOLANA_ADDRESS)
     throw new Error("Invalid storage payment.");
-  // `SystemInstruction::Transfer`: u32 index 2, then the lamports as a u64, both little-endian.
+  // `SystemInstruction::Transfer`: u32 LE index 2, u64 LE lamports.
   const data = new Uint8Array(12);
   const view = new DataView(data.buffer);
   view.setUint32(0, 2, true);
@@ -210,9 +186,8 @@ export function storagePaymentInstructions(payer: string, payment: StoragePaymen
 }
 
 /**
- * Whether a confirmed publication may buy storage again: the provider refused its upload (the free
- * tier's refusal included) or found its credit short, and no stand-alone payment is still to land
- * or to be credited. A check re-posts that one instead, so nothing is paid twice.
+ * A confirmed publication may pay again only after a quota refusal and with no earlier payment
+ * still to land or be credited, so nothing is paid twice.
  */
 export function storageTopUpOffered(
   d: Pick<CoreDraft, "confirmedAt" | "storage" | "storageError" | "storageFunding" | "storageTopUp">,
@@ -221,7 +196,7 @@ export function storageTopUpOffered(
     (!d.storageTopUp || d.storageFunding === "credit");
 }
 
-/** A stand-alone payment whose receipt is lost and which may still land. */
+/** Payment receipt lost; it may still land. */
 export const storageTopUpPending = () => new PublicationStorageError({ kind: "unavailable", retryable: true,
   message: "The storage payment may still land. Check again shortly." });
 
@@ -231,7 +206,7 @@ type CreditAnswer =
   | { status: "refused" }
   | { status: "unreachable" };
 
-/** One `POST /v1/account/balance/solana`, primary host first; an unreachable or failing host passes. */
+/** `POST /v1/account/balance/solana`, trying each host in order. */
 async function submitPayment(txId: string): Promise<CreditAnswer> {
   for (const host of TURBO_PAYMENT_HOSTS) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
@@ -242,7 +217,6 @@ async function submitPayment(txId: string): Promise<CreditAnswer> {
         body: JSON.stringify({ tx_id: txId }),
         signal: controller.signal,
       });
-      // A body that is not JSON leaves the status alone to decide.
       const body = (await response.json().catch(() => null)) as Partial<Record<
         "creditedTransaction" | "pendingTransaction" | "failedTransaction",
         { transactionId?: unknown; destinationAddress?: unknown }>> | null;
@@ -250,20 +224,19 @@ async function submitPayment(txId: string): Promise<CreditAnswer> {
       if (credited && credited.transactionId === txId)
         return { status: "credited", destination: credited.destinationAddress };
       if (body?.failedTransaction || response.status === 400) return { status: "refused" };
-      // 202 is the service's own pending record; 404 is a transaction its RPC has not seen yet.
+      // 202: pending record; 404: Turbo's RPC has not seen the transaction yet.
       if (body?.pendingTransaction || response.status === 202 || response.status === 404)
         return { status: "pending" };
     } catch {
-      // Unreachable or timed out: ask the next host.
+      // Try the next host.
     } finally { clearTimeout(timer); }
   }
   return { status: "unreachable" };
 }
 
 /**
- * Does this upload key's address hold Turbo credit, `winc` above zero at
- * `GET /v1/account/balance/solana?address=`? The service's 404 "User Not Found" is no account, as
- * turbo-sdk's `getBalance` reads it; anything else unreadable throws, so the caller keeps the key.
+ * Whether the upload key holds Turbo credit. 404 "User Not Found" means none (as turbo-sdk reads
+ * it); anything else unreadable throws so the caller keeps the key.
  */
 export async function storageCreditHeld(owner: string): Promise<boolean> {
   address(owner);
@@ -283,27 +256,16 @@ export async function storageCreditHeld(owner: string): Promise<boolean> {
   throw last ?? new Error("Storage provider is unavailable.");
 }
 
-/**
- * How a confirmed publication's uploads are paid for, recorded on its draft so a resumed upload
- * takes the same path: `credit`, the credit its payment bought; `free`, Turbo's free tier, because
- * no payment was made or the payment service refused it for good.
- */
+/** Recorded on the draft so a resumed upload takes the same path. */
 export type StorageFunding = "credit" | "free";
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Claim the credit the confirmed storage payment bought, before anything is uploaded.
- * "Re-posting a `tx_id` that is already credited returns `200` with the existing record rather than
- * crediting twice" (payment OpenAPI), so an interrupted upload resumes here without paying again;
- * nothing on this path builds a payment. `receipt` is asked for only when an item is pending, and
- * `null` is returned when none is.
- *
- * A refusal (400) or a credit to another account is re-posted `REFUSED_REPOSTS` times with backoff.
- * If it stands, the edition is already on chain and paid for, so the free tier is tried rather than
- * stranding it: `free` when every pending item is within Turbo's free item size. So is a payment
- * left uncredited `SETTLE_BOUND_MS` after `since(txId)`, the first uncredited answer the caller
- * keeps for that transaction across checks.
+ * Claim the confirmed payment's credit before uploading. Re-posting a credited `tx_id` is
+ * idempotent (payment OpenAPI), so resuming never pays twice. `null` if nothing is pending.
+ * A refusal or misdirected credit that survives `REFUSED_REPOSTS`, or a payment uncredited past
+ * `SETTLE_BOUND_MS` from `since(txId)`, falls back to the free tier.
  */
 export async function settleStoragePayment(
   receipt: () => Promise<string>,
@@ -322,7 +284,7 @@ export async function settleStoragePayment(
     if (answer.status === "unreachable" || answer.status === "pending") {
       first ??= await since(txId);
       if (Date.now() - first >= SETTLE_BOUND_MS) return freeTier(pending);
-      // No host answered at all; a later check re-posts the same transaction.
+      // Unreachable: a later check re-posts the same transaction.
       if (answer.status === "unreachable" || ++polls >= CREDIT_POLLS) break;
       await wait(pollMs);
       continue;
@@ -336,9 +298,8 @@ export async function settleStoragePayment(
 }
 
 /**
- * `free` when every item is under the upload service's advertised free item size, or under the
- * documented one (`TURBO_FREE_ITEM_BYTES`) when `/info` does not answer: the upload itself is the
- * final word, and a 402 or 413 there ends in `PAYMENT_REFUSED` (`storageProblem`).
+ * `free` when every item is under the free item size (advertised, else `TURBO_FREE_ITEM_BYTES`).
+ * The upload has the final word: a 402/413 there becomes `PAYMENT_REFUSED`.
  */
 async function freeTier(items: StorageItem[]): Promise<StorageFunding> {
   const info = await firstAnswer(TURBO_UPLOAD_HOSTS, (host) => `${host}/info`).catch(() => null);
@@ -351,7 +312,7 @@ async function freeTier(items: StorageItem[]): Promise<StorageFunding> {
 
 export function storageProblem(error: unknown, paid = false, funding?: StorageFunding): StorageProblem {
   if (error instanceof PublicationStorageError) return error.problem;
-  // The payment was refused and the free tier refuses the upload too.
+  // Payment refused, and the free tier refused too.
   if (funding === "free" && error instanceof TurboError && (error.status === 402 || error.status === 413))
     return PAYMENT_REFUSED;
   if (error instanceof TurboError && error.status === 402)

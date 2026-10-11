@@ -1,5 +1,5 @@
 /**
- * The one token a copy can be priced in besides SOL, per cluster:
+ * The token a copy can be priced in besides SOL, per cluster:
  *   mainnet-beta  Solana Mobile's SKR, classic SPL Token, 6 decimals (read from the mint);
  *   devnet        an optional stand-in mint, `EXPO_PUBLIC_PRICE_TOKEN_MINT`; unset, no token price.
  * Shown as "SKR" either way; the devnet badge beside every price says which chain it is on.

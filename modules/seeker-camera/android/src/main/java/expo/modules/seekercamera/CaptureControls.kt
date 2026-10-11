@@ -70,7 +70,7 @@ val AF_STATE_NAMES: Map<Int, String> = mapOf(
   CameraMetadata.CONTROL_AF_STATE_PASSIVE_UNFOCUSED to "passive-unfocused",
 )
 
-/** White balance: the camera's own mode, or a temperature we compute gains for. */
+/** White balance: a camera AWB mode, or a temperature mapped to manual gains. */
 sealed class WhiteBalance {
   object Auto : WhiteBalance()
   /** A `CONTROL_AWB_MODE_*` the device lists, by name. */
@@ -381,10 +381,7 @@ data class EffectiveCapture(
   }
 }
 
-/**
- * Builds both the preview and still requests, so viewfinder and file match. Sets only what deviates
- * from the template's auto behaviour; image processing retains the device's template defaults.
- */
+/** Shared by preview and still requests. Sets only what deviates from the template's auto behaviour. */
 fun applyTo(req: CaptureRequest.Builder, eff: EffectiveCapture) {
   // One request, one frame, one result: ZSL would hand back a buffered frame whose exposure is
   // not the one this request asked for.
@@ -451,7 +448,7 @@ fun kelvinGains(kelvin: Int): FloatArray {
   }
 }
 
-/** One histogram pass's counters. Reused across frames; the routine allocates nothing. */
+/** One histogram pass's counters, reused across frames. */
 class LumaStats {
   @JvmField var sampled: Int = 0
   @JvmField var clippedBlack: Int = 0

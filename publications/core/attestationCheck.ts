@@ -1,38 +1,25 @@
 /**
- * The network half of the device verdict (`deviceVerdict` in `attestation.ts`): Google's
- * attestation revocation list, and the edition's on-chain publication time the certificates'
- * validity is judged at. Shared by the app and `scripts/verify-attestation.ts`, so both reach the
- * same answer from the same inputs.
- *
- * Neither is ever guessed. A list that cannot be fetched or read, or a publication time that cannot
- * be read, leaves the verdict "unchecked" and the screen says "Couldn't check.".
+ * Network half of `deviceVerdict`: Google's revocation list and the edition's on-chain publication
+ * time. Shared by the app and `scripts/verify-attestation.ts`. Either failing leaves "unchecked".
  */
 
 import { request } from "../rpc";
 import { deviceVerdict, type AttestationSummary, type DeviceVerdict, type RevocationList } from "./attestation";
 
-/** Google's list, which the app and the verifier fetch directly. */
 export const GOOGLE_STATUS_URL = "https://android.googleapis.com/attestation/status";
 
-/** 179 KB with 1,755 entries as of 2026-09-24; the bound leaves room for years of growth. */
+/** The live list is ~180 KB. */
 export const MAX_STATUS_BYTES = 4_000_000;
-/** Held when the response names no max-age; Google sends `max-age=86400`, which is honoured. */
+/** Used when the response has no max-age (Google sends `max-age=86400`). */
 const STATUS_DEFAULT_TTL_MS = 60 * 60 * 1000;
 const STATUS_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const STATUS_TIMEOUT_MS = 20_000;
-/**
- * A key a serial can be looked up under: lowercase hex (the documented form) or decimal (what the
- * live list also uses), and decimal digits are hex digits. Its length is bounded only by the
- * list's (`MAX_STATUS_BYTES`), so no serial a certificate can carry is left out.
- */
+/** Lowercase hex or decimal (a subset of hex). Length is bounded only by `MAX_STATUS_BYTES`. */
 const SERIAL_KEY = /^[0-9a-f]+$/;
 
 /**
- * Parse the list's JSON, refusing anything that is not its documented shape: `{ entries: { <serial>:
- * { status, reason?, ... } } }`. A shape this does not recognise is an unreadable list, not an
- * empty one. A well-formed entry under a key that is neither lowercase hex nor decimal is skipped:
- * `revocationHits` never asks for one, so dropping it changes no answer, while refusing the list
- * for it would leave every device row "Couldn't check." until Google removed it.
+ * Parse `{ entries: { <serial>: { status, reason?, ... } } }`; any other shape throws (unreadable,
+ * not empty). Entries under non-hex keys are skipped since `revocationHits` never looks them up.
  */
 export function parseRevocationList(json: unknown): RevocationList {
   const entries = (json as { entries?: unknown } | null)?.entries;
@@ -50,11 +37,7 @@ export function parseRevocationList(json: unknown): RevocationList {
 
 const statusCache = new Map<string, { until: number; list: Promise<RevocationList> }>();
 
-/**
- * The revocation list at `url`, held for as long as its `Cache-Control` says (capped at a day).
- * Google: "The Cache-Control header in the HTTP response determines how often to check for
- * updates". A failure is not held, so the next screen asks again.
- */
+/** Cached per `Cache-Control` max-age (capped at a day), as Google specifies. Failures are not cached. */
 export function readRevocationList(url: string): Promise<RevocationList> {
   const held = statusCache.get(url);
   if (held && held.until > Date.now()) return held.list;
@@ -72,7 +55,7 @@ async function fetchRevocationList(url: string, held: (ttl: number) => void): Pr
     if (!res.ok) throw new Error(`revocation list: HTTP ${res.status}`);
     const declared = Number(res.headers.get("content-length") ?? NaN);
     if (Number.isFinite(declared) && declared > MAX_STATUS_BYTES) throw new Error("revocation list: too large");
-    // React Native's fetch has no body stream; the declared length above is the pre-read bound.
+    // React Native's fetch has no body stream, so content-length is the only pre-read bound.
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length > MAX_STATUS_BYTES) throw new Error("revocation list: too large");
     const list = parseRevocationList(JSON.parse(new TextDecoder().decode(bytes)));
@@ -84,12 +67,11 @@ async function fetchRevocationList(url: string, held: (ttl: number) => void): Pr
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Publication time
+// --- Publication time ---
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const SIGNATURE_PAGE = 1000;
-/** Past this much history the creating transaction is not looked for; the answer is "unchecked". */
+/** Beyond this much history the time is left unknown. */
 const MAX_SIGNATURE_PAGES = 3;
 /** Successful transactions tried, oldest first, before giving up. */
 const MAX_CANDIDATES = 4;
@@ -118,16 +100,11 @@ function creates(tx: ParsedTransaction, account: string, owner: string): boolean
 
 const timeCache = new Map<string, Date>();
 
-/**
- * When the edition at `edition` was published, from the chain; see `creationTime`. Throws when its
- * history is too long to walk or its creation is not found.
- */
+/** On-chain publication time of a candy machine edition; throws if not found. See `creationTime`. */
 export async function publicationTime(endpoint: string, program: string, edition: string): Promise<Date> {
   const key = `${endpoint}\n${program}\n${edition}`;
   const held = timeCache.get(key);
   if (held) return held;
-  // A candy machine edition: the transaction in which the System program created the candy
-  // machine account for `program` (the Candy Machine program), which only its own key could sign.
   const time = await creationTime(endpoint, program, edition);
   if (timeCache.size >= 256) timeCache.clear();
   timeCache.set(key, time);
@@ -135,13 +112,9 @@ export async function publicationTime(endpoint: string, program: string, edition
 }
 
 /**
- * The block time of the transaction that created `edition` as an account of `program`.
- *
- * Not simply the oldest signature: anyone who knows an address can mention it in a transaction,
- * so an early mention could backdate the edition into an expired certificate's lifetime. The
- * creating transaction is the one where the System program created (or assigned) the account to
- * `program`. The walk stops at `MAX_SIGNATURE_PAGES`, so a history padded past it leaves the time
- * unknown.
+ * Block time of the transaction that created (or assigned) `edition` to `program`. Not the oldest
+ * signature: anyone can mention an address early and backdate it into an expired certificate's
+ * lifetime.
  */
 async function creationTime(
   endpoint: string,
@@ -175,11 +148,7 @@ async function creationTime(
   throw new Error("The publication transaction was not found.");
 }
 
-/**
- * The verdict for one accepted summary. The rules that need no network run first, so another
- * app or an unlocked bootloader is refused without fetching anything; the list and the time are
- * then fetched together, and a failure of either leaves only the rules that could run.
- */
+/** Offline rules first, so a refusal needs no fetch; then list and time in parallel. */
 export async function checkDevice(
   summary: AttestationSummary,
   sources: { revocationList(): Promise<RevocationList>; publishedAt(): Promise<Date> },

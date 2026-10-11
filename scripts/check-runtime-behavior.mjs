@@ -4,7 +4,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mock } from "node:test";
 
-// Isolate synchronous URL parsing so a decoder regression cannot hang the test runner.
+/**
+ * Pure runtime logic with no device: signing-certificate matching, RPC timeouts and 429 retries,
+ * cost rows, the capture mode dial, serial/develop queues, photo loading, deep links, Arweave
+ * reads, the release-config and release-artifact gates, the price floor and error text.
+ */
+
+// Runs in a child process with a timeout so a hang (e.g. in URL decoding) cannot stall `npm test`.
 if (!process.argv.includes("--worker")) {
   const result = spawnSync(process.execPath,
     ["--experimental-test-module-mocks", "--disable-warning=ExperimentalWarning", "--import", "tsx",
@@ -40,7 +46,7 @@ if (!process.argv.includes("--worker")) {
   await assert.rejects(rpcWithTimeout(async () => { throw new Error("different network"); }), /different network/);
   mock.timers.reset();
   {
-    // An HTTP 429 alone is retried, three times at most, by `request()` and every kit client alike.
+    // Only HTTP 429 is retried, at most three times, by `request()` and kit clients alike.
     const { request, solanaRpc, rateLimitDelayMs } = await import("../publications/rpc.ts");
     const { safeErrorText } = await import("../src/ui/errorText.ts");
     const realFetch = globalThis.fetch;
@@ -279,8 +285,8 @@ if (!process.argv.includes("--worker")) {
     assert.equal(spanOf(none), null);
 
   {
-    // The dial as the photographer turns it. `turn` is the hook's own composition: the turn, then
-    // the device clamp, then brightness carried; `move` is one control moved the same way.
+    // `turn` composes as the hook does: turnDial, device clamp, brightness carried. `move` changes
+    // one control the same way.
     const startDial = { settings: DEFAULT_CAPTURE_SETTINGS, readout: false, parked: null, aside: null };
     const settle = (dial, next) => {
       const carried = withBrightnessCarried(dial.settings, clampSettings(next, captureCaps), dial.aside);
@@ -325,8 +331,7 @@ if (!process.argv.includes("--worker")) {
     // ...and P from there is under the brightness AUTO was given, not the one M set aside before it.
     assert.equal(turn(dial, "program").settings.ev, -3);
 
-    // AUTO, then P instead: the colour comes back, the exposure does not, and the brightness is
-    // the one AUTO was left on, because that is the control the two share.
+    // AUTO, then P: colour comes back, exposure does not, brightness is AUTO's (the shared control).
     dial = turn(move(turn(dial, "auto"), { ev: 6 }), "program");
     assert.equal(at(dial), "program");
     assert.deepEqual([dial.settings.iso, dial.settings.whiteBalance, dial.settings.ev], ["auto", "daylight", 6]);
@@ -352,8 +357,8 @@ if (!process.argv.includes("--worker")) {
     assert.equal(rememberedMode({ ...DEFAULT_CAPTURE_SETTINGS, ev: 3 }), null);
     assert.equal(rememberedMode({ ...DEFAULT_CAPTURE_SETTINGS, whiteBalance: "daylight" }), "program");
     assert.equal(rememberedMode(leftInManual), "manual");
-    // What was stored beside the settings is believed only where it means something: the parked
-    // settings while the dial is on AUTO, the set-aside brightness while an exposure is held.
+    // Stored extras are trusted only where meaningful: parked settings on AUTO, set-aside
+    // brightness while an exposure is held.
     assert.deepEqual(rememberedFor(DEFAULT_CAPTURE_SETTINGS, false, leftInManual, 3), { parked: leftInManual, aside: null });
     assert.deepEqual(rememberedFor(DEFAULT_CAPTURE_SETTINGS, true, leftInManual, 3), { parked: null, aside: null },
       "off AUTO nothing is parked, whatever the store says");
@@ -388,7 +393,7 @@ if (!process.argv.includes("--worker")) {
     assert.equal(project.hash.project.objects.PBXGroup[id], undefined);
     project.hash.project.objects.PBXGroup[id] = {};
   }
-  // Resolve the core actually used by our installed navigator, including nested copies.
+  // Resolve the @react-navigation/core the installed navigator actually uses (may be nested).
   const nativeRequire = createRequire(require.resolve("@react-navigation/native/package.json"));
   const { getStateFromPath } = nativeRequire("@react-navigation/core");
   const { linking } = await import("../src/navigators/linking.ts");
@@ -596,8 +601,8 @@ if (!process.argv.includes("--worker")) {
     "the gate refuses every file Expo loads for a production export");
 
   {
-    // release:apk, around Gradle: the same env files refused again, and the bundle in the APK
-    // proven this build's, against a synthetic zip laid out as an APK is.
+    // release-artifact.mjs: the same env-file refusal, and bundle provenance read from a
+    // synthetic APK-shaped zip.
     const artifact = await import("./release-artifact.mjs");
     assert.deepEqual(artifact.refusedEnvFiles(envNames), refusedEnvFiles(envNames), "release:apk refuses what the gate refuses");
     const { crc32, deflateRawSync } = await import("node:zlib");

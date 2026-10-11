@@ -3,9 +3,8 @@ import { verifyGenesisToken, type GenesisCheck } from "../../publications/core/g
 import { MAINNET_READ_ENDPOINT } from "../solana/cluster";
 
 /**
- * A document's Seeker Genesis Token claim, checked against mainnet for a screen: the mint is a
- * genuine SGT and `holder` (the publishing wallet) holds it now. Null when there is no claim.
- * `unavailable` (mainnet could not be asked) is never shown as held, never as not held.
+ * Checks a document's SGT claim on mainnet: the mint is a genuine SGT and `holder` holds it now.
+ * Null when there is no claim. `unavailable` must never render as held or as not held.
  */
 export function useGenesisStanding(
   mint: string | undefined,

@@ -35,23 +35,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * QR scanning for the Collection tab: read a collect link off another phone's screen or a card.
- *
- * Route: the BUNDLED ML Kit barcode model (`com.google.mlkit:barcode-scanning`), driven by CameraX,
- * inside this dedicated Activity — not the Google code scanner
- * (`com.google.android.gms:play-services-code-scanner`), which is a system UI served by Google Play
- * services. No Solana Mobile document says the Seeker ships Play services, so the scanner carries
- * its own model and its own camera.
- *
- * Camera confinement: this Activity binds the back camera itself, and `CameraController` owns camera
- * "0" for as long as a `SeekerCameraView` is mounted. Two owners cannot share it, so `scanQrCode`
- * refuses while a camera view is up (see `SeekerCameraModule`). The Collection tab, the only caller,
- * has none mounted.
- *
- * Permission: `android.permission.CAMERA`, declared in app.json. The scanner may run before the
- * camera screen has ever opened, so it asks for the grant itself and ends with a readable message
- * if it is refused. The CameraX and ML Kit AARs declare no permissions of their own, and ML Kit
- * ships its own consumer ProGuard rules.
+ * QR scanning with the bundled ML Kit model on CameraX, not the Play services code scanner: the
+ * Seeker is not documented to ship Play services. Binds the back camera itself, so `scanQrCode`
+ * refuses while a `SeekerCameraView` owns camera "0". Requests CAMERA itself if not yet granted.
  */
 internal object QrScanner {
   /** `startActivityForResult` request code; 16-bit, as the framework requires. */
@@ -60,25 +46,15 @@ internal object QrScanner {
   const val EXTRA_VALUE = "expo.modules.seekercamera.QR_VALUE"
   const val EXTRA_ERROR = "expo.modules.seekercamera.QR_ERROR"
 
-  /**
-   * Result code for "the scan could not happen at all" — no camera, no grant, model refused. The
-   * promise rejects with `EXTRA_ERROR`; `RESULT_CANCELED` stays the person's own back-out.
-   */
+  /** Scan impossible (no camera, no grant, model failed); carries `EXTRA_ERROR`. */
   const val RESULT_UNAVAILABLE = android.app.Activity.RESULT_FIRST_USER
 
-  /**
-   * A local sanity bound, not a format claim: a QR symbol tops out near this many characters, and
-   * a decoded value longer than it is not a collect link. Keeps a hostile symbol from handing JS an
-   * unbounded string.
-   */
+  /** QR alphanumeric capacity; bounds what a hostile symbol can hand JS. */
   const val MAX_VALUE_CHARS = 4296
 
   fun intent(context: Context): Intent = Intent(context, QrScannerActivity::class.java)
 
-  /**
-   * The one result worth returning from a frame: a QR code (never one of the other twelve formats
-   * ML Kit can decode) carrying a non-blank value of workable length.
-   */
+  /** A QR code (no other format) with a non-blank value within MAX_VALUE_CHARS, else null. */
   fun acceptedQrValue(format: Int, rawValue: String?): String? {
     if (format != Barcode.FORMAT_QR_CODE) return null
     val value = rawValue ?: return null
@@ -89,17 +65,15 @@ internal object QrScanner {
 }
 
 /**
- * Full-screen scanner. Resolves through `setResult`: `RESULT_OK` + `EXTRA_VALUE` for a code,
- * `RESULT_CANCELED` for a back-out, `QrScanner.RESULT_UNAVAILABLE` + `EXTRA_ERROR` for a sentence
- * the UI can show. Declared in the module's `AndroidManifest.xml`, never exported.
+ * Full-screen scanner. Results: `RESULT_OK` + `EXTRA_VALUE`, `RESULT_CANCELED`, or
+ * `QrScanner.RESULT_UNAVAILABLE` + `EXTRA_ERROR`. Not exported.
  */
 class QrScannerActivity : AppCompatActivity() {
   companion object {
     private const val TAG = "SeekerCamQr"
     private const val PERMISSION_REQUEST = 0x5EEE
     /**
-     * Analysis frame size asked of CameraX. 1280x720 reads a QR shown on another phone's screen at
-     * arm's length; the default analysis size (640x480) often does not.
+     * 1280x720 reads a QR on another phone's screen at arm's length; the default 640x480 often does not.
      * https://developer.android.com/media/camera/camerax/analyze
      */
     private val ANALYSIS_SIZE = Size(1280, 720)
@@ -110,15 +84,14 @@ class QrScannerActivity : AppCompatActivity() {
   private var scanner: BarcodeScanner? = null
   private var cameraProvider: ProcessCameraProvider? = null
 
-  /** One result only: every finish path goes through this, so a late frame cannot re-finish. */
+  /** Every finish path checks this, so a late frame cannot finish twice. */
   private val settled = AtomicBoolean(false)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContentView(buildUi())
 
-    // Single thread: ML Kit is handed one frame at a time and STRATEGY_KEEP_ONLY_LATEST drops the
-    // rest, so a slow decode cannot queue frames up behind it.
+    // One frame at a time; STRATEGY_KEEP_ONLY_LATEST drops the rest while a decode runs.
     analysisExecutor = Executors.newSingleThreadExecutor { r ->
       Thread(r, "SeekerCamQrAnalysis").apply { isDaemon = true }
     }
@@ -141,7 +114,7 @@ class QrScannerActivity : AppCompatActivity() {
     }
   }
 
-  /** Built in code: the module ships no layout resources, and this screen is a preview and two labels. */
+  /** Built in code: the module ships no layout resources. */
   private fun buildUi(): ViewGroup {
     val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
@@ -201,8 +174,7 @@ class QrScannerActivity : AppCompatActivity() {
   }
 
   private fun startCamera() {
-    // ProcessCameraProvider.getInstance is async; the listener runs on the main thread because the
-    // use cases below must be bound there.
+    // Use cases must be bound on the main thread.
     val future = ProcessCameraProvider.getInstance(this)
     future.addListener({
       val provider = try {
@@ -248,7 +220,7 @@ class QrScannerActivity : AppCompatActivity() {
     analysis.setAnalyzer(analysisExecutor, ImageAnalysis.Analyzer { proxy -> analyze(proxy) })
 
     try {
-      // Nothing else in this process binds CameraX, but unbindAll makes a re-entered scanner safe.
+      // Safe re-entry.
       provider.unbindAll()
       provider.bindToLifecycle(this, selector, preview, analysis)
     } catch (e: Throwable) {
@@ -258,8 +230,7 @@ class QrScannerActivity : AppCompatActivity() {
   }
 
   /**
-   * One analysis frame. `ImageProxy.getImage` is opt-in experimental in CameraX; the ML Kit guide's
-   * own sample takes the same opt-in to build an `InputImage` from it.
+   * `ImageProxy.getImage` is experimental opt-in, as in the ML Kit sample.
    * https://developers.google.com/ml-kit/vision/barcode-scanning/android
    */
   @ExperimentalGetImage
@@ -276,12 +247,11 @@ class QrScannerActivity : AppCompatActivity() {
         if (hit != null) finishWithValue(hit)
       }
       .addOnFailureListener { e ->
-        // A decode that cannot run at all (no model, no native library) fails every frame, so end
-        // on the first one rather than leaving a dead preview up.
+        // A decoder that cannot run fails every frame; end on the first.
         Log.e(TAG, "barcode pass failed", e)
         finishUnavailable("QR scanning is unavailable on this device.")
       }
-      // The frame is held until ML Kit is done with it; CameraX requires exactly one close().
+      // CameraX requires exactly one close(), after ML Kit is done with the frame.
       .addOnCompleteListener { proxy.close() }
   }
 
@@ -305,8 +275,7 @@ class QrScannerActivity : AppCompatActivity() {
 
   override fun onDestroy() {
     super.onDestroy()
-    // Give the camera back before the promise is settled on the JS side, so a capture screen
-    // mounted right after the scan finds camera "0" free.
+    // Release camera "0" before JS settles, so a capture screen mounted next finds it free.
     runCatching { cameraProvider?.unbindAll() }
     cameraProvider = null
     runCatching { scanner?.close() }

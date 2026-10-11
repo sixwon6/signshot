@@ -1,8 +1,7 @@
 /**
- * The mode dial. AUTO is the point-and-shoot: the camera chooses everything and brightness is the
- * one control on the picture. P and M are the same camera with the readout up: P while the camera
- * meters, M while ISO and shutter are held. Camera2 holds those two together, so the dial has no
- * S and no A, and M is never chosen apart from the exposure: the dial follows what is held.
+ * Mode dial. AUTO: camera chooses everything; brightness is the only control. P: readout up, camera
+ * meters. M: ISO and shutter held. Camera2 holds those two together, so there is no S or A, and the
+ * mode is derived from what is held.
  */
 import {
   DEFAULT_CAPTURE_SETTINGS,
@@ -14,10 +13,9 @@ import {
 
 export type CaptureMode = "auto" | "program" | "manual";
 
-/** What DISP cycles over the picture. The histogram belongs to the readout, so AUTO skips it. */
+/** AUTO skips the histogram. */
 export type CaptureDisplay = "plain" | "grid" | "histogram";
 
-/** What is remembered of the chrome: whether the dial is off AUTO, and what DISP shows. */
 export interface CaptureChrome {
   readout: boolean;
   display: CaptureDisplay;
@@ -30,15 +28,12 @@ const DISPLAYS: readonly CaptureDisplay[] = ["plain", "grid", "histogram"];
 export const exposureHeld = (settings: CaptureSettings): boolean =>
   settings.iso !== "auto" || settings.shutterNs !== "auto";
 
-/**
- * Whether this camera has an M. ISO and shutter are one pair: a camera that cannot report both
- * ranges has neither cell on the readout and no M on the dial.
- */
+/** M needs both ISO and shutter ranges. */
 export function holdsExposure(caps: CaptureCapabilities): boolean {
   return caps.manualSensor && caps.iso !== UNAVAILABLE && caps.shutterNs !== UNAVAILABLE;
 }
 
-/** AUTO keeps brightness, the one control it shows, and hands everything else back. */
+/** Keeps only brightness. */
 export function autoModeSettings(settings: CaptureSettings): CaptureSettings {
   return { ...DEFAULT_CAPTURE_SETTINGS, ev: settings.ev };
 }
@@ -46,9 +41,8 @@ export function autoModeSettings(settings: CaptureSettings): CaptureSettings {
 const sameValue = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * Something is held that AUTO has no cell for. A held value is never hidden, so the readout is up.
- * Read off `autoModeSettings` rather than listed again: whatever AUTO would release is exactly
- * what it cannot show, and a setting added later is covered without being named here.
+ * A value is held that AUTO can't show, so the readout must stay up. Derived from
+ * `autoModeSettings` so new settings are covered automatically.
  */
 export function heldBeyondAuto(settings: CaptureSettings): boolean {
   const released = autoModeSettings(settings);
@@ -57,25 +51,20 @@ export function heldBeyondAuto(settings: CaptureSettings): boolean {
   );
 }
 
-/** Where the dial sits. `readout` is the photographer's choice between AUTO and the rest. */
 export function captureModeOf(settings: CaptureSettings, readout: boolean): CaptureMode {
   if (exposureHeld(settings)) return "manual";
   return readout || heldBeyondAuto(settings) ? "program" : "auto";
 }
 
-/** P hands exposure back to the camera and keeps colour, focus and the locks. */
+/** Releases exposure; keeps colour, focus and locks. */
 export function programSettings(settings: CaptureSettings): CaptureSettings {
   return exposureHeld(settings) ? { ...settings, iso: "auto", shutterNs: "auto" } : settings;
 }
 
 /**
- * M. An exposure already held stays as it is. Otherwise M holds the one the camera last metered,
- * so the picture does not change as the dial turns. Null before the first reading: there is
- * nothing to hold yet.
- *
- * In the dark the meter reads past what the sensor will hold by hand (the Seeker meters ISO 20000
- * over a manual range that ends at 11470). Holding the clamped ISO alone would darken the picture
- * most of a stop, so the difference goes to the shutter and the exposure stays what was metered.
+ * Holds the last metered exposure so the picture doesn't jump; null before the first reading.
+ * The meter can exceed the manual ISO range (Seeker: 20000 vs 11470), so the clamped difference
+ * moves to the shutter.
  */
 export function manualSettings(
   settings: CaptureSettings,
@@ -89,10 +78,7 @@ export function manualSettings(
   return { ...settings, iso, shutterNs: Math.round(meter.shutterNs * (meter.iso / iso)) };
 }
 
-/**
- * Leaving AUTO. What P and M held when the dial went to AUTO comes back with it, like a camera's,
- * under the brightness AUTO has now: that is the one control the two share.
- */
+/** Restores what P/M held before AUTO, with AUTO's current brightness. */
 export function settingsLeavingAuto(
   now: CaptureSettings,
   parked: CaptureSettings | null,
@@ -100,7 +86,6 @@ export function settingsLeavingAuto(
   return parked !== null && heldBeyondAuto(parked) ? { ...parked, ev: now.ev } : now;
 }
 
-/** What the dial turns: the settings in force, whether the readout is up, and what AUTO set aside. */
 export interface DialState {
   settings: CaptureSettings;
   readout: boolean;
@@ -108,12 +93,8 @@ export interface DialState {
 }
 
 /**
- * The dial turned to `next`; `reading` is the camera's newest. Null when the turn is refused:
- * the dial is already there, or M has neither a held exposure nor a reading to hold.
- *
- * `settings` comes back as the state's own object when the turn changes nothing in the camera
- * (AUTO to P with nothing set aside). That is the contract a caller relies on to leave the
- * camera's repeating request alone.
+ * Null when already there, or M has nothing to hold. Returns the same `settings` object when the
+ * camera needn't change (e.g. AUTO → P); callers rely on this to skip the repeating request.
  */
 export function turnDial(
   state: DialState,
@@ -132,9 +113,8 @@ export function turnDial(
 }
 
 /**
- * Brightness steers the meter, so M has none and native reads it back as 0. A camera's
- * compensation dial stays where it was set: the value M set aside returns with the meter.
- * `next` is already clamped; `aside` is what the last call returned.
+ * M has no brightness (native reads back 0), so entering M sets it aside and leaving restores it.
+ * `next` is already clamped; `aside` is the previous return value.
  */
 export function withBrightnessCarried(
   now: CaptureSettings,
@@ -148,20 +128,13 @@ export function withBrightnessCarried(
   return { settings: next, aside };
 }
 
-/**
- * Which position is holding something for the photographer while the dial is on AUTO: M when an
- * exposure was set aside, P for anything else, null when AUTO set nothing aside. The dial shows
- * it, so what comes back with a turn is never a surprise.
- */
+/** On AUTO, which position has something parked (shown on the dial). */
 export function rememberedMode(parked: CaptureSettings | null): CaptureMode | null {
   if (parked === null || !heldBeyondAuto(parked)) return null;
   return exposureHeld(parked) ? "manual" : "program";
 }
 
-/**
- * What was stored beside the settings, made fit to believe: AUTO's set-aside settings only while
- * the dial is on AUTO, and M's set-aside brightness only while an exposure is held.
- */
+/** Drops stored `parked` unless on AUTO and `aside` unless exposure is held. */
 export function rememberedFor(
   settings: CaptureSettings,
   readout: boolean,
@@ -175,12 +148,10 @@ export function rememberedFor(
   };
 }
 
-/** What the picture carries in this mode: AUTO never draws the histogram. */
 export function displayIn(display: CaptureDisplay, mode: CaptureMode): CaptureDisplay {
   return mode === "auto" && display === "histogram" ? "plain" : display;
 }
 
-/** One press of DISP. */
 export function nextDisplay(display: CaptureDisplay, mode: CaptureMode): CaptureDisplay {
   const shown = displayIn(display, mode);
   if (shown === "plain") return "grid";
@@ -188,7 +159,6 @@ export function nextDisplay(display: CaptureDisplay, mode: CaptureMode): Capture
   return "plain";
 }
 
-/** The stored chrome, read soft: anything unreadable is AUTO and a plain picture. */
 export function parseCaptureChrome(raw: string | null): CaptureChrome {
   if (!raw) return DEFAULT_CAPTURE_CHROME;
   try {
@@ -196,7 +166,7 @@ export function parseCaptureChrome(raw: string | null): CaptureChrome {
     const display = DISPLAYS.find((one) => one === parsed?.display);
     return {
       readout: parsed?.readout === true,
-      // A record from before DISP said only whether the histogram was on.
+      // Older records have only `histogram`.
       display: display ?? (parsed?.histogram === true ? "histogram" : "plain"),
     };
   } catch {
@@ -205,9 +175,8 @@ export function parseCaptureChrome(raw: string | null): CaptureChrome {
 }
 
 /**
- * Stored settings that hold something AUTO cannot show put the readout up for good, not only
- * while they are held: releasing the last of them leaves the dial on P, where it was released.
- * The same object comes back when there is nothing to change, so a caller can tell.
+ * Values AUTO can't show latch the readout on, so releasing them leaves the dial on P. Returns the
+ * same object when unchanged.
  */
 export function chromeHolding(chrome: CaptureChrome, settings: CaptureSettings): CaptureChrome {
   return !chrome.readout && heldBeyondAuto(settings) ? { ...chrome, readout: true } : chrome;

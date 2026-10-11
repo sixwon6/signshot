@@ -9,10 +9,7 @@ import { typeScale as type } from "../ui/type";
 import { Chip } from "../ui/primitives";
 import { actions, price as priceCopy, publish as copy } from "../ui/copy";
 
-/**
- * The publish sheet's fields until a draft exists: title, caption, copies, price and terms. The
- * state and its gates stay with `PrintSheet`.
- */
+/** The publish sheet's fields before a draft exists. State and validation live in `PrintSheet`. */
 export function PrintDetails({
   draft,
   busy,
@@ -127,7 +124,7 @@ export function PrintDetails({
           </>
         )}
       </View>
-      {/* The price of a copy: absent, never disabled, where it cannot apply. */}
+      {/* Hidden, not disabled, where a price cannot apply. */}
       {priceable && (
         <View style={s.group}>
           <Text style={sheetStyles.label}>{tokenLabel ? priceCopy.publishLabelAny : priceCopy.publishLabel}</Text>
@@ -153,8 +150,7 @@ export function PrintDetails({
           {!!priceError && <Text style={sheetStyles.error}>{priceError}</Text>}
         </View>
       )}
-      {/* The royalty and who may collect; who may collect only where there is a copy to
-          collect and the co-signer is configured. */}
+      {/* Collector rule only with copies to collect and a co-signer configured. */}
       {distribution && (
         <View style={s.group}>
           <View style={s.countRow}>
@@ -195,7 +191,6 @@ export function PrintDetails({
   );
 }
 
-/** A labelled text field, in the field colour with a mono label. */
 function Field({
   label,
   value,

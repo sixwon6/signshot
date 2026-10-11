@@ -1,35 +1,33 @@
 import { getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address } from "@solana/kit";
 
 /**
- * The only transactions the co-signer key ever signs: a claim of one copy of a Seeker-only
- * edition, exactly as the app's client builds it (`claimDraft` in
- * publications/candy/edition.ts, instruction builders in publications/candy/programs.ts).
+ * The only transactions the co-signer key signs: a claim of one copy of a Seeker-only edition,
+ * as built by `claimDraft` (publications/candy/edition.ts, builders in publications/candy/programs.ts).
  *
  * ┌──────────────────────────────────────────────────────────────────────────────────────────┐
  * │ CLAIM LAYOUT                                                                             │
  * │                                                                                          │
- * │ v0 messages, signed by the wallet first; accounts resolved through each instruction's     │
- * │ indexes (the wallet reorders them). Beside the shapes: at most one SetComputeUnitLimit    │
- * │ and one SetComputeUnitPrice, capped; `WALLET_ADDED_PROGRAMS_ALLOWED` (empty).             │
- * │ Three shapes, nothing else. W = wallet (fee payer, minter), P = one-shot payer (fresh    │
- * │ keypair), A = the copy (fresh keypair), T = temporary token account (fresh keypair),     │
- * │ S = this Worker's key. Accounts listed in instruction order.                              │
+ * │ v0 message, wallet signs first. Accounts are resolved through each instruction's indexes │
+ * │ (the wallet reorders them). Also allowed: at most one SetComputeUnitLimit and one        │
+ * │ SetComputeUnitPrice (capped), and `WALLET_ADDED_PROGRAMS_ALLOWED` (empty).               │
+ * │ W = wallet (fee payer, minter), P = one-shot payer, A = the copy, T = temporary token    │
+ * │ account (P, A, T fresh keypairs), S = this Worker's key. Accounts in instruction order.  │
  * │                                                                                          │
- * │ free / SOL price                                                                          │
- * │   0 System Transfer(2, u64)          [W ws, P w]                                          │
- * │   1 Candy Guard mint_v1               13 fixed + remaining                                │
- * │   2 System Allocate(8, u64)          [P ws]                                               │
- * │   signers: W, P, A, S                                                                     │
+ * │ free / SOL price                                                                         │
+ * │   0 System Transfer(2, u64)          [W ws, P w]                                         │
+ * │   1 Candy Guard mint_v1              13 fixed + remaining                                │
+ * │   2 System Allocate(8, u64)          [P ws]                                              │
+ * │   signers: W, P, A, S                                                                    │
  * │                                                                                          │
- * │ token price                                                                               │
- * │   0 System Transfer(2, u64)          [W ws, P w]                                          │
- * │   1 System CreateAccount(0, u64 lamports, u64 165, Token program)  [W ws, T ws]           │
- * │   2 Token InitializeAccount3(18, owner = W)   [T w, mint r]                               │
- * │   3 Token Transfer(3, u64)           [ATA(W, mint) w, T w, W rs]                          │
- * │   4 Candy Guard mint_v1               13 fixed + remaining                                │
- * │   5 System Allocate(8, u64)          [P ws]                                               │
- * │   6 Token CloseAccount(9)            [T w, W w, W rs]                                     │
- * │   signers: W, P, A, T, S                                                                  │
+ * │ token price                                                                              │
+ * │   0 System Transfer(2, u64)          [W ws, P w]                                         │
+ * │   1 System CreateAccount(0, u64 lamports, u64 165, Token program)  [W ws, T ws]          │
+ * │   2 Token InitializeAccount3(18, owner = W)   [T w, mint r]                              │
+ * │   3 Token Transfer(3, u64)           [ATA(W, mint) w, T w, W rs]                         │
+ * │   4 Candy Guard mint_v1              13 fixed + remaining                                │
+ * │   5 System Allocate(8, u64)          [P ws]                                              │
+ * │   6 Token CloseAccount(9)            [T w, W w, W rs]                                    │
+ * │   signers: W, P, A, T, S                                                                 │
  * │                                                                                          │
  * │ Sources: Core Candy Guard IDL `mintV1` (mpl-core-candy-machine, idls/candy_guard.json),  │
  * │ the guards' account cursors in the program source, and the client named above.           │
@@ -71,10 +69,8 @@ export const LAYOUT = {
   /** Token account size the temporary account is created with. */
   tokenAccountBytes: 165,
   /**
-   * The wallet signs first and may rewrite its own ComputeBudget instructions (Seed Vault replaces
-   * the SetComputeUnitPrice value and reorders the message's accounts). Accepted at any position:
-   * SetComputeUnitLimit (2, u32) and SetComputeUnitPrice (3, u64), at most one each, no accounts,
-   * within the caps below.
+   * The wallet may rewrite its ComputeBudget instructions (Seed Vault replaces the price and
+   * reorders accounts). Any position, at most one each, no accounts, within the caps below.
    */
   computeBudget: { setComputeUnitLimit: 2, setComputeUnitPrice: 3 },
 } as const;
@@ -85,19 +81,16 @@ export const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
 /** Without SetComputeUnitLimit the runtime grants 200k units per non-ComputeBudget instruction. */
 const DEFAULT_UNITS_PER_INSTRUCTION = 200_000;
 /**
- * The most priority fee (price × limit, in lamports) a claim may carry: 0.0003 SOL. The app reviews
- * at most 50,000 lamports (src/prints/send.ts) and lets a wallet's rewrite add at most 250,000 more
- * (`FEE_ALLOWANCE_LAMPORTS`, publications/candy/transactions.ts). Price × limit is the only way
- * this transaction can cost the wallet more than the reviewed amounts.
+ * Max priority fee (price × limit, lamports): 0.0003 SOL = the app's reviewed 50,000
+ * (src/prints/send.ts) + `FEE_ALLOWANCE_LAMPORTS` 250,000 (publications/candy/transactions.ts).
  */
 export const MAX_PRIORITY_FEE_LAMPORTS = 300_000n;
 
 export const LIGHTHOUSE_PROGRAM = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 /**
- * Programs whose instructions a wallet is known to add beside the claim, set aside by the shape
- * check (they may not name the co-signer or the one-shot payer). EMPTY: whether Seed Vault adds
- * Lighthouse assertions (`LIGHTHOUSE_PROGRAM`) is measured on the phone, and that result goes
- * here. No other program is ever allowed.
+ * Programs a wallet may add beside the claim, set aside by the shape check (they may not name the
+ * co-signer or the one-shot payer). Empty: Lighthouse (`LIGHTHOUSE_PROGRAM`) goes here only if
+ * Seed Vault is shown to add it.
  */
 export const WALLET_ADDED_PROGRAMS_ALLOWED: readonly string[] = [];
 
@@ -110,9 +103,7 @@ export const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJ
 export const SYSVAR_INSTRUCTIONS = "Sysvar1nstructions1111111111111111111111111";
 export const SYSVAR_SLOT_HASHES = "SysvarS1otHashes111111111111111111111111111";
 
-// -------------------------------------------------------------------------------------------
-// Wire format (legacy and v0), parsed strictly
-// -------------------------------------------------------------------------------------------
+// --- Wire format (legacy and v0), parsed strictly ---
 
 export interface CompiledInstruction { programIndex: number; accounts: number[]; data: Uint8Array }
 
@@ -226,9 +217,7 @@ const isWritable = (t: ParsedTransaction, i: number) =>
   (i >= t.numRequiredSignatures && i < t.keys.length - t.numReadonlyUnsigned);
 
 
-// -------------------------------------------------------------------------------------------
-// Addresses the claim must name
-// -------------------------------------------------------------------------------------------
+// --- Addresses the claim must name ---
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 const pda = async (program: string, seeds: Uint8Array[]) =>
@@ -243,9 +232,7 @@ export const candyMachineAuthorityOf = (candyMachine: string) =>
 export const associatedTokenOf = (owner: string, mint: string) =>
   pda(ASSOCIATED_TOKEN_PROGRAM, [keyBytes(owner), keyBytes(TOKEN_PROGRAM), keyBytes(mint)]);
 
-// -------------------------------------------------------------------------------------------
-// The check
-// -------------------------------------------------------------------------------------------
+// --- The check ---
 
 export type ClaimPayment =
   | { kind: "free" }
@@ -283,10 +270,9 @@ const u32At = (d: Uint8Array, at: number) => new DataView(d.buffer, d.byteOffset
 const u64At = (d: Uint8Array, at: number) => new DataView(d.buffer, d.byteOffset, d.byteLength).getBigUint64(at, true);
 
 /**
- * The transaction as a claim on `edition` by `wallet` co-signed by `cosigner`, in one of the
- * three shapes of the table, or a `Refused` naming the first rule it breaks. Nothing else is
- * ever signed. What depends on the edition's terms (price kind, destination, token mint and
- * amount, collection) is returned for `checkAgainstEdition` to hold to the chain.
+ * Accepts only one of the table's shapes, as a claim on `edition` by `wallet` co-signed by
+ * `cosigner`; otherwise throws `Refused` with the first broken rule. Edition-dependent terms
+ * (payment, collection) are returned for `checkAgainstEdition` to verify on chain.
  */
 export async function checkClaimTransaction(
   wire: Uint8Array,
@@ -303,14 +289,13 @@ export async function checkClaimTransaction(
   if (t.lookupCount !== 0) refuse("lookup-tables");
   if (new Set(t.keys).size !== t.keys.length) refuse("duplicate-accounts");
 
-  // Every account is resolved through its instruction's indexes; no position in the message's
-  // account list, and no canonical account order, is relied on.
+  // Resolve accounts through instruction indexes; message account order is never relied on.
   const all = t.instructions.map((ix) => {
     const program = t.keys[ix.programIndex];
     if (program === undefined || ix.accounts.some((i) => i >= t.keys.length)) refuse("malformed");
     return { program, keys: ix.accounts.map((i) => t.keys[i]), data: ix.data, accounts: ix.accounts };
   });
-  // A durable nonce would keep the signature usable indefinitely: named, before anything else.
+  // A durable nonce would keep the signature usable indefinitely.
   if (all.some((ix) => ix.program === SYSTEM_PROGRAM && ix.data.length >= 4 && u32At(ix.data, 0) === LAYOUT.system.advanceNonce))
     refuse("durable-nonce");
 
@@ -329,7 +314,7 @@ export async function checkClaimTransaction(
   if (units > BigInt(MAX_COMPUTE_UNIT_LIMIT)) refuse("compute-budget");
   if (((price ?? 0n) * units + 999_999n) / 1_000_000n > MAX_PRIORITY_FEE_LAMPORTS) refuse("priority-fee-cap");
 
-  // Instructions from an allowed wallet-added program are set aside (none are allowed today).
+  // Allowed wallet-added instructions are set aside.
   const added = all.filter((i) => walletAddedPrograms.includes(i.program));
   const ixs = all.filter((i) => i.program !== COMPUTE_BUDGET_PROGRAM && !walletAddedPrograms.includes(i.program));
 

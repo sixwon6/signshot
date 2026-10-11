@@ -1,7 +1,6 @@
 /**
- * Local preview of `site/dist/` (run `npm run build:site` first). Serves the extensionless links
- * Cloudflare Pages serves (`/privacy`) and applies the `_headers` rules for the paths it knows so
- * a CSP mistake shows up here rather than in production. Binds to 127.0.0.1 only.
+ * Local preview of `site/dist/` (run `npm run build:site` first). Mimics Pages' extensionless
+ * `/privacy` and applies `_headers`, so CSP mistakes show up locally. Binds to 127.0.0.1.
  */
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -44,7 +43,7 @@ function headersFor(pathname) {
       ? pathname.startsWith(pattern.slice(0, -1))
       : pathname === pattern;
     if (!match) continue;
-    // Cloudflare joins duplicate headers from several matching rules; do the same here.
+    // Cloudflare joins duplicate headers from several matching rules.
     for (const [k, v] of Object.entries(headers)) out[k] = out[k] ? `${out[k]}, ${v}` : v;
   }
   return out;

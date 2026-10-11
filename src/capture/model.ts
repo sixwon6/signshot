@@ -1,8 +1,7 @@
 /**
- * The capture model: manual camera settings as native understands them. `"auto"` is a value, not a
- * missing field. Helpers clamp to the device's `CameraCharacteristics` ranges; native clamps again
- * and returns what it applied. ISO and shutter go manual together; native (`CaptureControls.kt`)
- * fills the other from the last AE result.
+ * Manual camera settings as native understands them; `"auto"` is a value, not a missing field.
+ * Clamped here to `CameraCharacteristics` ranges and again in native. ISO and shutter go manual
+ * together; `CaptureControls.kt` fills the other from the last AE result.
  */
 import type {
   CaptureCapabilities,
@@ -14,13 +13,11 @@ import type {
 
 export type { CaptureCapabilities, CaptureSettings, EffectiveCaptureSettings, MeterReading };
 
-/** An absent device range, as native spells it. */
+/** Native's spelling for an absent device range. */
 export const UNAVAILABLE = "unavailable";
 
-/** What a control shows when the camera is choosing. One word, like every other label. */
 export const AUTO_LABEL = "AUTO";
 
-/** Everything automatic. */
 export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {
   iso: "auto",
   shutterNs: "auto",
@@ -42,12 +39,8 @@ export function settingsFromEffective(effective: EffectiveCaptureSettings): Capt
 }
 
 /**
- * True when `next` would change anything the readout strip shows: the five metered values and
- * whether exposure is being held. The rest of a reading is the histogram, which is drawn from
- * every reading when it is drawn at all.
- *
- * The camera holds the last reading in state, so this is what decides whether ten readings a
- * second are ten renders of the screen or none.
+ * Whether the readout strip would change (histogram excluded). Gates re-renders: readings arrive
+ * ~10 per second.
  */
 export function readoutChanged(now: MeterReading | null, next: MeterReading): boolean {
   return (
@@ -72,11 +65,7 @@ const finite = (value: number, fallback: number): number =>
 const rangeOf = (range: NumericRange | typeof UNAVAILABLE | undefined): NumericRange | null =>
   range && range !== UNAVAILABLE ? range : null;
 
-/**
- * The ISO ladder in THIRD stops — the numbers printed on a film box and on every camera dial:
- * 100, 125, 160, 200… Each decade is the same ten values times ten, which is what makes the
- * ladder third-stops without any rounding drift.
- */
+/** Third-stop ISO ladder (100, 125, 160…), repeated per decade to avoid rounding drift. */
 export const ISO_LADDER: readonly number[] = (() => {
   const decade = [100, 125, 160, 200, 250, 320, 400, 500, 640, 800];
   const out: number[] = [25, 32, 40, 50, 64, 80];
@@ -87,10 +76,7 @@ export const ISO_LADDER: readonly number[] = (() => {
   return out;
 })();
 
-/**
- * The shutter ladder, 1/8000 s to 30 s, in nanoseconds. Full stops, the ladder a shutter-speed
- * dial has: the thirds between them are for the camera to choose, not for a thumb on glass.
- */
+/** Full-stop shutter ladder, 1/8000 s to 30 s, in nanoseconds. */
 export const SHUTTER_LADDER_NS: readonly number[] = (() => {
   const fractions = [8000, 4000, 2000, 1000, 500, 250, 125, 60, 30, 15, 8, 4, 2];
   const seconds = [1, 2, 4, 8, 15, 30];
@@ -100,7 +86,7 @@ export const SHUTTER_LADDER_NS: readonly number[] = (() => {
   ];
 })();
 
-/** UI dials choose ladder values. Preserve a companion value held from the camera's meter. */
+/** Clamp, not snap: a companion value held from the meter may sit between ladder steps. */
 function clampIso(value: number, caps: CaptureCapabilities): number {
   const range = rangeOf(caps.iso);
   const low = range ? range.min : ISO_LADDER[0];
@@ -108,7 +94,6 @@ function clampIso(value: number, caps: CaptureCapabilities): number {
   return clamp(Math.round(finite(value, low)), low, high);
 }
 
-/** Clamp to sensor limits without changing exposure when a different control moves. */
 function clampShutterNs(value: number, caps: CaptureCapabilities): number {
   const range = rangeOf(caps.shutterNs);
   const low = range ? range.min : SHUTTER_LADDER_NS[0];
@@ -116,23 +101,19 @@ function clampShutterNs(value: number, caps: CaptureCapabilities): number {
   return clamp(Math.round(finite(value, low)), low, high);
 }
 
-/** Exposure compensation is counted in whole device STEPS; this is the rounding and the clamp. */
+/** EV compensation is in whole device steps, not stops. */
 function snapEvSteps(steps: number, caps: CaptureCapabilities): number {
   const range = rangeOf(caps.ev);
   if (!range) return 0;
   return clamp(Math.round(finite(steps, 0)), range.min, range.max);
 }
 
-/** Compensation steps as EV, for a readout. */
 function evStops(steps: number, caps: CaptureCapabilities): number {
   const range = caps.ev === UNAVAILABLE ? null : caps.ev;
   return range ? steps * range.step : 0;
 }
 
-/**
- * AUTO's brightness, in device steps: two stops either way, inside what the camera offers. The
- * span a point-and-shoot's +/- key has; P has the camera's whole range.
- */
+/** AUTO's brightness range in device steps: ±2 stops within the device range. P gets the full range. */
 export function autoEvSpan(caps: CaptureCapabilities): { min: number; max: number } | null {
   const range = caps.ev === UNAVAILABLE ? null : caps.ev;
   if (!range || range.step <= 0) return null;
@@ -147,7 +128,7 @@ function clampKelvin(kelvin: number, caps: CaptureCapabilities): number {
   return clamp(Math.round(finite(kelvin, range.min)), range.min, range.max);
 }
 
-/** Dioptres, clamped to the lens. 0 is infinity; `maxDiopters` is as close as it focuses. */
+/** Dioptres: 0 is infinity, `maxDiopters` the closest focus. */
 export function clampFocus(diopters: number, caps: CaptureCapabilities): number {
   const focus = caps.focus;
   if (focus === UNAVAILABLE) return 0;
@@ -155,10 +136,8 @@ export function clampFocus(diopters: number, caps: CaptureCapabilities): number 
 }
 
 /**
- * The whole settings object put through the device's ranges — the JS mirror of native's
- * `resolve`, so the UI shows the value that will be applied rather than the one that was asked
- * for. A control the camera does not have falls back to auto here; native REFUSES the same thing
- * with a reason, and this is what keeps that refusal off the screen.
+ * Mirrors native's `resolve` so the UI shows the applied value. Unsupported controls fall back to
+ * auto here because native rejects them outright.
  */
 export function clampSettings(
   settings: CaptureSettings,
@@ -193,15 +172,13 @@ function clampWhiteBalance(
   return { kelvin: clampKelvin(whiteBalance.kelvin, caps) };
 }
 
-// ---------------------------------------------------------------------------
-// Readouts. One short token each; nothing here is a sentence.
-// ---------------------------------------------------------------------------
+// Readouts
 
 export function formatIso(iso: CaptureSettings["iso"]): string {
   return iso === "auto" ? AUTO_LABEL : `ISO ${Math.round(iso)}`;
 }
 
-/** `1/250` under a second, `2 s` at or over it, `30 s` at the end of the ladder. */
+/** `1/250` under a second, `2 s` at or over. */
 export function formatShutter(shutterNs: CaptureSettings["shutterNs"]): string {
   if (shutterNs === "auto") return AUTO_LABEL;
   const ns = Math.max(1, Math.round(shutterNs));
@@ -213,7 +190,7 @@ export function formatShutter(shutterNs: CaptureSettings["shutterNs"]): string {
   return `1/${Math.round(NS_PER_S / ns)}`;
 }
 
-/** `0`, `+0.7`, `-1.3` — the compensation in EV, not in steps. */
+/** In EV, not steps: `0`, `+0.7`, `-1.3`. */
 export function formatEv(steps: number, caps: CaptureCapabilities): string {
   const stops = evStops(steps, caps);
   const rounded = Math.round(stops * 10) / 10;
@@ -226,10 +203,8 @@ export function formatKelvin(kelvin: number): string {
 }
 
 /**
- * Manual focus as a RELATIVE position, `0%` at infinity and `100%` at the closest the lens
- * focuses. Never a distance: the Seeker reports `LENS_INFO_FOCUS_DISTANCE_CALIBRATION` as
- * UNCALIBRATED, so the dioptre value it takes is a position on the lens and a
- * figure in metres would be an invention.
+ * Relative position, 0% = infinity, 100% = closest. Never a distance: the Seeker reports
+ * `LENS_INFO_FOCUS_DISTANCE_CALIBRATION` as UNCALIBRATED.
  */
 export function formatFocus(focus: CaptureSettings["focus"], caps: CaptureCapabilities): string {
   if (focus === "auto") return AUTO_LABEL;

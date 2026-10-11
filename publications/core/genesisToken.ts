@@ -1,19 +1,11 @@
 /**
- * The Seeker Genesis Token part of a published document (`signshot-genesis/1`).
- *
- * At publish time the app looks up the publishing wallet's SGT on mainnet and writes its MINT
- * ADDRESS into the document under `properties.genesisToken`, beside a Metaplex `attributes` entry
- * a wallet or explorer shows as it is. The mint is what names the token: it stays the same when
- * the token moves, so it is the per-device identifier Solana Mobile's recipe says to use
+ * Seeker Genesis Token claim in a published document (`signshot-genesis/1`, under
+ * `properties.genesisToken`). Carries the SGT's mint address, the per-device identifier
  * (https://docs.solanamobile.com/solana-mobile-stack/seeker-genesis-token).
  *
- * The document only CLAIMS a mint. Nothing here or on any screen treats the claim as checked until
- * `verifyGenesisToken` has read the mint account and the publisher's token account itself. The
- * SGT exists on mainnet only, so that check always reads mainnet, whatever cluster the edition is
- * on: the wallet address is the same keypair on every cluster.
- *
- * What it says: the publishing wallet holds the Genesis Token of a Seeker. What it does not say:
- * which device made the publication — that is `signshot-attestation/1`, in `attestation.ts`.
+ * The document only claims a mint; `verifyGenesisToken` checks it. SGTs exist only on mainnet, so
+ * the check always reads mainnet whatever the edition's cluster. It says the publishing wallet
+ * holds an SGT, not which device made the photo (that is `attestation.ts`).
  */
 
 import { address, getAddressDecoder, getBase64Encoder } from "@solana/kit";
@@ -23,17 +15,13 @@ import { exactKeys, object } from "./attestation";
 
 export const GENESIS_SCHEMA = "signshot-genesis/1" as const;
 
-/** Solana Mobile's metadata address and group. They are the same account. */
+/** Solana Mobile's SGT metadata address, which is also the group. */
 export const SGT_METADATA_ADDRESS = "GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te";
 export const SGT_GROUP_ADDRESS = SGT_METADATA_ADDRESS;
 
-/** Mainnet's genesis hash: the one value that says which chain an endpoint is really on. */
 export const MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
-/**
- * Each cluster's genesis hash, read with `getGenesisHash` from the public endpoints, since the
- * Solana docs do not publish them. The app's endpoint check and the release gate share it.
- */
+/** From `getGenesisHash` on the public endpoints; the Solana docs do not publish them. */
 export const GENESIS_HASH: Record<Cluster, string> = {
   "mainnet-beta": MAINNET_GENESIS_HASH,
   devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
@@ -41,21 +29,20 @@ export const GENESIS_HASH: Record<Cluster, string> = {
 
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
-/** What the document carries. */
 export interface GenesisClaim {
   schema: typeof GENESIS_SCHEMA;
-  /** The SGT's mint address on mainnet. */
+  /** Mainnet mint address. */
   mint: string;
 }
 
 export const genesisClaim = (mint: string): GenesisClaim => ({ schema: GENESIS_SCHEMA, mint });
 
-/** The Metaplex-standard `attributes` entry, always the document's last. Re-derived on read. */
+/** Always the document's last `attributes` entry. Re-derived on read. */
 export function genesisAttributes(mint: string): { trait_type: string; value: string }[] {
   return [{ trait_type: "Seeker Genesis Token", value: mint }];
 }
 
-/** The claimed mint, or a throw for anything that is not exactly a `signshot-genesis/1` claim. */
+/** The claimed mint; throws unless exactly a `signshot-genesis/1` claim. */
 export function readGenesisClaim(value: unknown): string {
   const claim = object(value);
   if (!claim || !exactKeys(claim, ["schema", "mint"]) || claim.schema !== GENESIS_SCHEMA ||
@@ -65,45 +52,31 @@ export function readGenesisClaim(value: unknown): string {
   return claim.mint;
 }
 
-// ---------------------------------------------------------------------------
-// The mint account, decoded by hand
-// ---------------------------------------------------------------------------
+// --- Mint account decoding ---
 
 /**
- * A Token-2022 mint is the 82-byte SPL `Mint`, zero padding to the 165-byte `Account` length, one
- * `AccountType` byte (1 = mint), then TLV extensions: `u16` type, `u16` length, value
- * (https://github.com/solana-program/token-2022, `extension/mod.rs`).
+ * Token-2022 mint: 82-byte SPL `Mint`, zero padding to 165, one `AccountType` byte (1 = mint),
+ * then TLV extensions (`u16` type, `u16` length, value). See token-2022 `extension/mod.rs`.
  */
 const MINT_BASE_BYTES = 82;
 const ACCOUNT_TYPE_OFFSET = 165;
 /**
- * Token-2022's `Multisig::LEN`. No mint or token account is ever this long (Token-2022 pads them
- * past it), and a multisig's eleven signer keys are its creator's to choose, so 352 of its bytes
- * could be laid out as a mint that names Solana Mobile's group. Refused.
+ * `Multisig::LEN`. No mint is this long, and a multisig's signer keys are attacker-chosen bytes
+ * that could be laid out as a fake SGT mint. Refused.
  */
 const MULTISIG_BYTES = 355;
 const ACCOUNT_TYPE_MINT = 1;
 const EXTENSION_METADATA_POINTER = 18;
 const EXTENSION_TOKEN_GROUP_MEMBER = 23;
 
-/**
- * How much of a mint account any reader fetches. A real SGT mint is 450 bytes; anything that
- * needs more is not one, and a huge account costs no more to refuse than a small one.
- */
+/** Bytes of a mint account fetched. A real SGT mint is 450 bytes. */
 export const MINT_SLICE_BYTES = 4096;
 
 /**
- * The SGT's number in Solana Mobile's group, or `null` when the mint account at `mint` is not a
- * Seeker Genesis Token. Solana Mobile's recipe: the `MetadataPointer` names their metadata
- * address and the `TokenGroupMember` names their group.
- *
- * The membership is what cannot be forged: Token-2022 writes a `TokenGroupMember` only with the
- * signature of the group's update authority (`process_initialize_member` → `check_update_authority`),
- * which is Solana Mobile's key. A mint authority or a metadata pointer is anyone's to set on a mint
- * of their own. The member's `mint` must be `mint` itself, so another mint's bytes never count.
- *
- * The caller has checked the account is owned by Token-2022. Anything unreadable is `null`, never
- * a throw.
+ * The SGT's member number in Solana Mobile's group, or `null` if `mint` is not an SGT. Requires
+ * the `MetadataPointer` to their metadata and a `TokenGroupMember` of their group naming `mint`.
+ * The membership is the unforgeable part: Token-2022 writes it only with the group update
+ * authority's signature. Caller has checked the Token-2022 owner. Never throws.
  */
 export function seekerGenesisMember(
   data: Uint8Array,
@@ -111,7 +84,7 @@ export function seekerGenesisMember(
 ): bigint | null {
   if (data.length <= ACCOUNT_TYPE_OFFSET || data.length === MULTISIG_BYTES || data[ACCOUNT_TYPE_OFFSET] !== ACCOUNT_TYPE_MINT)
     return null;
-  // `is_initialized` is the byte at 45; the padding up to the account type is zero in every mint.
+  // Byte 45 is `is_initialized`; padding up to the account type must be zero.
   if (data[45] !== 1 || data.subarray(MINT_BASE_BYTES, ACCOUNT_TYPE_OFFSET).some((byte) => byte !== 0)) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const key = (at: number) => getAddressDecoder().decode(data.subarray(at, at + 32));
@@ -123,7 +96,7 @@ export function seekerGenesisMember(
     const type = view.getUint16(at, true);
     const length = view.getUint16(at + 2, true);
     const value = at + 4;
-    if (type === 0) break; // `Uninitialized`: the rest of the account is unused.
+    if (type === 0) break; // `Uninitialized`: end of extensions.
     if (value + length > data.length) return null;
     if (type === EXTENSION_METADATA_POINTER) {
       // `authority`, then `metadata_address`, each an `OptionalNonZeroPubkey`.
@@ -144,15 +117,11 @@ export function seekerGenesisMember(
 export const isSeekerGenesisMint = (data: Uint8Array, mint: string): boolean =>
   seekerGenesisMember(data, mint) !== null;
 
-// ---------------------------------------------------------------------------
-// The check every reader runs
-// ---------------------------------------------------------------------------
+// --- Verification ---
 
 /**
- * `held`: the mint is a Seeker Genesis Token and `holder` holds it now. `moved`: it is one, and
- * `holder` does not hold it now (an SGT can move between a user's own Seed Vault accounts).
- * `no-account`: nothing exists at the mint address — never a mint, or one closed after its token
- * was burned. `not-genesis`: the account there is not a Seeker Genesis Token.
+ * `moved`: a real SGT that `holder` no longer holds (SGTs can move between Seed Vault accounts).
+ * `no-account`: nothing at the address (never a mint, or closed after a burn).
  */
 export type GenesisStanding = "held" | "moved" | "no-account" | "not-genesis";
 
@@ -161,9 +130,8 @@ const INVALID = "Invalid Solana response";
 const mainnetEndpoints = new Map<string, Promise<void>>();
 
 /**
- * Refuse an endpoint that is not mainnet before any answer from it is believed: every other
- * cluster says "no such mint" for every real SGT. Asked once per endpoint per session; a failure
- * is not remembered, so a cold-start network error is retried.
+ * Throws unless `endpoint` is mainnet; any other cluster reports every real SGT as missing.
+ * Cached per endpoint; failures are not cached.
  */
 export function assertMainnet(endpoint: string): Promise<void> {
   let checked = mainnetEndpoints.get(endpoint);
@@ -181,9 +149,8 @@ export function assertMainnet(endpoint: string): Promise<void> {
 }
 
 /**
- * Check a document's claim against mainnet. `endpoint` must be a MAINNET endpoint and is never
- * taken from a link or a document; one that is not throws. Throws on any RPC failure, so an
- * unreachable network is never mistaken for "not held".
+ * Check a claim against mainnet. `endpoint` must never come from a link or document. Throws on
+ * RPC failure so an unreachable network never reads as "not held".
  */
 export async function verifyGenesisToken(
   endpoint: string,
@@ -217,17 +184,13 @@ async function genesisHolding(
     if (!row || typeof row.pubkey !== "string" || !parsed || parsed.mint !== mint || parsed.owner !== holder ||
         typeof amount !== "string" || !/^\d+$/.test(amount))
       throw new Error(INVALID);
-    // Moving an SGT out leaves its old token account open at zero. Not ownership.
+    // Moving an SGT out leaves the old token account open at zero.
     if (amount !== "0") return { standing: "held", tokenAccount: address(row.pubkey) };
   }
   return { standing: "moved" };
 }
 
-/**
- * The first `MINT_SLICE_BYTES` of the account at `mint`: `null` when nothing is there, `"other"`
- * when it is not a Token-2022 account. The owner first: only the Token-2022 program can have
- * written the extensions, and an account of any other program's is not an SGT, whatever its size.
- */
+/** First `MINT_SLICE_BYTES` of `mint`; `null` if absent, `"other"` if not owned by Token-2022. */
 async function mintSlice(endpoint: string, mint: string): Promise<Uint8Array | "other" | null> {
   const { value: account } = await request<{ value: unknown }>(endpoint, "getAccountInfo", [
     mint,
@@ -236,7 +199,6 @@ async function mintSlice(endpoint: string, mint: string): Promise<Uint8Array | "
   return sliceOf(account);
 }
 
-/** One account as either read answers it: `null` for none, `"other"` for another program's. */
 function sliceOf(account: unknown): Uint8Array | "other" | null {
   if (account === null) return null;
   const info = object(account);
@@ -250,18 +212,15 @@ function sliceOf(account: unknown): Uint8Array | "other" | null {
   } catch {
     throw new Error(INVALID);
   }
-  // The slice asked for, even from an endpoint that sent more.
+  // Endpoints may ignore dataSlice.
   return bytes.subarray(0, MINT_SLICE_BYTES);
 }
 
-// ---------------------------------------------------------------------------
-// Finding a wallet's token
-// ---------------------------------------------------------------------------
+// --- Finding a wallet's SGT ---
 
 /**
- * The mint of a parsed token account (`jsonParsed`'s `account.data.parsed.info`) that holds exactly
- * one unit of a 0-decimal mint, as a held SGT does, or `null`. Zero is a token account an SGT has
- * left; frozen is how a held SGT always is, and is accepted.
+ * Mint of a `jsonParsed` token account holding exactly 1 of a 0-decimal mint, else `null`.
+ * Frozen is accepted: held SGTs are always frozen.
  */
 export function singleUnitMint(info: unknown): string | null {
   const parsed = object(info);
@@ -271,26 +230,20 @@ export function singleUnitMint(info: unknown): string | null {
   return parsed.mint;
 }
 
-/**
- * Of a wallet's SGTs, the one it is known by: `preferred` (the one found last time) while it is
- * still among them, so the Seeker a wallet names stays the same; otherwise the lowest member number.
- */
+/** `preferred` (last time's pick) if still present, so the choice is stable; else the lowest member. */
 export function chooseGenesis<T extends { mint: string; member: bigint }>(found: readonly T[], preferred?: string): T | null {
   if (found.length === 0) return null;
   return found.find(({ mint }) => mint === preferred) ?? found.reduce((a, b) => (b.member < a.member ? b : a));
 }
 
-// ---------------------------------------------------------------------------
-// What a screen says
-// ---------------------------------------------------------------------------
+// --- Display ---
 
-/** A claim's check as a screen holds it. `unavailable`: mainnet could not be asked. */
+/** `unavailable`: mainnet could not be reached. */
 export type GenesisCheck = GenesisStanding | "checking" | "unavailable";
 
-/** The row's line: a key of `proof.genesisStanding` in `src/ui/copy.ts`. */
+/** Keys of `proof.genesisStanding` in `src/ui/copy.ts`. */
 export type GenesisLine = "checking" | "held" | "not-held" | "not-genesis" | "unavailable";
 
-/** The Genesis Token row for a claim. */
 export function genesisDisplay(check: GenesisCheck): { line: GenesisLine } {
   switch (check) {
     case "held":

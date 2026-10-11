@@ -1,7 +1,4 @@
-/**
- * Sending a copy (a Metaplex Core asset) with one `TransferV1`. Ownership is the asset's own
- * `owner` field, so no account is created. Sending is not a sale.
- */
+/** Sending a copy (Core asset) with one `TransferV1`. Ownership is the asset's `owner` field; no account is created. */
 
 import { address, AccountRole, isOffCurveAddress, type Address, type Instruction } from "@solana/kit";
 import { MPL_CORE, SYSTEM_PROGRAM } from "../candy/programs";
@@ -9,10 +6,7 @@ import { MPL_CORE, SYSTEM_PROGRAM } from "../candy/programs";
 /** `TransferV1`, Core instruction 14, with `compression_proof: None`. */
 const TRANSFER_V1_DATA = new Uint8Array([14, 0]);
 
-/**
- * A recipient must be a complete, different, on-curve wallet. A copy sent to an off-curve address
- * can never move again.
- */
+/** On-curve and not the owner: a copy sent to an off-curve address can never move again. */
 export function validateRecipient(input: string, owner: string): Address {
   const recipient = input.trim();
   try {

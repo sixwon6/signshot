@@ -12,7 +12,7 @@ if not FFMPEG:
     raise SystemExit('FFmpeg must be on PATH.')
 
 def text(value, size, x, y, color='EAE7DD', start=0.0, font='SpaceGrotesk-Medium.ttf'):
-    # Fixed authored text only. There are no credentials or user-supplied filter expressions.
+    # Values are authored constants and are not escaped for drawtext.
     alpha = f'min(1,max(0,(t-{start})/0.45))'
     return (f"drawtext=fontfile=assets/fonts/{font}:text='{value}':fontsize={size}:"
             f"fontcolor=0x{color}:x={x}:y='{y}':alpha='{alpha}'")

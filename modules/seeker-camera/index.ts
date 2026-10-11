@@ -55,7 +55,7 @@ export interface NumericRange {
 }
 
 /**
- * What camera "0" can actually do, from `CameraCharacteristics`. Every range may be
+ * What camera "0" can do, from `CameraCharacteristics`. Every range may be
  * `"unavailable"`: a missing range is a missing control, never an error.
  */
 export interface CaptureCapabilities {
@@ -148,10 +148,7 @@ interface SeekerCameraModuleType {
   deleteCapture(baseName: string): Promise<boolean>;
   /** Writes `<baseName>-print-<expectedHash>.jpg` from the selected version, which must hash to `expectedHash`. */
   preparePrintImage(baseName: string, sourceUri: string, expectedHash: string): Promise<{ path: string; sha256: string; bytes: number; width: number; height: number }>;
-  /**
-   * Removes one print derivative and its scratch file; resolves whether it existed. The print is
-   * written at the estimate step, so discarding a draft must remove it.
-   */
+  /** Removes one print derivative and its scratch file; resolves whether it existed. */
   deletePrintImage(baseName: string, sha256: string): Promise<boolean>;
   /** The edition's QR card as a PNG under `cacheDir/share`; `by` is the publisher's `.skr` name to print on it, or null. */
   sharePrintCard(baseName: string, sourceHash: string, title: string, count: number, modules: string, size: number, by: string | null): Promise<string>;
@@ -164,46 +161,32 @@ interface SeekerCameraModuleType {
   /** Stamps a share copy of the selected JPEG after checking it hashes to `expectedHash`. */
   stampSelectedShareCopy(baseName: string, sourceUri: string, expectedHash: string, text: string): Promise<string>;
   /**
-   * Unstamped share copy of the selected version, fingerprint-checked and re-encoded into
-   * `cacheDir/share`. Shares always go through a cache copy because that is the sharing
-   * FileProvider's only root, so `filesDir/captures` is never exposed.
+   * Unstamped share copy of the selected version, hash-checked and re-encoded into `cacheDir/share`,
+   * the sharing FileProvider's only root, so `filesDir/captures` is never exposed.
    */
   shareCopy(baseName: string, sourceUri: string, expectedHash: string): Promise<string>;
   /**
    * Writes `cacheDir/share/<baseName>-publication-bundle.json`: `documentJson` plus a `printImage`
-   * (name, sha256, bytes, base64) that must hash to `expectedHash`. Lets an unuploaded
-   * publication's bytes leave the phone; there is no import path.
+   * (name, sha256, bytes, base64) that must hash to `expectedHash`. Export only; no import path.
    */
   exportPublicationBundle(baseName: string, sourceUri: string, expectedHash: string, documentJson: string): Promise<string>;
-  /**
-   * Lowercase-hex SHA-256 of both private frames as currently on disk, read from the sidecar's
-   * paths, for comparison with the hashes recorded at capture time.
-   */
+  /** Lowercase-hex SHA-256 of both private frames as they are on disk now. */
   hashCaptureFrames(baseName: string): Promise<{ clean: string; styled: string }>;
   /**
-   * Opens a scanner, resolves the decoded text of the first QR code, or null when the person
-   * cancels. Rejects with a readable message when scanning is unavailable on this device.
-   *
-   * Reads a collect link off another phone's screen or a printed card. The text comes back exactly
-   * as the symbol carried it; parsing and validating the link is the caller's job.
-   *
-   * The scanner opens the back camera itself, so it must not run while `SeekerCameraView` is
-   * mounted — it rejects if one is. Call it from the Collection tab, where no camera view is up.
+   * Resolves the raw text of the first QR code scanned, or null on cancel. Opens the back camera
+   * itself, so it rejects while a `SeekerCameraView` is mounted.
    */
   scanQrCode(): Promise<string | null>;
   /**
-   * Tap to focus: `u`,`v` are 0..1 across the picture as displayed. Focus and exposure meter on
-   * that point and continuous focus locks there until a photo is taken, `releaseFocusPoint`, or
-   * manual focus. Rejects only with no camera view up.
+   * Tap to focus: `u`,`v` are 0..1 across the picture as displayed. AF and AE meter on that point
+   * and AF holds there until a capture, `releaseFocusPoint`, or manual focus.
    */
   focusAt(u: number, v: number): Promise<void>;
   releaseFocusPoint(): Promise<void>;
   /**
-   * Hardware key attestation of one publication. Generates a fresh Android Keystore P-256 key
-   * whose attestation challenge is the SHA-256 of `manifestJson` (StrongBox first, then the
-   * TEE), signs those exact bytes with it, returns the certificate chain and signature, and
-   * deletes the key. Never rejects for a device that cannot attest: that is `available: false`
-   * with a reason, and the publication goes ahead without evidence.
+   * Key attestation of one publication: a one-shot Keystore P-256 key (StrongBox, else TEE) whose
+   * attestation challenge is SHA-256(`manifestJson`) signs those bytes, then is deleted. A device
+   * that cannot attest resolves `available: false`, never rejects.
    */
   attestPublication(manifestJson: string): Promise<PublicationAttestationResult>;
 }
@@ -230,10 +213,7 @@ export async function saveToGallery(baseName: string, edit?: PhotoEdit): Promise
 
 export interface SeekerCameraViewProps extends ViewProps {
   onSessionError?: (e: { nativeEvent: { message: string } }) => void;
-  /**
-   * The live meter: the 3A readout and a 64-bin luma histogram of the preview frame, at most ten
-   * times a second. Chrome only — nothing here reaches a capture or a record.
-   */
+  /** 3A readout and 64-bin preview luma histogram, at most 10 Hz. Display only. */
   onMeter?: (e: { nativeEvent: MeterReading }) => void;
 }
 

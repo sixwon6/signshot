@@ -9,7 +9,7 @@ import { recipes as copy } from "../ui/copy";
 import { colors, space } from "../ui/theme";
 import { typeScale } from "../ui/type";
 
-/** One drag control; screen-reader users retain exact step adjustments. */
+/** One drag control with exact step adjustments for screen readers. */
 export function RecipeDial({ label, value, min, max, step, readout, disabled, onChange, testID }: {
   label: string;
   value: number;
@@ -48,7 +48,7 @@ export function RecipeDial({ label, value, min, max, step, readout, disabled, on
   );
 }
 
-/** Main amount first. Opening fine controls never changes the saved recipe. Key by stage. */
+/** Opening fine controls never changes the saved recipe. Key by stage. */
 export function StageParameters({ recipe, stage, strength, disabled, onParam }: {
   recipe: Recipe;
   stage: StageType;

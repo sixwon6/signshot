@@ -72,8 +72,8 @@ export function PhotoEditor({
       .then((list) => {
         if (!live.current) return;
         setRecipes(list);
-        // A saved version carries the recipe that made it, so it reopens with exactly that look
-        // even if the recipe is gone. A version without a snapshot falls back to the row by id.
+        // A saved version reopens with its recipe snapshot even if the recipe is gone; one without
+        // a snapshot falls back to the row by id.
         const snapshot = (initial as DevelopedEdit | undefined)?.recipe;
         if (snapshot) {
           const restored: Recipe = {
@@ -83,8 +83,8 @@ export function PhotoEditor({
             lut: snapshot.lut,
             builtIn: false,
           };
-          // Use the row's recipe (so its chip reads as chosen) only when it is the same look;
-          // a recipe edited since must not redevelop this version at different values.
+          // Use the row's recipe (so its chip reads as chosen) only if unchanged since; an edited
+          // recipe must not redevelop this version at different values.
           const inRow = list.find((item) => item.id === restored.id);
           setRecipe(inRow && sameLook(inRow, restored) ? inRow : restored);
           return;
@@ -99,7 +99,7 @@ export function PhotoEditor({
       .finally(() => {
         if (live.current) setRestored(true);
       });
-    // Once, on opening: the store is a local read and the row does not change under the screen.
+    // Once on open: a local read, and the row does not change under the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -259,7 +259,7 @@ export function PhotoEditor({
           />
           {showAdjustments && <>
             <StageBar recipe={recipe} open={openStage} disabled={saving} onOpen={setOpenStage} />
-            {/* Use the same adjustment groups as the camera, opening only one at a time. */}
+            {/* Same groups as the camera; one open at a time. */}
             {stage && <View style={s.stage}>
               <StageParameters key={stage.type} recipe={recipe} stage={stage.type}
                 strength={strength} disabled={saving} onParam={adjust} />

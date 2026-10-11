@@ -1,14 +1,9 @@
-/**
- * TextKey — a word that is a key. No border and no fill: on the camera the picture is the only
- * thing allowed weight, so its chrome is set in type. Rest is muted, `on` is ink, and `held` reads
- * in the accent, as a held value does on the readout. `index` draws the mark a dial has under the
- * position it is turned to.
- */
+/** A borderless word used as a key. `index` draws a dial's position mark under it. */
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { colors } from "../theme";
 import { typeScale } from "../type";
 
-/** Fixed-height chrome: the type may grow with the system's setting, but not out of its row. */
+/** Cap on system font scaling so fixed-height chrome rows don't overflow. */
 export const CHROME_FONT_SCALE = 1.3;
 
 interface TextKeyProps {
@@ -71,7 +66,7 @@ export function TextKey({
 
 const styles = StyleSheet.create({
   key: { minWidth: 44, height: 44, paddingHorizontal: 6, alignItems: "center", justifyContent: "center" },
-  /** Kept in the layout when off, so the word does not move as the dial turns. */
+  /** Hidden rather than removed so the label doesn't shift. */
   index: { position: "absolute", bottom: 5, width: 14, height: 2, borderRadius: 1, backgroundColor: colors.ink },
   indexOff: { opacity: 0 },
 });

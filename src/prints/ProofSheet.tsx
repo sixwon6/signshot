@@ -186,9 +186,8 @@ export function ProofSheet({
 }
 
 /**
- * The attested facts in one line: device, key security level, boot state. Every word is derived
- * from the certificate inside the document, by `publications/core/attestation.ts`, and it is
- * said only after `deviceVerdict` accepted it.
+ * Device, key security level and boot state, derived from the document's certificate by
+ * `publications/core/attestation.ts`. Shown only after `deviceVerdict` accepts it.
  */
 function attestationLine(a: AttestationSummary): string {
   const boot = a.verifiedBoot === "verified" && a.deviceLocked

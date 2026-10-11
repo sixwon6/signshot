@@ -1,8 +1,4 @@
-/**
- * Cell — one value on the camera's readout: a small tag over the value, a fingertip tall. The
- * cell under the thumb is `live` (its adjuster is the row above). A value the photographer holds
- * reads in the accent; one the mode forbids is dimmed and does not answer.
- */
+/** One camera readout value. `live`: its adjuster is the row above; `forbidden`: dimmed and inert. */
 import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from "react-native";
 import { colors, radius } from "../theme";
 import { typeScale } from "../type";
@@ -15,7 +11,7 @@ interface CellProps {
   held?: boolean;
   forbidden?: boolean;
   disabled?: boolean;
-  /** The value as written, not upper-cased: an address is case-sensitive. */
+  /** Skip upper-casing: addresses are case-sensitive. */
   verbatim?: boolean;
   onPress?: () => void;
   accessibilityLabel: string;
@@ -86,7 +82,7 @@ const styles = StyleSheet.create({
   },
   live: { backgroundColor: colors.field },
   tag: { color: colors.muted },
-  /** The tracking belongs between letters, not after the last one: centre the glyphs. */
+  /** Stretch so trailing letter-spacing doesn't push the glyphs off centre. */
   value: { textAlign: "center", alignSelf: "stretch" },
   verbatim: { textTransform: "none" },
 });

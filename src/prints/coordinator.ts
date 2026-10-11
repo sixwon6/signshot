@@ -1,27 +1,21 @@
 /**
- * Decides whether a photograph may start a new publication, and owns the one lock every
- * publication and transfer operation takes. An unreadable draft fails closed: not knowing cannot
- * authorise spending SOL twice on one photograph.
+ * Gate for starting a publication, and the lock shared by publishing and transfer. An unreadable
+ * draft fails closed so one photo is never paid for twice.
  */
 
 import type { CaptureRecord } from "../../modules/seeker-camera";
 import { operationInProgress } from "./locks";
 import { CLUSTER_NAME as cluster } from "../solana/cluster";
 import type { Cluster, CoreDraft } from "../../publications/types";
-// `creator.ts` imports this module in return; only function references cross that cycle and
-// none of them runs at module scope.
+// Import cycle with `creator.ts`; safe because nothing crosses it at module scope.
 import { readDraft } from "./creator";
 import { safeErrorText } from "../ui/errorText";
 
-/**
- * One in-process operation per photograph per network, shared by publishing and transfer so the
- * two can never race for one wallet.
- */
+/** One in-process operation per photo per network, so publishing and transfer never race. */
 export function publicationLockKey(cluster: Cluster, baseName: string): string {
   return `publication:${cluster}:${baseName}`;
 }
 
-/** Is a publication operation running for this photograph right now? */
 export function publicationInProgress(record: CaptureRecord): boolean {
   return operationInProgress(publicationLockKey(cluster, record.baseName));
 }

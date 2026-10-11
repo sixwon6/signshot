@@ -1,8 +1,7 @@
 /**
- * Signshot's Seeker co-signer. It holds the Third Party Signer keys of Seeker-only editions and
- * co-signs one claim per Seeker Genesis Token per edition, after Solana Mobile's server-side
- * check: SIWS proves the wallet, mainnet shows the wallet holds an SGT, and the SGT's mint has
- * not already claimed this edition.
+ * Seeker co-signer: holds the Third Party Signer keys of Seeker-only editions and co-signs one
+ * claim per Seeker Genesis Token per edition, after SIWS proves the wallet and mainnet shows an
+ * unused SGT (Solana Mobile's server-side check).
  *
  *   GET  /health     { version, signer, accepted }
  *   POST /challenge  { wallet } → the SIWS sign-in payload
@@ -29,7 +28,7 @@ export interface Env {
   LIMITER?: RateLimit;
   /** Workers Rate Limiting with one constant key: a cap on the whole Worker. */
   GLOBAL_LIMITER?: RateLimit;
-  /** Workers Rate Limiting for /rpc alone, per client network: the app's reads are many and small. */
+  /** Workers Rate Limiting for /rpc alone, per client network. */
   RPC_LIMITER?: RateLimit;
   /** Secret: the active co-signer key, solana-keygen JSON, 64 bytes. */
   COSIGNER_SECRET_KEY: string;
@@ -39,7 +38,7 @@ export interface Env {
   NONCE_HMAC_SECRET: string;
   /** Secret: a Helius mainnet URL with its API key. Never logged, never returned. */
   MAINNET_RPC_URL: string;
-  /** Var: a devnet endpoint, for devnet editions' blockhash and copy checks. */
+  /** Secret: a devnet endpoint, for devnet editions. */
   DEVNET_RPC_URL: string;
   /** Var: the SIWS domain and URI. */
   SIWS_DOMAIN: string;
@@ -143,10 +142,7 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
   }
 }
 
-/**
- * The accepted key the transaction names, or a refusal. Exactly one accepted key may appear; the
- * transaction check then holds it to the co-signer's place, and the edition check to the guard.
- */
+/** The one accepted key the transaction names; its position and guard are checked later. */
 function namedCosigner(wire: Uint8Array, accepted: Map<string, Cosigner>): Cosigner {
   const named = parseTransaction(wire).keys.filter((k) => accepted.has(k));
   if (named.length !== 1) throw new Refused(named.length ? "cosigner-position" : "cosigner-missing");
@@ -172,13 +168,12 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
     return fail(400, "bad-request");
   }
 
-  // 2. SIWS: the wallet signed the payload this Worker issued, unexpired. Local, no RPC.
+  // 2. SIWS. Local, no RPC.
   const now = deps.now();
   const signedIn = await verifySignIn(siwsConfig(env), wallet, nonce, signIn as unknown as SignInResult, now);
   if (!signedIn.ok) return fail(401, signedIn.reason);
 
-  // 3. The transaction: the wallet's signature over it first, then exactly a claim on this
-  //    edition by this wallet naming one accepted key. Local, no RPC.
+  // 3. Transaction shape and wallet signature. Local, no RPC.
   const keys = await loadCosigners(env.COSIGNER_SECRET_KEY, env.COSIGNER_SECRET_KEYS);
   const clusterUrl = cluster === "mainnet-beta" ? env.MAINNET_RPC_URL : env.DEVNET_RPC_URL;
   let tx: Awaited<ReturnType<typeof checkClaimTransaction>>;
@@ -188,9 +183,8 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
     cosigner = namedCosigner(wire, keys.accepted);
     tx = await checkClaimTransaction(wire, { wallet, edition, cosigner: cosigner.address });
 
-    // 4. The edition's cluster, one cheap read after another: the blockhash is live (which binds
-    //    the claim to that cluster, and bounds when it can land), then the edition is one the
-    //    app itself accepts, its guard naming this key, and the claim pays exactly its terms.
+    // 4. Cheap cluster reads: a live blockhash binds the claim to the cluster and bounds when it can
+    //    land; then the edition must be acceptable and the claim must pay its exact terms.
     lastValidHeight = await liveUntil(deps.fetch, clusterUrl, cluster, tx.blockhash);
     if (lastValidHeight < 0) return fail(422, "blockhash-invalid");
     checkAgainstEdition(tx, await readEdition(deps.fetch, clusterUrl, edition, tx, cosigner.address));
@@ -199,7 +193,7 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
     throw e;
   }
 
-  // 5. Only now: spend the nonce, then the paid Genesis Token lookup on mainnet.
+  // 5. Spend the nonce, then the paid Genesis Token lookup.
   if (!(await consumeNonce(env.DB, nonce, signedIn.expiresAt))) return fail(401, "nonce-used");
   let tokens: string[];
   try {
@@ -210,12 +204,11 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
   }
   if (tokens.length === 0) return fail(403, "no-genesis-token");
 
-  // 6. Record, then sign (see store.ts for why in this order), with the first held Genesis Token
-  //    that has not claimed this edition.
+  // 6. Record, then sign (store.ts), with the first held SGT that has not claimed this edition.
   const base = {
     cluster, edition, wallet, asset: tx.asset, blockhash: tx.blockhash, last_valid_height: lastValidHeight,
     message: await sha256Hex(tx.message), claim_id: crypto.randomUUID(), created_at: now,
-    // The fee payer's signature, which the transaction check verified: the transaction's id.
+    // The verified fee payer signature: the transaction id.
     signature: getBase58Decoder().decode(wire.subarray(tx.signaturesStart, tx.signaturesStart + 64)),
   };
   let refusal: "genesis-used" | "genesis-pending" = "genesis-used";
@@ -228,7 +221,6 @@ async function claim(body: Record<string, unknown>, env: Env, deps: Deps): Promi
   if (!sgtMint) return fail(409, refusal);
 
   const signature = await cosigner.sign(tx.message);
-  // The transaction as received with this signature in its slot: ready for the app to broadcast.
   const signed = wire.slice();
   signed.set(signature, tx.signaturesStart + 64 * tx.cosignerSlot);
   return json(200, {
@@ -241,8 +233,7 @@ async function hold(env: Env, deps: Deps, claim: NewClaim, clusterUrl: string): 
   const row = await findClaim(env.DB, claim.cluster, claim.edition, claim.sgt_mint);
   if (!row) return (await insertClaim(env.DB, claim)) ? "held" : "genesis-pending";
   if (row.status === "confirmed") return "genesis-used";
-  // The same claim again (a retry after a lost response): the same wallet and the same message
-  // bytes as received, so the same transaction, which can land at most once.
+  // Retry after a lost response: same message bytes, same transaction, lands at most once.
   if (row.wallet === claim.wallet && row.message === claim.message) return "held";
   const standing = await pendingStanding(deps.fetch, clusterUrl, row);
   if (standing === "landed") {
@@ -253,11 +244,7 @@ async function hold(env: Env, deps: Deps, claim: NewClaim, clusterUrl: string): 
   return (await replaceClaim(env.DB, row.claim_id, claim)) ? "held" : "genesis-pending";
 }
 
-/**
- * Whether a pending claim's transaction landed, may still land, or never will (store.ts). The
- * confirmed block height must be past the stored bound before the transaction and the copy's
- * address are read, and neither read may be answered from before the slot that answered.
- */
+/** Release rule for a pending row; see store.ts. */
 async function pendingStanding(fetchImpl: Fetch, url: string, row: ClaimRow): Promise<"landed" | "may-land" | "expired"> {
   await assertCluster(fetchImpl, url, row.cluster);
   const epoch = object(await rpc<unknown>(fetchImpl, url, "getEpochInfo", [{ commitment: "confirmed" }]));
@@ -269,9 +256,8 @@ async function pendingStanding(fetchImpl: Fetch, url: string, row: ClaimRow): Pr
 }
 
 /**
- * Whether the claim's transaction is on chain without an error. It stays true whatever happens
- * to the copy afterwards: a burned copy's tombstone, once Core's fee sweep hands it to the System
- * Program, can be assigned away and emptied by whoever holds the copy's keypair.
+ * Whether the transaction landed without error. Needed beside `copyLanded`: a burned copy's
+ * tombstone, once swept to the System Program, can be emptied by the copy keypair's holder.
  */
 async function transactionLanded(fetchImpl: Fetch, url: string, signature: string, minContextSlot: number): Promise<boolean> {
   const result = object(await rpc<unknown>(fetchImpl, url, "getSignatureStatuses", [
@@ -279,7 +265,7 @@ async function transactionLanded(fetchImpl: Fetch, url: string, signature: strin
   ]));
   const at = object(result?.context)?.slot;
   const value = result?.value;
-  // Older nodes ignore minContextSlot on this method: one behind the slot that saw the height pass is refused here.
+  // Some nodes ignore minContextSlot here; refuse an answer from behind it.
   if (typeof at !== "number" || !Array.isArray(value) || value.length !== 1 || at < minContextSlot)
     throw new RpcError("getSignatureStatuses");
   if (value[0] === null) return false;
@@ -289,10 +275,8 @@ async function transactionLanded(fetchImpl: Fetch, url: string, signature: strin
 }
 
 /**
- * The bound on the block height through which a transaction with `blockhash` can land, or -1
- * when the blockhash is not live on `cluster`. Asked at "processed": a blockhash the app just
- * fetched is there first, and one valid at any commitment on a cluster is that cluster's. The
- * height is read no earlier than the slot that answered, so it is at least the blockhash's own.
+ * Upper bound on the last block height `blockhash` can land in, or -1 if not live on `cluster`.
+ * "processed" so a just-fetched blockhash is found; height read at or after that slot.
  */
 async function liveUntil(fetchImpl: Fetch, url: string, cluster: Cluster, blockhash: string): Promise<number> {
   await assertCluster(fetchImpl, url, cluster);
@@ -306,9 +290,8 @@ async function liveUntil(fetchImpl: Fetch, url: string, cluster: Cluster, blockh
 }
 
 /**
- * Whether the copy's address shows the claim landed: a Core-owned account, or a 1-byte account
- * (Core's burn leaves a 1-byte tombstone; Core's permissionless fee sweep can leave it
- * System-owned). Lamports sent to the address make a 0-byte System account, which is not one.
+ * Landed if the copy's address is Core-owned or 1 byte (burn tombstone, possibly swept to System).
+ * Lamports sent there make a 0-byte System account, which does not count.
  */
 async function copyLanded(fetchImpl: Fetch, url: string, asset: string, minContextSlot: number): Promise<boolean> {
   const result = object(await rpc<unknown>(fetchImpl, url, "getAccountInfo", [

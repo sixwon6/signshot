@@ -1,8 +1,4 @@
-/**
- * Byte codecs for Arweave — base58, base64url, hex, UTF-8, concat.
- *
- * Free of `@solana/kit` and `Buffer` so `src/arweave/` runs under plain Node.
- */
+/** Byte codecs. No `@solana/kit` or `Buffer`, so `src/arweave/` runs under plain Node. */
 
 /** Bitcoin/Solana base58 alphabet. */
 const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -13,10 +9,7 @@ const B64URL_ALPHABET =
 
 export { concatBytes, bytesToHex as toHex, hexToBytes as fromHex, utf8ToBytes as utf8 } from "@noble/hashes/utils.js";
 
-/**
- * Unpadded URL-safe base64 — the Arweave id encoding (`base64url.encode` in arbundles, which is
- * Node's `digest("base64url")`: no `=` padding).
- */
+/** Unpadded base64url, matching arbundles' `base64url.encode`. */
 export function base64UrlEncode(bytes: Uint8Array): string {
   let out = "";
   for (let i = 0; i < bytes.length; i += 3) {
@@ -36,10 +29,7 @@ export function base64UrlEncode(bytes: Uint8Array): string {
   return out;
 }
 
-/**
- * base58 (Bitcoin alphabet), used for the upload key's public key. Carried through a digit array
- * so nothing exceeds 2^53; leading zero bytes become leading "1"s, or two keys could share a string.
- */
+/** Digit-array base58 so nothing exceeds 2^53. Leading zero bytes must map to leading "1"s. */
 export function base58Encode(bytes: Uint8Array): string {
   let zeros = 0;
   while (zeros < bytes.length && bytes[zeros] === 0) zeros += 1;

@@ -33,7 +33,7 @@ import { safeErrorText } from "../ui/errorText";
 import { isUserCancellation } from "../solana/walletErrors";
 import { useSheetOperation, walletOutcome } from "./useSheetOperation";
 
-/** One sheet for print #1 on the photo page and for any copy the WALLET screen holds. */
+/** Sends copy #1 from the photo page, or any copy held on the wallet screen. */
 export function SendSheet({
   target,
   image,
@@ -143,8 +143,7 @@ export function SendSheet({
         setStatus("Check the full recipient address.");
       } catch (e) {
         clearQuote();
-        // A review opens the wallet only to learn which account holds the copy, so a wallet that
-        // never answers has still sent nothing.
+        // The wallet opened only to learn the holding account, so a timeout sent nothing.
         if (!isUserCancellation(e)) {
           const next = await getTransferState(target).catch(() => null);
           if (next) applyState(next);
@@ -153,7 +152,7 @@ export function SendSheet({
             setState(null);
           }
         }
-        // Said after the re-read, which would otherwise put its own status over this one.
+        // After the re-read, which would otherwise overwrite this status.
         showCheckFailure(e, { timedOut: walletTimeout.transferReview, cancelled: "Wallet closed." });
       }
     });
@@ -182,12 +181,12 @@ export function SendSheet({
         setNewTransfer(false);
       } catch (e) {
         clearQuote();
-        // Seed Vault broadcasts first and replies only when its success screen is closed, so a
-        // timeout usually means the copy was already sent.
+        // Seed Vault broadcasts first and replies only when its success screen closes, so a timeout
+        // usually means the copy was sent.
         const { cancelled, timedOut, quiet } = walletOutcome(e);
         setError(quiet ? "" : safeErrorText(e));
         if (timedOut) setStatus(walletTimeout.sendChecking);
-        // The same read "Check transfer status" performs, run by the sheet itself.
+        // Same read as "Check transfer status".
         const next = await getTransferState(target).catch(() => null);
         if (next) applyState(next);
         else {
@@ -195,8 +194,7 @@ export function SendSheet({
           setState(null);
         }
         setNewTransfer(false);
-        // A fresh read can resolve a send whose initial receipt check failed. Its result
-        // supersedes that error; do not put retry instructions beneath a confirmed transfer.
+        // A confirmed transfer supersedes the error: no retry instructions under it.
         if (next?.status === "sent" &&
             next.attempt?.recipient === quote.recipient) {
           onSent?.();

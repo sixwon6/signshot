@@ -4,10 +4,7 @@ import type { KitMobileWallet } from "@solana-mobile/mobile-wallet-adapter-proto
 import { liveAuthorize } from "./liveAuthorize";
 import type { WalletSession } from "./walletSession";
 
-/**
- * The one session object every sheet is handed, so publishing, sending, pricing and collecting all
- * open a wallet the same way (`liveAuthorize` re-reads the auth token at call time).
- */
+/** Shared by every wallet sheet; `liveAuthorize` re-reads the auth token at call time. */
 export function useWalletSession(): WalletSession {
   const { chain, connectAnd, identity: appIdentity, store } = useMobileWallet();
   const authorizeSession = useCallback(

@@ -1,16 +1,12 @@
 /**
- * Signing order for edition transactions, pure (no wallet or network calls here).
+ * Signing order for edition transactions (pure; no wallet or network calls).
  *
- * The wallet (Seed Vault through Mobile Wallet Adapter) rewrites what it signs: it may replace the
- * compute-unit price and limit and reorder the message's accounts. A signature made before the wallet signs would no
- * longer verify, so:
- *   1. `prepareForWallet` compiles a draft into an unsigned transaction for `signTransactions`
- *      (sign only, not send);
- *   2. its `finish`, given the transaction the wallet returned, refuses it unless the message still
- *      carries a valid wallet signature and
- *      means the same thing (`sameMeaning`), then adds the local keypairs' signatures over the
- *      message as returned;
- *   3. for a Seeker-only claim the server then signs that same message (`partiallySignTransaction`);
+ * The wallet (Seed Vault via MWA) may replace the compute-unit price and limit and reorder
+ * accounts, which invalidates any earlier signature. So:
+ *   1. `prepareForWallet` compiles an unsigned transaction for `signTransactions` (sign, not send);
+ *   2. `finish` checks the returned message has a valid wallet signature and `sameMeaning`, then
+ *      adds the local keypairs' signatures over it;
+ *   3. for a Seeker-only claim the server signs the same message;
  *   4. the app sends it.
  */
 
@@ -47,10 +43,9 @@ export interface Lifetime { blockhash: Blockhash; lastValidBlockHeight: bigint }
 export interface Budget { units: number; microLamports: bigint }
 
 /**
- * What the wallet may add in priority fee: 250,000 lamports above the reviewed fee (the reviewed
- * price at the reviewed limit), the allowance the app already shows in its estimate. Mirrors
- * `FEE_ALLOWANCE_LAMPORTS` in `publications/rpc.ts`; `candy/` imports nothing of the app's, so the
- * Worker's tests can load it.
+ * Priority fee the wallet may add above the reviewed fee (reviewed price at reviewed limit).
+ * Duplicates `FEE_ALLOWANCE_LAMPORTS` in `publications/rpc.ts`: `candy/` imports nothing from the
+ * app so the Worker can load it.
  */
 export const FEE_ALLOWANCE_LAMPORTS = 250_000n;
 /** The runtime's ceiling per transaction, and its default per instruction when no limit is set. */
@@ -70,11 +65,7 @@ export interface Prepared {
 const keyBytes = (a: Address) => new Uint8Array(getAddressEncoder().encode(a));
 const plain = (b: ArrayLike<number>) => Uint8Array.from(b as ArrayLike<number>);
 
-/**
- * Compiles one draft transaction with SetComputeUnitLimit + SetComputeUnitPrice first, as the app
- * sends. `feeAllowanceLamports` is what the wallet may add on top of the reviewed priority fee
- * (the app passes `FEE_ALLOWANCE_LAMPORTS`).
- */
+/** Compiles one draft transaction with SetComputeUnitLimit + SetComputeUnitPrice first. */
 export function prepareForWallet(feePayer: Address, draft: DraftTransaction, lifetime: Lifetime, budget: Budget,
   feeAllowanceLamports: bigint = FEE_ALLOWANCE_LAMPORTS): Prepared {
   const message = pipe(
@@ -127,14 +118,11 @@ function resolve(bytes: MessageBytes) {
 const leHex = (hex: string) => BigInt(`0x${(hex.match(/../g) ?? []).reverse().join("") || "0"}`);
 
 /**
- * Null when `returned` means what `original` meant: the same fee payer, lifetime, accounts (each
- * with the same signer and writable role) and, apart from compute budget, the same instructions
- * in the same order with the same accounts and data. The wallet may only reorder accounts and set
- * at most one SetComputeUnitLimit (at most 1,400,000) and one SetComputeUnitPrice, and the
- * priority fee they make, `ceil(limit × price / 1,000,000)`, may not exceed the reviewed fee (the
- * reviewed price at the original's own limit) plus the allowance: a wallet that raises the limit
- * gets no more room for it. With no limit instruction the runtime's default applies: 200,000
- * units per non-budget instruction, capped at 1,400,000. Otherwise a short reason.
+ * Null when `returned` means what `original` meant, else a short reason. Same fee payer, lifetime,
+ * account roles, and non-budget instructions in order. The wallet may only reorder accounts and
+ * set at most one CU limit (<= 1,400,000) and one CU price; the resulting priority fee may not
+ * exceed the reviewed price at the original's limit plus the allowance, so raising the limit buys
+ * no extra room. No limit instruction means the runtime default (200,000 per instruction, capped).
  */
 export function sameMeaning(original: MessageBytes, returned: MessageBytes,
   fee: { reviewedMicroLamports: bigint; feeAllowanceLamports: bigint }): string | null {

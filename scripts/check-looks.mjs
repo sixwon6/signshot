@@ -8,18 +8,16 @@ import { mock } from "node:test";
 /**
  * The built-in looks, with no device.
  *
- *   1. what ships: ids, names, picker order, and the phone's own look pinned byte for byte;
- *   2. what each look IS: reference colours pushed through the real LUT and `levels` stage at the
- *      default strength and at full, held to the numbers that define that camera, and to one
- *      strength law shared by all of them;
- *   3. the store: a starter's id is never a saved recipe's, and what it no longer knows is dropped.
+ *   1. ids, names, picker order; the neutral manifest pinned byte for byte;
+ *   2. reference colours through the real LUT and `levels` stage at strength 60 and 100, held to
+ *      each look's target numbers and to one strength law shared by all;
+ *   3. the store: starter ids never resolve to saved recipes; unknown ids are dropped.
  *
- * The renderer here is the centre of the frame with no noise: the LUT sampled trilinearly the way
- * `ShaderGen.kt` samples it, mixed by `intensity.lutMix`, then the pointwise stages in manifest
- * order. Vignette, grain, softening and sharpening do not move a flat patch at the centre.
+ * The renderer models the frame centre without noise: trilinear LUT sampling as in `ShaderGen.kt`,
+ * mixed by `intensity.lutMix`, then pointwise stages in manifest order. Spatial stages (vignette,
+ * grain, soften, sharpen) do not move a flat centre patch.
  *
- * AsyncStorage is replaced by a Map. `mock.module` needs --experimental-test-module-mocks, so the
- * checks run in a worker started with it (the pattern `check-capture-hook.mjs` uses).
+ * AsyncStorage is a Map; `mock.module` needs --experimental-test-module-mocks, hence the worker.
  */
 
 if (!process.argv.includes("--worker")) {
@@ -155,9 +153,8 @@ if (!process.argv.includes("--worker")) {
     foliage: [87, 108, 67], grass: [110, 160, 60], chartRed: [175, 54, 60], satRed: [225, 30, 35],
   };
   /**
-   * Three colours from the room the looks were measured in, as the fixed camera read them with no
-   * look on: a white wall in cool window light, a navy throw in shadow, a mustard cushion. A look's
-   * own claim about contrast, cast and colour is a claim about these.
+   * A real scene as the phone's camera read it with no look: a white wall in cool window light, a
+   * navy throw in shadow, a mustard cushion.
    */
   const SCENE = { wall: [159, 186, 202], navy: [56, 66, 73], mustard: [123, 96, 62] };
   const sat = (c) => { const mx = Math.max(...c), mn = Math.min(...c); return mx > 0 ? (mx - mn) / mx : 0; };
@@ -208,8 +205,7 @@ if (!process.argv.includes("--worker")) {
         + `  C x${m.meanChroma.toFixed(2)} (skin ${m.chroma.lightSkin.toFixed(2)}/${m.chroma.darkSkin.toFixed(2)}`
         + ` sky ${m.chroma.chartSky.toFixed(2)} red ${m.chroma.chartRed.toFixed(2)}/${m.chroma.satRed.toFixed(2)})`);
 
-      // ---- The family's caps. Full strength is meant to be heavier than the default, so the caps
-      //      open up at 100; nothing may be overcooked at either.
+      // ---- Caps shared by all looks; looser at 100.
       const full = strength === 100;
       within(m.black / 255, 0, full ? 0.1 : 0.07, `${tag} black lift`);
       within(m.white / 255, 0.92, 1, `${tag} white ceiling`);
@@ -232,8 +228,7 @@ if (!process.argv.includes("--worker")) {
         within(m.chroma.chartSky, 1.15, full ? 1.8 : 1.6, `${tag} sky goes deeper`);
       }
       if (recipe.id === "rec.disposable") {
-        // A drugstore print is contrasty, warm and saturated, and its blacks are dense: never a
-        // lifted black, a pulled-down white or a flat midtone.
+        // A drugstore print: contrasty, warm, saturated, dense blacks.
         within(m.black, 1.5, 6, `${tag} print black: paper, not a digital zero, and not a lift`);
         within(m.white, 244, 253, `${tag} paper white is creamy, not clipped and not pulled down`);
         within(m.whiteLab.b, 2, 9, `${tag} and it is warm`);
@@ -245,7 +240,7 @@ if (!process.argv.includes("--worker")) {
         within(m.midSlope, full ? 1.25 : 1.12, full ? 1.55 : 1.3, `${tag} print contrast`);
         within(m.clipFrom, 250, 256, `${tag} the shoulder means nothing clips`);
 
-        // ---- The scene it missed on. Each of these is the look's claim about the room.
+        // ---- The reference scene.
         const s = scene(recipe, strength);
         const floor = full ? 1 : 0.6;
         assert.ok(s.wall.dBlueRed <= -25 * floor,
@@ -271,13 +266,12 @@ if (!process.argv.includes("--worker")) {
         within(highlight, 1.15, full ? 2 : 1.6, `${tag} no knee: highlights steepen into the clip`);
       }
     }
-    // ---- At the default every look is plainly itself: some reference colour moves a long way.
+    // ---- Recognisable at the default: some reference colour moves well away from the input.
     const at60 = measure(recipe, 60);
     const moved = Math.max(...Object.values(at60.chroma).map((c) => Math.abs(c - 1)), Math.abs(at60.mid - 128) / 40, at60.black / 40);
     within(moved, 0.15, 1, `${recipe.name} is recognisable at the default strength`);
 
-    // ---- One strength law: the dial IS the mix. Every curve is a straight line from neutral at 0
-    //      to the look's full value at 100, so 0 is exactly the phone's own picture and the dial's travel is even.
+    // ---- Strength law: every curve is a straight line from neutral at 0 to full at 100.
     assert.deepEqual(recipe.manifest.intensity.lutMix, [[0, 0], [100, 1]], `${recipe.name}: the shared colour ramp`);
     const NEUTRAL = { inBlack: 0, inWhite: 1, gamma: 1, outBlack: 0, outWhite: 1 };
     for (const stage of recipe.manifest.stages) {
@@ -288,12 +282,11 @@ if (!process.argv.includes("--worker")) {
         assert.notEqual(curve[1][1], neutral, `${recipe.name} ${stage.type}.${param} does nothing`);
       }
     }
-    // Strength 0 is the phone's own picture exactly, not nearly: the LUT is mixed out and every stage is neutral.
+    // Strength 0 must be an exact identity.
     for (const rgb8 of [[0, 0, 0], [128, 128, 128], [255, 255, 255], ...Object.values(PATCH), ...Object.values(SCENE)])
       assert.deepEqual(render(recipe, 0, rgb8), rgb8.map((v) => v / 255), `${recipe.name} at strength 0 is the input, untouched`);
 
-    // ---- 100 is a heavier picture, by as much again as the step into the default, so 60 and 100
-    //      are never the same photograph.
+    // ---- 60 -> 100 must be a visible step, at least as large as 30 -> 60.
     const swatches = [...Object.values(PATCH), ...Object.values(SCENE), [32, 32, 32], [64, 64, 64], [160, 160, 160], [220, 220, 220]];
     /** The furthest any reference colour moves between two strengths, in levels. */
     const apart = (a, b) => Math.max(...swatches.map((rgb8) => {
@@ -305,13 +298,13 @@ if (!process.argv.includes("--worker")) {
     assert.ok(step >= before * 0.9,
       `${recipe.name}: the dial's travel is even — 60 -> 100 moves ${step.toFixed(1)} levels, 30 -> 60 moves ${before.toFixed(1)}`);
     report.push(`  ${recipe.name.padEnd(16)} dial 0->30 ${apart(0, 30).toFixed(1)}  30->60 ${before.toFixed(1)}  60->100 ${step.toFixed(1)} levels`);
-    // ---- Film that carries an anti-halation layer does not glow; a camcorder's chroma error is not radial.
+    // ---- Consumer negative has an anti-halation layer; camcorder chroma error is not radial.
     const types = recipe.manifest.stages.map((s) => s.type);
     if (recipe.id === "rec.disposable") assert.ok(!types.includes("halation"), "consumer colour negative does not halate");
     if (recipe.id === "rec.digicam") assert.ok(!types.includes("resolutionSoften") && types.includes("sharpen"), "a digicam is over-sharpened, never soft");
     if (recipe.id === "rec.camcorder") assert.ok(!types.includes("chromaticAberration") && types.includes("resolutionSoften"), "a camcorder is soft, and does not fringe radially");
   }
-  // The three must not be three tints of one thing: they differ where it shows.
+  // The three looks must differ in contrast, clipping, blacks, warmth and saturation.
   const [dig, dis, cam] = LOOKS.map((r) => measure(r, 60));
   assert.ok(dig.midSlope > cam.midSlope + 0.25 && dis.midSlope > cam.midSlope + 0.15, "contrast: the tape is the flat one");
   assert.ok(dig.clipFrom < dis.clipFrom - 10, "the digicam clips where the print's shoulder never does");

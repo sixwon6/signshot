@@ -1,14 +1,9 @@
 /**
- * Metaplex's deployed Core Candy Machine, Core Candy Guard and the Core instructions an edition
- * needs, on `@solana/kit` only. Hand-written from the program source
- * (github.com/metaplex-foundation/mpl-core-candy-machine, mpl-core): the only published client
- * for these programs is the Umi one (`@metaplex-foundation/mpl-core-candy-machine`), which this
- * app does not carry. Both candy programs are Anchor 0.28: an instruction is
- * sha256("global:<name>")[..8] followed by Borsh arguments; an account starts with
- * sha256("account:<Name>")[..8]. Core instructions are a one-byte Shank variant then Borsh.
- *
- * Builders take `TransactionSigner`s for every account that signs, so the signer travels in the
- * account meta and `signTransactionMessageWithSigners` (or a wallet adapter) collects it.
+ * Core Candy Machine, Core Candy Guard and Metaplex Core instructions on `@solana/kit`,
+ * hand-written from github.com/metaplex-foundation/mpl-core-candy-machine and mpl-core (the only
+ * published client is Umi). Candy programs are Anchor 0.28: instruction = sha256("global:<name>")
+ * [..8] + Borsh args; account = sha256("account:<Name>")[..8] + data. Core: one-byte Shank variant
+ * + Borsh. Signing accounts take `TransactionSigner`s so the signer travels in the account meta.
  */
 
 import {
@@ -36,10 +31,7 @@ export const SYSVAR_SLOT_HASHES = address("SysvarS1otHashes111111111111111111111
 /** Token Metadata's limits, which the candy machine applies to hidden-settings names and URIs. */
 export const MAX_NAME_LENGTH = 32;
 export const MAX_URI_LENGTH = 200;
-/**
- * A candy machine with hidden settings is exactly its fixed section (`HIDDEN_SECTION` in
- * `candy-machine-core/src/constants.rs`): no config lines follow.
- */
+/** Hidden settings means no config lines: just `HIDDEN_SECTION` (`candy-machine-core/src/constants.rs`). */
 export const CANDY_MACHINE_HIDDEN_BYTES = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + (4 + MAX_NAME_LENGTH) + 4 +
   (4 + MAX_URI_LENGTH) + 4 + 1 + 1 + (4 + MAX_NAME_LENGTH) + (4 + MAX_URI_LENGTH) + 32;
 /** Candy guard header: discriminator, base, bump, authority. */
@@ -47,9 +39,7 @@ export const CANDY_GUARD_HEADER = 8 + 32 + 1 + 32;
 /** A mint-limit counter is a bare u16. */
 export const MINT_COUNTER_BYTES = 2;
 
-// ---------------------------------------------------------------------------------------------
-// Bytes
-// ---------------------------------------------------------------------------------------------
+// --- Bytes ---
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 const concat = (...parts: readonly Uint8Array[]) => {
@@ -98,15 +88,13 @@ const w = (a: Address): AccountMeta => ({ address: a, role: AccountRole.WRITABLE
 const rs = (s: TransactionSigner): AccountSignerMeta => ({ address: s.address, role: AccountRole.READONLY_SIGNER, signer: s });
 const ws = (s: TransactionSigner): AccountSignerMeta => ({ address: s.address, role: AccountRole.WRITABLE_SIGNER, signer: s });
 
-// ---------------------------------------------------------------------------------------------
-// Addresses
-// ---------------------------------------------------------------------------------------------
+// --- Addresses ---
 
 /** The candy machine's authority PDA, `["candy_machine", candy machine]`: the collection's update delegate. */
 export const candyMachineAuthorityPda = async (candyMachine: Address) =>
   (await getProgramDerivedAddress({ programAddress: CANDY_MACHINE_PROGRAM, seeds: [utf8("candy_machine"), keyBytes(candyMachine)] }))[0];
 
-/** The candy guard, `["candy_guard", base]`. This app uses the candy machine's own key as the base. */
+/** The candy guard, `["candy_guard", base]`; the base here is the candy machine's key. */
 export const candyGuardAddress = async (base: Address) =>
   (await getProgramDerivedAddress({ programAddress: CANDY_GUARD_PROGRAM, seeds: [utf8("candy_guard"), keyBytes(base)] }))[0];
 
@@ -124,9 +112,7 @@ export const associatedTokenAddress = async (owner: Address, mint: Address) =>
     seeds: [keyBytes(owner), keyBytes(TOKEN_PROGRAM), keyBytes(mint)],
   }))[0];
 
-// ---------------------------------------------------------------------------------------------
-// Metaplex Core
-// ---------------------------------------------------------------------------------------------
+// --- Metaplex Core ---
 
 /** Core's `Authority`: None 0, Owner 1, UpdateAuthority 2, Address 3. */
 export type CoreAuthority = { kind: "None" } | { kind: "Owner" } | { kind: "UpdateAuthority" } | { kind: "Address"; address: Address };
@@ -194,9 +180,7 @@ export const addVerifiedCreatorInstruction = (input: { collection: Address; crea
   data: concat(u8(3), u8(13), u32(1), keyBytes(input.creator.address), u8(1), none),
 });
 
-// ---------------------------------------------------------------------------------------------
-// Core Candy Machine
-// ---------------------------------------------------------------------------------------------
+// --- Core Candy Machine ---
 
 export interface HiddenSettings { name: string; uri: string; hash: Uint8Array }
 export interface CandyMachineData { itemsAvailable: bigint; maxSupply: bigint; isMutable: boolean; hidden: HiddenSettings }
@@ -209,9 +193,8 @@ function candyMachineData(d: CandyMachineData) {
 }
 
 /**
- * `initialize`. The candy machine account must already exist, owned by the program, zeroed, at
- * least `CANDY_MACHINE_HIDDEN_BYTES` long (a System `CreateAccount` in the same transaction). It
- * adds the candy machine's authority PDA to the collection's UpdateDelegate plugin, so the
+ * `initialize`. The account must already exist, program-owned and zeroed, at least
+ * `CANDY_MACHINE_HIDDEN_BYTES`. Adds the authority PDA as the collection's UpdateDelegate, so the
  * collection's update authority signs.
  */
 export async function initializeCandyMachineInstruction(input: {
@@ -247,9 +230,7 @@ export const withdrawCandyMachineInstruction = (input: { candyMachine: Address; 
   data: DISC.cmWithdraw,
 });
 
-// ---------------------------------------------------------------------------------------------
-// Core Candy Guard
-// ---------------------------------------------------------------------------------------------
+// --- Core Candy Guard ---
 
 /** `initialize(data: Vec<u8>)`: creates the guard PDA of `base`, sized to the data. */
 export async function initializeCandyGuardInstruction(input: {
@@ -263,8 +244,8 @@ export async function initializeCandyGuardInstruction(input: {
 }
 
 /**
- * `update(data: Vec<u8>)`: replaces every guard; the account grows or shrinks to fit, the payer
- * funding or receiving the rent difference (writable here although the IDL leaves it unmarked).
+ * `update(data: Vec<u8>)`: replaces every guard and resizes the account; the payer covers or
+ * receives the rent difference (so it is writable, though the IDL leaves it unmarked).
  */
 export const updateCandyGuardInstruction = (input: {
   candyGuard: Address; authority: TransactionSigner; payer: TransactionSigner; guards: GuardData;
@@ -323,11 +304,9 @@ export interface MintInput {
 }
 
 /**
- * `mint_v1(mint_args: Vec<u8>, label: None)` with the remaining accounts each guard consumes, in
- * `GuardSet` field order: Sol Payment (destination, writable), Token Payment (source, destination
- * ATA, Token program), Third Party Signer (signer), Mint Limit (counter PDA, writable). Edition
- * takes none; none of these read `mint_args`. `owner` is left absent (the guard program's id), so
- * the copy goes to the minter.
+ * `mint_v1(mint_args: Vec<u8>, label: None)`. Remaining accounts in `GuardSet` order: Sol Payment
+ * (destination, w), Token Payment (source, destination ATA, Token program), Third Party Signer
+ * (signer), Mint Limit (counter PDA, w); Edition takes none. `owner` absent, so the copy goes to the minter.
  */
 export async function mintInstruction(input: MintInput): Promise<Instruction> {
   if (input.guards.groups.length) throw new Error("Guard groups are not used here");
@@ -356,9 +335,7 @@ export async function mintInstruction(input: MintInput): Promise<Instruction> {
   };
 }
 
-// ---------------------------------------------------------------------------------------------
-// System and classic SPL Token
-// ---------------------------------------------------------------------------------------------
+// --- System and classic SPL Token ---
 
 export const TOKEN_ACCOUNT_BYTES = 165;
 const ATA_PROGRAM = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
@@ -416,9 +393,7 @@ export const closeTokenAccountInstruction = (account: Address, destination: Addr
   data: u8(9),
 });
 
-// ---------------------------------------------------------------------------------------------
-// Accounts
-// ---------------------------------------------------------------------------------------------
+// --- Accounts ---
 
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
 

@@ -53,7 +53,11 @@ npm-debug.*
 output/
 submission/**/*.mp4
 submission/**/*.mp3
+submission/**/*.wav
 submission/**/*.pptx
 submission/**/*.pdf
 submission/**/*.jpg
 submission/**/*.png
+submission/handoff/
+submission/launch/
+submission/presentation/

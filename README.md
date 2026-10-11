@@ -413,8 +413,8 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
   banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a name of 25 characters or fewer and a
   short description of 30 or fewer; privacy URL https://erashot.app/privacy.
 - **Submission:** `SUBMISSION_DRAFT.md`: push, connect GitHub on Align (or make the repository
-  public), a public direct link to the APK, a captioned demo video (the judges read its
-  transcript) and the pitch deck (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of
+  public), a public direct link to the APK, a captioned three-minute device demo and the pitch deck
+  (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of
   the repository).
 
 ## Licence

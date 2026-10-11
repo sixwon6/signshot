@@ -10,6 +10,15 @@ other wallets collect free or buy for SOL or SKR.
 The Android package is `app.signshot`; the web domain is `erashot.app` (collect links, App Links,
 the co-signer at `cosign.erashot.app`, terms and privacy).
 
+## Try it
+
+- **APK (Solana mainnet):** https://github.com/sixwon6/signshot/releases/latest/download/Signshot.apk
+- Android 14 or newer on arm64, with a Mobile Wallet Adapter wallet; on the Seeker that is Seed
+  Vault Wallet. Shooting, Develop, saving and sharing need no wallet.
+- Publishing an edition costs the publisher about 0.011 SOL in rent, Metaplex's fee and network
+  fees, whatever the number of copies; collecting one costs about 0.003 SOL plus its price.
+  Seeker-only editions need a Seeker Genesis Token in the collecting wallet.
+
 ## The camera
 
 One layout under a mode dial (AUTO, P and M), one grammar in every mode: the bottom row chooses,
@@ -238,8 +247,9 @@ Sign-in-with-Solana payload it issued, the wallet's signature over the exact cla
 edition `readEdition` would accept naming its key, and a Genesis Token the wallet holds on mainnet
 (Helius) that has not claimed this edition (D1). It trusts its RPC endpoints (`MAINNET_RPC_URL`, a
 Helius URL, and `DEVNET_RPC_URL`) and its own key; the key holds no funds and no authority over any
-account. When it is down, Seeker-only editions
-cannot be claimed; nothing else depends on it.
+account. It also serves `POST /rpc`, the mainnet build's key-free RPC endpoint: one JSON-RPC call
+at a time, only the methods the app calls, forwarded to `MAINNET_RPC_URL`. When it is down, the
+mainnet build cannot reach Solana and Seeker-only editions cannot be claimed.
 
 ## erashot.app
 
@@ -396,24 +406,13 @@ Release signing uses the upload key (`CN=Era Shot`), whose SHA-256 identity
   refusal is first seen after publishing. Upload after the wallet signs and before the app sends.
   The document itself is fetched unhashed (only the image is checked against the candy machine),
   and a refused storage payment is never offered again.
-- **Mainnet build:** `EXPO_PUBLIC_SOLANA_RPC_URL` at a key-free HTTPS URL, a keyless proxy or a
-  provider's key-free frontend URL, since the APK carries it in plain text (`release:check` refuses
-  a public endpoint, a query string, credentials and another network). It must serve every method
-  the app calls: `getAccountInfo`, `getBalance`, `getBlockHeight`, `getGenesisHash`,
-  `getLatestBlockhash`, `getMinimumBalanceForRentExemption`, `getMultipleAccounts`,
-  `getProgramAccounts`, `getRecentPrioritizationFees`, `getSignatureStatuses`,
-  `getSignaturesForAddress`, `getTokenAccountsByOwner`, `getTransaction`, `sendTransaction` and
-  `simulateTransaction`. Check the 5,000 µlamport/CU floor price against that provider's fee data.
 - **Final APK:** `npm run release:check` (also Google's attestation roots), `npm run release:apk`
   with the upload key, a fresh install, an offline capture, one small mainnet publication and its
   upload (and `Pay storage` if Turbo refuses the free tier).
-- **dApp Store listing:** the mainnet build above; a publisher wallet with about 0.2 SOL; terms URL
+- **dApp Store listing:** the mainnet APK; a publisher wallet with about 0.2 SOL; terms URL
   https://erashot.app/terms/; the opaque 512×512 icon in `dapp-store/icon-512.png`, a 1200×600
   banner, 4–8 previews at 9:16 or 16:9 of 3 MB or less, a name of 25 characters or fewer and a
   short description of 30 or fewer; privacy URL https://erashot.app/privacy.
-- **Submission:** push, connect GitHub on Align (or make the repository public), a public direct
-  link to the APK, a captioned three-minute device demo and the pitch deck
-  (`submission/presentation/Signshot-CLOCK-IN.pptx`, kept out of the repository).
 
 ## Licence
 

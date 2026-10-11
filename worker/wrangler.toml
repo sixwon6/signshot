@@ -37,6 +37,12 @@ name = "GLOBAL_LIMITER"
 namespace_id = "1002"
 simple = { limit = 600, period = 60 }
 
+# /rpc only, per client network: one phone's wallet screen, publish and confirmation polling.
+[[ratelimits]]
+name = "RPC_LIMITER"
+namespace_id = "1003"
+simple = { limit = 300, period = 60 }
+
 # Hourly: drop spent nonces past their expiry.
 [triggers]
 crons = ["17 * * * *"]

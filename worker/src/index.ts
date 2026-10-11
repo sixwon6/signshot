@@ -8,6 +8,7 @@
  *   POST /challenge  { wallet } → the SIWS sign-in payload
  *   POST /claim      { wallet, nonce, signInOutput, edition, cluster, transaction }
  *                    → { signature, signer, sgtMint, transaction }
+ *   POST /rpc        one JSON-RPC call, forwarded to MAINNET_RPC_URL (the app's mainnet endpoint)
  */
 
 import { getBase58Decoder, getBase64Decoder, getBase64Encoder, isAddress } from "@solana/kit";
@@ -15,11 +16,12 @@ import { checkClaimTransaction, MPL_CORE, parseTransaction, Refused } from "./cl
 import { loadCosigners, type Cosigner } from "./cosigner";
 import { checkAgainstEdition, readEdition } from "./edition";
 import { findSeekerGenesisTokens, TooManyTokens } from "./genesis";
+import { proxyRpc } from "./rpcProxy";
 import { assertCluster, GENESIS_HASH, object, rpc, RpcError, type Cluster, type Fetch } from "./rpc";
 import { issueChallenge, verifySignIn, type SignInResult, type SiwsConfig } from "./siws";
 import { confirmClaim, consumeNonce, findClaim, insertClaim, pruneNonces, replaceClaim, type ClaimRow, type NewClaim } from "./store";
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 export interface Env {
   DB: D1Database;
@@ -27,6 +29,8 @@ export interface Env {
   LIMITER?: RateLimit;
   /** Workers Rate Limiting with one constant key: a cap on the whole Worker. */
   GLOBAL_LIMITER?: RateLimit;
+  /** Workers Rate Limiting for /rpc alone, per client network: the app's reads are many and small. */
+  RPC_LIMITER?: RateLimit;
   /** Secret: the active co-signer key, solana-keygen JSON, 64 bytes. */
   COSIGNER_SECRET_KEY: string;
   /** Secret, optional: a JSON array of further accepted co-signer keys (rotation overlap). */
@@ -108,8 +112,14 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
     }
     const route = pathname === "/health" && request.method === "GET" ? "health"
       : pathname === "/challenge" && request.method === "POST" ? "challenge"
-      : pathname === "/claim" && request.method === "POST" ? "claim" : null;
+      : pathname === "/claim" && request.method === "POST" ? "claim"
+      : pathname === "/rpc" && request.method === "POST" ? "rpc" : null;
     if (!route) return fail(404, "not-found");
+    if (route === "rpc") {
+      const client = clientNetwork(request.headers.get("cf-connecting-ip"));
+      if (env.RPC_LIMITER && !(await env.RPC_LIMITER.limit({ key: client })).success) return fail(429, "rate-limited");
+      return await proxyRpc(request, env.MAINNET_RPC_URL, deps.fetch);
+    }
     if (await rateLimited(env, request, route)) return fail(429, "rate-limited");
     if (route === "health") {
       const keys = await loadCosigners(env.COSIGNER_SECRET_KEY, env.COSIGNER_SECRET_KEYS);

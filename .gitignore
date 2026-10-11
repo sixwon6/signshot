@@ -61,3 +61,8 @@ submission/**/*.png
 submission/handoff/
 submission/launch/
 submission/presentation/
+
+# local tooling
+.claude/
+.wrangler/
+.dev.vars
